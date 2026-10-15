@@ -28,13 +28,13 @@ function game(url: string) {
   return page('<script type="application/ld+json">'+JSON.stringify({'@type':'VideoGame',name:'Orbit '+url.split('/game-')[1],description:'A space puzzle game',genre:'Puzzle',keywords:'space',operatingSystem:'Linux',image:'/cover.png'})+'</script><main><a href="https://files.test/orbit.zip">Download game</a></main>',url);
 }
 function file() { vi.useFakeTimers(); const dir=mkdtempSync(join(tmpdir(),'cgl-persist-'));cleanup.push(()=>rmSync(dir,{recursive:true,force:true}));return join(dir,'launcher.db'); }
-function setup(path: string) {
+function setup(path: string, deps: object = {}) {
   const db=openDb(path),session=new StoreSession(),settings=new SettingsRepo(db,defaultSettings({games:tmpdir(),downloads:tmpdir()}));
   const sources=new SourcesRepo(db),catalog=new CatalogRepo(db),policy=new PolicyService(settings,new ConsentRepo(db));
   let current='about:blank';
   const browser={navigate:vi.fn(async (_:string,url:string)=>{current=url;}),extract:vi.fn(async()=>current==='https://games.test/'?listing(1):current.endsWith('/page/2')?listing(2):game(current)),scroll:vi.fn(async()=>{}),stopLoading:vi.fn(async()=>{})};
   const agent=fixtureAgent(),classification={classifyEntry:vi.fn(async(id:number)=>{catalog.setRating(id,'safe',0,[],CLASSIFIER_VERSION);catalog.setArtwork(id,'verified.png');})};
-  const discovery=new Discovery({sources,catalog,settings,session,policy,browser,agent,classification,ai:{setStatus:vi.fn()} as never,limiter:new HostRateLimiter()} as never);
+  const discovery=new Discovery({sources,catalog,settings,session,policy,browser,agent,classification,ai:{setStatus:vi.fn()} as never,limiter:new HostRateLimiter(),...deps} as never);
   session.removeAllListeners('enter');
   cleanup.push(()=>{session.leave();try{db.close();}catch{}});
   const run=(token=session.token()!)=>(discovery as unknown as {crawlSource(s:Source,t:SessionToken):Promise<void>}).crawlSource(sources.list()[0],token);
@@ -198,5 +198,45 @@ describe('durable incremental Store indexing',()=>{
       s.catalog.upsertListing(src.id,{pageUrl:'https://games.test/partial',title:'Partial',titleKey:'partial'});throw Error('Interrupted transaction');
     })).toThrow('Interrupted transaction');
     expect(s.catalog.count(src.id)).toBe(0);expect(s.sources.cursor(src.id)).toBeNull();
+  });
+});
+
+describe('script-rendered game pages read in Firefox',()=>{
+  // A single-page app: the HTTP copy and the first read after navigating are an
+  // empty shell; the game renders a moment later.
+  const shell=(url:string)=>page('<title>Game Jolt - Share your creations</title><main></main>',url);
+  const rendered=(url:string)=>{const slug=url.split('/games/')[1];return page('<script type="application/ld+json">'+JSON.stringify({'@type':'Product',name:'Orbit '+slug,image:`/cover-${slug}.png`})+`</script><main><h1>Orbit ${slug}</h1><a href="https://files.test/${slug}.zip">Download game</a></main>`,url);};
+  function spa(s:ReturnType<typeof setup>) {
+    let current='about:blank',reads=0;
+    s.browser.navigate.mockImplementation(async(_:string,url:string)=>{current=url;reads=0;});
+    s.browser.extract.mockImplementation(async()=>reads++===0?shell(current):rendered(current));
+  }
+  async function checkAll(s:ReturnType<typeof setup>,src:Source) {
+    s.session.enter();
+    const ids=['a','b','c'].map(slug=>s.catalog.upsertListing(src.id,{pageUrl:`https://games.test/games/${slug}`,title:`Orbit ${slug}`,titleKey:`orbit ${slug}`})!.id);
+    // Parallel verification workers share the one Firefox window.
+    const all=Promise.all(ids.map(id=>s.discovery.fetchDetail(id,s.session.token()!)));
+    await vi.advanceTimersByTimeAsync(30_000);await all;
+    return ids.map(id=>s.catalog.raw(id)!);
+  }
+  const expectOwnPages=(rows:Array<NonNullable<ReturnType<CatalogRepo['raw']>>>)=>{
+    expect(rows.map(r=>r.title)).toEqual(['Orbit a','Orbit b','Orbit c']);
+    expect(rows.map(r=>r.thumbnailUrl)).toEqual(['a','b','c'].map(slug=>`https://games.test/cover-${slug}.png`));
+    expect(rows.map(r=>r.candidates.map(c=>c.url))).toEqual(['a','b','c'].map(slug=>[`https://files.test/${slug}.zip`]));
+    expect(rows.every(r=>r.downloadStatus==='available')).toBe(true);
+  };
+
+  it('waits for each page to render before another check navigates the window away',async()=>{
+    const fetcher={stats:{http:0,fallbacks:0,ms:0},fetch:vi.fn(async(url:string)=>({ok:true,status:200,ms:1,extract:shell(url)}))};
+    const s=setup(file(),{fetcher});spa(s);
+    expectOwnPages(await checkAll(s,source(s)));
+    expect(fetcher.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('renders game pages when the site recipe reads them in Firefox',async()=>{
+    const s=setup(file()),src=source(s);spa(s);
+    s.sources.saveRecipe(src.id,{version:1,game:[{host:'^games\\.test$',path:'^/games/[^/]+$'}],more:[],listingMode:'browser',detailMode:'browser',learnedAt:'',origin:'ai',routesVersion:3});
+    expect(s.sources.recipe(src.id)?.detailMode).toBe('browser');
+    expectOwnPages(await checkAll(s,src));
   });
 });

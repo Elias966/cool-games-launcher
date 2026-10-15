@@ -203,8 +203,10 @@ export class Discovery {
     // lift and many checks pass on their own in a real browser.
     if (Date.now() - this.verificationCheckedAt > AUTO_RECHECK_MS && (ex.gates.captcha || ex.gates.blocked || !this.samePage(ex.url, check.url))) {
       this.verificationCheckedAt = Date.now();
-      await this.withBrowser(() => browser.navigate('discovery', check.url, token.signal));
-      ex = await this.agent.verify(await browser.extract('discovery', token.signal), 'discovery', token);
+      ex = await this.withBrowser(async () => {
+        await browser.navigate('discovery', check.url, token.signal);
+        return this.agent.verify(await browser.extract('discovery', token.signal), 'discovery', token);
+      });
       session.assertLive(token);
       // Last resort, automatically: after two failed re-checks (~10 min) the
       // page is set aside and the rest of the site keeps indexing.
@@ -214,8 +216,10 @@ export class Discovery {
       }
     }
     if (!/^https?:/i.test(ex.url)) {
-      await browser.navigate('discovery', check.url, token.signal);
-      ex = await browser.extract('discovery', token.signal);
+      ex = await this.withBrowser(async () => {
+        await browser.navigate('discovery', check.url, token.signal);
+        return browser.extract('discovery', token.signal);
+      });
       session.assertLive(token);
     }
     if (restored) this.deps.onVerificationRequired?.(check.sourceId, sources.get(check.sourceId)?.statusDetail ?? 'Complete the website check.');
@@ -358,8 +362,11 @@ export class Discovery {
   /**
    * Reads a page: plain HTTP first (parallel, no rendering), Firefox when the
    * site needs scripts, a session or a website check, or its recipe says so.
+   * `rendered` says when a script-built page has rendered enough: a Firefox
+   * read asked for by `mode` waits for it in the same turn, before another
+   * check can navigate the window to a different page.
    */
-  private async load(source: Source, url: string, token: SessionToken, mode: 'http' | 'browser' = 'http'): Promise<{ ex: PageExtract; via: 'http' | 'browser' }> {
+  private async load(source: Source, url: string, token: SessionToken, mode: 'http' | 'browser' = 'http', rendered?: (ex: PageExtract) => boolean): Promise<{ ex: PageExtract; via: 'http' | 'browser' }> {
     const { fetcher, limiter, session } = this.deps;
     const resumingCheck = this.verifiedPage && this.samePage(this.verifiedPage.url, url);
     const site = siteKey(hostOf(url));
@@ -389,7 +396,8 @@ export class Discovery {
     return this.withBrowser(async () => {
       await limiter.wait(site, this.spacing(source), token.signal);
       session.assertLive(token);
-      return { ex: await this.openPage(url, token), via: 'browser' as const };
+      const ex = await this.openPage(url, token);
+      return { ex: rendered && mode === 'browser' ? await this.settle(ex, token, rendered) : ex, via: 'browser' as const };
     });
   }
 
@@ -443,9 +451,10 @@ export class Discovery {
         session.assertLive(token);
         const url = cursor.pending[0];
         let recipe = sources.recipe(source.id);
+        const listed = (e: PageExtract) => e.cards.length >= 3 || !!e.game || !!recipe && recipeCards(e, recipe).length > 0;
         let loaded: { ex: PageExtract; via: 'http' | 'browser' };
         try {
-          loaded = await this.load(source, url, token, recipe?.listingMode);
+          loaded = await this.load(source, url, token, recipe?.listingMode, listed);
         } catch (e) {
           if (!(e instanceof GoneError)) throw e;
           cursor.pending.shift();
@@ -467,9 +476,8 @@ export class Discovery {
         let cards = recipe ? recipeCards(ex, recipe) : [];
         // Script-rendered listings: the HTTP copy has no games, Firefox might.
         if (!cards.length && via === 'http' && (recipe || !ex.cards.length)) {
-          const rendered = await this.load(source, url, token, 'browser');
+          const rendered = await this.load(source, url, token, 'browser', listed);
           if (this.gated(rendered.ex)) { this.blockSource(source, rendered.ex, url, null, cursor.pagesDone); return; }
-          rendered.ex = await this.withBrowser(() => this.settle(rendered.ex, token, (e) => e.cards.length >= 3 || !!e.game));
           ({ ex, via } = rendered);
           if (process.env.CGL_DEBUG) console.log(`[index] rendered links=${ex.links.length} cards=${ex.cards.length} title=${JSON.stringify(ex.title)} text=${JSON.stringify(ex.text.slice(0, 300))} gates=${JSON.stringify(ex.gates)}`);
           if (recipe) cards = recipeCards(ex, recipe);
@@ -676,7 +684,7 @@ export class Discovery {
       const seen = new Set<string>();
       let next: string | null = pages[kind] ?? null;
       for (let n = 0; next && n < 3; n++) {
-        const page = await soft(() => this.load(source, next!, token, recipe.listingMode));
+        const page = await soft(() => this.load(source, next!, token, recipe.listingMode, (e) => recipeCards(e, recipe).length > 0));
         if (!page) break;
         sources.checkpoint(source.id, cursor, () => {
           for (const card of recipeCards(page.ex, recipe)) {
@@ -942,16 +950,16 @@ export class Discovery {
     const source = sources.get(entry.sourceId);
     if (!source) return;
     const recipe = sources.recipe(source.id);
-    let { ex, via } = await this.load(source, entry.pageUrl, token, recipe?.detailMode);
+    const hasEvidence = (e: PageExtract) => downloadEvidence(e).length > 0;
+    let { ex, via } = await this.load(source, entry.pageUrl, token, recipe?.detailMode, hasEvidence);
     session.assertLive(token, 'game page');
     if (this.gated(ex)) return this.gatedDetail(source, ex, entry.pageUrl, id);
     this.gatedStreak.set(source.id, 0);
     let evidence = downloadEvidence(ex);
     // Download buttons rendered by scripts are invisible to the HTTP copy.
     if (!evidence.length && via === 'http') {
-      const rendered = await this.load(source, entry.pageUrl, token, 'browser');
+      const rendered = await this.load(source, entry.pageUrl, token, 'browser', hasEvidence);
       if (this.gated(rendered.ex)) return this.gatedDetail(source, rendered.ex, entry.pageUrl, id);
-      rendered.ex = await this.withBrowser(() => this.settle(rendered.ex, token, (e) => downloadEvidence(e).length > 0));
       const found = downloadEvidence(rendered.ex);
       if (found.length) {
         ({ ex, via } = rendered);
