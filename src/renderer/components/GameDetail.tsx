@@ -10,9 +10,9 @@ import { Artwork } from './GameCard';
 import { Button, NsfwBadge, PlatformIcons, ProgressRing } from './ui';
 import { Icon } from './Icon';
 import { ProtonDbBadge } from './ProtonDb';
-import { formatBytes, formatSpeed, platformLabel } from '@shared/format';
+import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
-import { t, tk } from '../i18n';
+import { t, tk, platformName } from '../i18n';
 
 const STATE_TEXT: Record<string, string> = {
   queued: tk('Queued'),
@@ -209,7 +209,7 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
                 {entry.platforms.length ? (
                   <span className="detail__platforms">
                     <PlatformIcons platforms={entry.platforms} size={16} />
-                    {entry.platforms.map(platformLabel).join(' · ')}
+                    {entry.platforms.map(platformName).join(' · ')}
                   </span>
                 ) : (
                   t('Not listed')

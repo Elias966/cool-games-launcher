@@ -7,9 +7,9 @@ import { Button, Dialog, EmptyState, IconButton, ProgressRing } from '../compone
 import { Icon } from '../components/Icon';
 import { placeholderStyle } from '../components/GameCard';
 import type { DownloadHold, DownloadItem } from '@shared/types';
-import { formatBytes, formatDuration, formatSpeed } from '@shared/format';
+import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
-import { t, tk, locale } from '../i18n';
+import { duration, t, tk, locale } from '../i18n';
 
 const STATE_LABEL: Record<DownloadItem['state'], string> = {
   queued: tk('Queued'),
@@ -231,7 +231,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
             </span>
             {d.state === 'active' && <span>{formatSpeed(d.speedBps)}</span>}
             {d.state === 'active' && !!d.connections && <span>{d.connections === 1 ? t('Single connection') : t('{n} parallel connections', { n: d.connections })}</span>}
-            {d.state === 'active' && d.etaSeconds !== null && <span>{t('{time} left', { time: formatDuration(d.etaSeconds) })}</span>}
+            {d.state === 'active' && d.etaSeconds !== null && <span>{t('{time} left', { time: duration(d.etaSeconds) })}</span>}
             {pct !== null && <span>{Math.round(pct * 100)}%</span>}
           </div>
         )}

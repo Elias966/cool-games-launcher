@@ -8,9 +8,8 @@ import { Icon } from './Icon';
 import { Button } from './ui';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { hostOf } from '@shared/urls';
-import { platformLabel } from '@shared/format';
 import { browserPoint } from '@shared/browser-input';
-import { t } from '../i18n';
+import { t, platformName } from '../i18n';
 
 function AddressBar({ url, loading, disabled }: { url: string | null; loading: boolean; disabled: boolean }) {
   const [editing, setEditing] = useState(false);
@@ -185,7 +184,7 @@ export function BrowserDrawer() {
                     <button className="choice" onClick={() => void attempt(() => api.invoke('download:chooseFile', { id: prompt.id, url: c.url }))}>
                       <span className="choice__name">{c.fileName ?? c.label}</span>
                       <span className="choice__meta">
-                        {c.platform ? platformLabel(c.platform) : t('Unknown platform')}
+                        {c.platform ? platformName(c.platform) : t('Unknown platform')}
                         {c.sizeText ? ` · ${c.sizeText}` : ''}
                       </span>
                     </button>

@@ -191,6 +191,9 @@ export const MIGRATIONS: string[] = [
    CREATE INDEX wishlist_catalog ON wishlist(catalog_id);`,
   // Runtime installers (Visual C++, DirectX …) already run in a game's prefix.
   `ALTER TABLE games ADD COLUMN redist_json TEXT;`,
+  // One row per play session, for play statistics.
+  `CREATE TABLE play_sessions (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, started_at TEXT NOT NULL, seconds INTEGER NOT NULL);
+   CREATE INDEX play_sessions_time ON play_sessions(started_at);`,
 ];
 
 export type Db = DatabaseSync;

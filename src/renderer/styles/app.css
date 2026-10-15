@@ -3275,3 +3275,15 @@ kbd {
 .hold-banner--quiet { border-color: var(--line); background: rgba(255, 255, 255, 0.04); color: var(--text-2); }
 .time-range { display: flex; align-items: center; gap: 8px; }
 .time-range input { width: 110px; }
+
+/* Play time of the last seven days, in the Library header. */
+.play-week { display: flex; align-items: flex-end; gap: 18px; margin-inline-start: auto; padding: 12px 16px; border-radius: 16px; border: 1px solid var(--line); background: rgba(10, 14, 24, 0.45); backdrop-filter: blur(14px); }
+.play-week__head { display: grid; gap: 2px; min-width: 120px; }
+.play-week__head strong { font-family: var(--font-display); font-size: 1.35rem; line-height: 1.1; }
+.play-week__top { color: var(--text-2); font-size: 0.78rem; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.play-week__bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; margin: 0; padding: 0; list-style: none; }
+.play-week__bars li { position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 16px; height: 100%; padding-bottom: 16px; }
+.play-week__bar { width: 100%; border-radius: 5px 5px 2px 2px; background: linear-gradient(180deg, var(--cyan), var(--violet)); box-shadow: 0 0 10px rgba(72, 225, 255, 0.35); transition: height 0.6s var(--ease-out); }
+.play-week__bars li:not(.is-today) .play-week__bar { opacity: 0.6; }
+.play-week__day { position: absolute; bottom: 0; font-size: 0.68rem; color: var(--text-3, var(--text-2)); }
+.play-week__bars li.is-today .play-week__day { color: var(--cyan); font-weight: 600; }

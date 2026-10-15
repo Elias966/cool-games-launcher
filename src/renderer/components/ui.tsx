@@ -5,9 +5,8 @@ import { createPortal } from 'react-dom';
 import { dismissToast, useApp } from '../state';
 import { Icon, type IconName } from './Icon';
 import { useMotionPrefs } from '../hooks/useMotion';
-import { platformLabel } from '@shared/format';
 import type { Platform } from '@shared/types';
-import { t } from '../i18n';
+import { t, platformName } from '../i18n';
 
 /** Accessible modal dialog with focus trap; Escape cancels. */
 export function Dialog({
@@ -180,9 +179,9 @@ const PLATFORM_ICON: Record<Platform, IconName> = { linux: 'linux', windows: 'wi
 export function PlatformIcons({ platforms, size = 15 }: { platforms: Platform[]; size?: number }) {
   if (!platforms.length) return null;
   return (
-    <span className="platforms" aria-label={t('Platforms: {list}', { list: platforms.map(platformLabel).join(', ') })}>
+    <span className="platforms" aria-label={t('Platforms: {list}', { list: platforms.map(platformName).join(', ') })}>
       {platforms.map((p) => (
-        <span key={p} className={`platforms__item platforms__item--${p}`} title={platformLabel(p)}>
+        <span key={p} className={`platforms__item platforms__item--${p}`} title={platformName(p)}>
           <Icon name={PLATFORM_ICON[p]} size={size} />
         </span>
       ))}

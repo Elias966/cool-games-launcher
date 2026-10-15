@@ -1,6 +1,6 @@
 import {DEFAULT_MODEL_ID, DEFAULT_AGENTS} from '@shared/models';
 import type { InstallResult } from '../workers/prepare-game';
-import type { ProtonPackage } from '@shared/types';
+import type { PlayStats, ProtonPackage } from '@shared/types';
 // Typed data access over SQLite. No Electron imports, so it is testable in Node.
 import { cpus } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -1262,11 +1262,40 @@ export class GamesRepo {
     if (sets.length) this.db.prepare(`UPDATE games SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
   }
 
-  recordPlay(id: number, seconds: number) {
-    this.st.get('UPDATE games SET last_played_at = ?, playtime_seconds = playtime_seconds + ? WHERE id = ?').run(now(), Math.max(0, seconds), id);
+  recordPlay(id: number, seconds: number, endedAt = new Date()) {
+    const s = Math.max(0, Math.round(seconds));
+    this.st.get('UPDATE games SET last_played_at = ?, playtime_seconds = playtime_seconds + ? WHERE id = ?').run(endedAt.toISOString(), s, id);
+    if (s > 0) this.st.get('INSERT INTO play_sessions (game_id, started_at, seconds) VALUES (?, ?, ?)').run(id, new Date(endedAt.getTime() - s * 1000).toISOString(), s);
+  }
+
+  /** Play time of the last seven days (local days, today last), per day and per game. */
+  playStats(today = new Date()): PlayStats {
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
+    const rows = this.st.get('SELECT s.game_id AS gameId, s.started_at AS startedAt, s.seconds AS seconds FROM play_sessions s JOIN games g ON g.id = s.game_id WHERE s.started_at >= ? ORDER BY s.started_at')
+      .all(start.toISOString()) as Array<{ gameId: number; startedAt: string; seconds: number }>;
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      return { date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, seconds: 0 };
+    });
+    const games = new Map<number, { seconds: number; sessions: number }>();
+    for (const r of rows) {
+      const at = new Date(r.startedAt);
+      const i = Math.floor((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - start.getTime()) / 86_400_000);
+      if (i >= 0 && i < 7) days[i].seconds += r.seconds;
+      const g = games.get(r.gameId) ?? { seconds: 0, sessions: 0 };
+      g.seconds += r.seconds;
+      g.sessions++;
+      games.set(r.gameId, g);
+    }
+    return {
+      days,
+      weekSeconds: days.reduce((n, d) => n + d.seconds, 0),
+      games: [...games].map(([gameId, g]) => ({ gameId, ...g })).sort((a, b) => b.seconds - a.seconds),
+    };
   }
 
   remove(id: number) {
+    this.st.get('DELETE FROM play_sessions WHERE game_id = ?').run(id);
     this.st.get('DELETE FROM games WHERE id = ?').run(id);
   }
 }

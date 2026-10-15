@@ -658,6 +658,7 @@ async function main() {
     'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
     'launcher:updateStatus': () => selfUpdate.status(),
     'downloads:hold': () => downloads.holdStatus(),
+    'library:stats': () => gamesRepo.playStats(),
     'downloads:runNow': () => downloads.runNow(),
     'launcher:checkUpdate': () => selfUpdate.check(true),
     'launcher:downloadUpdate': () => selfUpdate.download(),

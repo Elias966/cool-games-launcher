@@ -13,6 +13,7 @@ import type {
   ProtonDbSummary,
   LauncherUpdate,
   DownloadHold,
+  PlayStats,
   WishItem,
   CatalogPage,
   ConsentRecord,
@@ -211,6 +212,7 @@ export const requests = {
   'app:diagnostics': z.undefined(),
   'launcher:updateStatus': z.undefined(),
   'downloads:hold': z.undefined(),
+  'library:stats': z.undefined(),
   'downloads:runNow': z.undefined(),
   'launcher:checkUpdate': z.undefined(),
   'launcher:downloadUpdate': z.undefined(),
@@ -313,6 +315,7 @@ export interface Responses {
   'launcher:updateStatus': LauncherUpdate;
   'downloads:hold': DownloadHold;
   'downloads:runNow': DownloadHold;
+  'library:stats': PlayStats;
   'launcher:checkUpdate': LauncherUpdate;
   'launcher:downloadUpdate': LauncherUpdate;
   'launcher:cancelUpdate': void;

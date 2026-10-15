@@ -11,8 +11,7 @@ import { BrowserDrawer } from '../components/BrowserDrawer';
 import { Button, EmptyState, Overlay } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import type { CatalogEntry, CatalogSort, DownloadItem, FacetValue, Platform } from '@shared/types';
-import { platformLabel } from '@shared/format';
-import { t, tk, locale } from '../i18n';
+import { t, tk, locale, platformName } from '../i18n';
 
 const PLATFORM_FILTERS: Platform[] = ['linux', 'windows'];
 const PAGE = 120;
@@ -348,7 +347,7 @@ export function StoreTab() {
               const on = platformFilter.includes(p);
               return (
                 <button key={p} className={`chip ${on ? 'is-on' : ''}`} aria-pressed={on} onClick={() => setPlatformFilter(on ? platformFilter.filter((x) => x !== p) : [...platformFilter, p])}>
-                  {platformLabel(p)}
+                  {platformName(p)}
                 </button>
               );
             })}

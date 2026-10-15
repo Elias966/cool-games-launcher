@@ -468,3 +468,12 @@ export interface DownloadHold {
   /** For "window": when downloads may run again (ISO time). */
   until: string | null;
 }
+
+/** Play time of the last seven days. */
+export interface PlayStats {
+  /** Seven local days, oldest first; date is YYYY-MM-DD. */
+  days: Array<{ date: string; seconds: number }>;
+  weekSeconds: number;
+  /** Games played this week, most played first. */
+  games: Array<{ gameId: number; seconds: number; sessions: number }>;
+}

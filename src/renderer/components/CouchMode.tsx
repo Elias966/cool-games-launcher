@@ -12,7 +12,8 @@ import { Icon } from './Icon';
 import { placeholderStyle } from './GameCard';
 import { pendingStatus } from '../tabs/LibraryTab';
 import type { CatalogEntry, DownloadItem, Game } from '@shared/types';
-import { t, locale } from '../i18n';
+import { t, locale, hours } from '../i18n';
+import { usePlayStats } from './PlayWeek';
 
 type Tile =
   | { kind: 'game'; key: string; game: Game }
@@ -32,6 +33,8 @@ const art = (t: Tile): { tile: string | null; hero: string | null; logo: string 
 const hideBroken = (e: { currentTarget: HTMLImageElement }) => { e.currentTarget.style.display = 'none'; };
 
 export function CouchMode() {
+  const stats = usePlayStats();
+  const weekOf = (id: number) => stats?.games.find((x) => x.gameId === id)?.seconds ?? 0;
   const library = useApp((s) => s.library);
   const downloads = useApp((s) => s.downloads);
   const catalogVersion = useApp((s) => s.catalogVersion);
@@ -125,7 +128,7 @@ export function CouchMode() {
         <div className="couch__hero-info">
           {logoOk ? <img className="couch__logo" src={a!.logo!} alt={a!.title} onError={() => setLogoFailed((f) => ({ ...f, [a!.logo!]: true }))} /> : <h1 className="couch__title">{a?.title ?? t('Nothing here yet')}</h1>}
           <p className="couch__meta">
-            {show?.kind === 'game' && <>{show.game.version ?? t('Installed')} · {show.game.kind === 'windows' ? t('Windows · Proton') : t('Native Linux')}{show.game.update?.state === 'available' ? t(' · Update available') : ''}</>}
+            {show?.kind === 'game' && <>{show.game.version ?? t('Installed')} · {show.game.kind === 'windows' ? t('Windows · Proton') : t('Native Linux')}{show.game.update?.state === 'available' ? t(' · Update available') : ''}{weekOf(show.game.id) ? ` · ${t('{time} this week', { time: hours(weekOf(show.game.id)) })}` : ''}</>}
             {pending && <>{pending.label}{pending.pct !== null ? ` · ${Math.round(pending.pct * 100)}%` : ''}</>}
             {show?.kind === 'store' && [
               steam?.reviews ? `${steam.reviews.label ? t(steam.reviews.label) : t('{p}% positive', { p: steam.reviews.percent })} · ${t('{p}% of {n}', { p: steam.reviews.percent, n: steam.reviews.count.toLocaleString(locale()) })}` : null,

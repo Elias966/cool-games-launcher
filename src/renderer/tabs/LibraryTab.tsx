@@ -9,9 +9,10 @@ import { Icon } from '../components/Icon';
 import type { DownloadItem, Game, LaunchOptions, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
-import { formatBytes, formatPlaytime, formatSpeed } from '@shared/format';
+import { PlayWeek, usePlayStats } from '../components/PlayWeek';
+import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
-import { t, tk, locale } from '../i18n';
+import { hours, playtime, t, tk, locale } from '../i18n';
 
 type Filter = 'all' | 'favorites' | 'linux' | 'windows';
 
@@ -56,6 +57,7 @@ export function LibraryTab() {
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const stats = usePlayStats();
 
   const shown = useMemo(
     () =>
@@ -100,6 +102,7 @@ export function LibraryTab() {
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
+          {stats && games.length > 0 && <PlayWeek stats={stats} />}
           <div className="page__actions">
             {games.some((g) => g.catalogId !== null) && (
               <Button variant="ghost" icon="reload" onClick={() => void attempt(async () => {
@@ -520,6 +523,7 @@ function GameLogo({ game }: { game: Game }) {
 
 function LibraryHero({ game }: { game: Game }) {
   const { reduced } = useMotionPrefs();
+  const week = usePlayStats()?.games.find((x) => x.gameId === game.id);
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [removePrefix, setRemovePrefix] = useState(false);
   const [args, setArgs] = useState(game.args);
@@ -549,7 +553,8 @@ function LibraryHero({ game }: { game: Game }) {
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
             {game.kind === 'windows' && game.art?.appid ? <ProtonDbBadge appid={game.art.appid} /> : null}
-            <span>{formatPlaytime(game.playtimeSeconds)}</span>
+            <span>{playtime(game.playtimeSeconds)}</span>
+            {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
           </p>
           <div className="hero__quick">
