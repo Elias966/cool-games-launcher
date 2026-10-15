@@ -148,13 +148,13 @@ export class Library {
     agentContext.session.on('enter', () => void this.pumpPreparation());
     downloads.on('completed', (id: number) => this.enqueuePreparation(id));
     worker.on('event:game-started', (e: { gameId: number; installer?: boolean }) => {
-      if (!e.installer && this.runningIds.size === 0) this.playingListener?.(true);
+      if (!e.installer && this.runningIds.size === 0) this.notifyPlaying(true);
       this.runningIds.add(e.gameId);
       this.broadcast();
     });
     worker.on('event:game-exit', (e: { gameId: number; code: number | null; seconds: number; installer: boolean; error?: string }) => {
       this.runningIds.delete(e.gameId);
-      if (this.runningIds.size === 0) this.playingListener?.(false);
+      if (this.runningIds.size === 0) this.notifyPlaying(false);
       if (e.installer) void this.afterInstaller(e.gameId);
       else { this.games.recordPlay(e.gameId, e.seconds); void this.afterPlay(e.gameId, e.seconds, e.code, !!e.error); }
       if (e.error) toast('error', tm('Could not start: {detail}', { detail: e.error }));
@@ -166,7 +166,7 @@ export class Library {
       this.downloads.broadcastList();
     });
     worker.on('exit', () => {
-      if (this.runningIds.size) this.playingListener?.(false);
+      if (this.runningIds.size) this.notifyPlaying(false);
       this.runningIds.clear();
       this.broadcast();
     });
@@ -387,10 +387,14 @@ export class Library {
   }
 
   private listener: ((games: Game[]) => void) | null = null;
-  private playingListener: ((playing: boolean) => void) | null = null;
+  private playingListeners = new Set<(playing: boolean) => void>();
+
+  private notifyPlaying(playing: boolean) {
+    for (const fn of this.playingListeners) fn(playing);
+  }
   /** Told when the first game starts and when the last one closes. */
   onPlaying(fn: (playing: boolean) => void) {
-    this.playingListener = fn;
+    this.playingListeners.add(fn);
   }
   /** Also told about Library changes (the tray's recent games). */
   onChanged(fn: (games: Game[]) => void) {

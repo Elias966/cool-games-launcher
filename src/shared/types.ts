@@ -323,6 +323,11 @@ export interface Settings {
   classifierThreads: number;
   maxConcurrentDownloads: number;
   downloadConnections: number;
+  /** Bandwidth cap for all downloads together, bytes per second; 0 = no limit. */
+  downloadSpeedLimit: number;
+  /** Downloads only run between these times (local, "HH:MM"; may cross midnight). */
+  downloadWindow: { enabled: boolean; start: string; end: string };
+  pauseDownloadsWhilePlaying: boolean;
   winePath: string;
   protonPath: string;
   umuPath: string;
@@ -455,4 +460,11 @@ export interface LauncherUpdate {
   checkedAt: string | null;
   /** Running from an AppImage that this user may replace. */
   canInstall: boolean;
+}
+
+/** Why downloads are waiting, when the schedule holds them. */
+export interface DownloadHold {
+  reason: 'window' | 'playing' | null;
+  /** For "window": when downloads may run again (ISO time). */
+  until: string | null;
 }
