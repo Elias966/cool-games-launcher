@@ -3270,12 +3270,6 @@ kbd {
 .st-progress--inline { margin: 0 0 6px; }
 .st-release-notes { margin: 0; padding: 10px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); color: var(--text-2); font-size: 0.85rem; white-space: pre-line; max-height: 180px; overflow: auto; }
 
-.hold-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 12px 16px; border-radius: 14px; border: 1px solid rgba(255, 196, 92, 0.35); background: rgba(255, 196, 92, 0.08); color: var(--text); }
-.hold-banner > span { flex: 1; }
-.hold-banner--quiet { border-color: var(--line); background: rgba(255, 255, 255, 0.04); color: var(--text-2); }
-.time-range { display: flex; align-items: center; gap: 8px; }
-.time-range input { width: 110px; }
-
 /* Play time of the last seven days, in the Library header. */
 .play-week { display: flex; align-items: flex-end; gap: 18px; margin-inline-start: auto; padding: 12px 16px; border-radius: 16px; border: 1px solid var(--line); background: rgba(10, 14, 24, 0.45); backdrop-filter: blur(14px); }
 .play-week__head { display: grid; gap: 2px; min-width: 120px; }

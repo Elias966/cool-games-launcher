@@ -12,7 +12,6 @@ import type {
   SaveBackup,
   ProtonDbSummary,
   LauncherUpdate,
-  DownloadHold,
   PlayStats,
   WishItem,
   CatalogPage,
@@ -53,9 +52,6 @@ export const settingsPatch = z
     classifierThreads: z.number().int().min(1).max(16),
     maxConcurrentDownloads: z.number().int().min(1).max(6),
     downloadConnections: z.number().int().min(1).max(16),
-    downloadSpeedLimit: z.number().int().min(0).max(10 * 1024 ** 3),
-    downloadWindow: z.object({ enabled: z.boolean(), start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/) }).strict(),
-    pauseDownloadsWhilePlaying: z.boolean(),
     winePath: z.string().max(4096),
     protonPath: z.string().max(4096),
     umuPath: z.string().max(4096),
@@ -211,9 +207,7 @@ export const requests = {
   'library:resetRuntimes': z.object({ id }).strict(),
   'app:diagnostics': z.undefined(),
   'launcher:updateStatus': z.undefined(),
-  'downloads:hold': z.undefined(),
   'library:stats': z.undefined(),
-  'downloads:runNow': z.undefined(),
   'launcher:checkUpdate': z.undefined(),
   'launcher:downloadUpdate': z.undefined(),
   'launcher:cancelUpdate': z.undefined(),
@@ -313,8 +307,6 @@ export interface Responses {
   'library:resetRuntimes': void;
   'app:diagnostics': { path: string };
   'launcher:updateStatus': LauncherUpdate;
-  'downloads:hold': DownloadHold;
-  'downloads:runNow': DownloadHold;
   'library:stats': PlayStats;
   'launcher:checkUpdate': LauncherUpdate;
   'launcher:downloadUpdate': LauncherUpdate;
@@ -350,7 +342,6 @@ export interface Events {
   /** A notification was clicked: show this game. */
   'app:openGame': { catalogId: number };
   'wishlist:changed': WishItem[];
-  'downloads:hold': DownloadHold;
   'launcher:update': LauncherUpdate;
 }
 

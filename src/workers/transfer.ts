@@ -19,45 +19,6 @@ export class TransferError extends Error {
   }
 }
 
-/**
- * One bandwidth cap shared by every transfer in this process (0 = no limit).
- * Each chunk is paid for after it arrives; while the account is in debt the
- * reader pauses, and TCP flow control slows the sender down.
- */
-export class Bandwidth {
-  private rate = 0;
-  private tokens = 0;
-  private last = Date.now();
-
-  setLimit(bytesPerSecond: number) {
-    this.rate = Math.max(0, Math.floor(bytesPerSecond));
-    this.tokens = 0;
-    this.last = Date.now();
-  }
-
-  get limit() {
-    return this.rate;
-  }
-
-  async take(bytes: number, signal?: AbortSignal): Promise<void> {
-    if (!this.rate) return;
-    const now = Date.now();
-    // At most a quarter second of saved-up allowance, so the cap holds over short spans too.
-    this.tokens = Math.min(this.rate / 4, this.tokens + ((now - this.last) * this.rate) / 1000);
-    this.last = now;
-    this.tokens -= bytes;
-    if (this.tokens >= 0) return;
-    const wait = Math.min(5000, (-this.tokens / this.rate) * 1000);
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(done, wait);
-      function done() { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); }
-      signal?.addEventListener('abort', done, { once: true });
-    });
-  }
-}
-
-export const bandwidth = new Bandwidth();
-
 export interface TransferSpec {
   url: string;
   headers: Record<string, string>;
@@ -261,7 +222,6 @@ async function runSingleTransfer(
       received += buf.length;
       windowBytes += buf.length;
       if (!out.write(buf)) await once(out, 'drain');
-      await bandwidth.take(buf.length, signal);
       const now = Date.now();
       if (now - windowStart >= 500) {
         const inst = (windowBytes * 1000) / (now - windowStart);
@@ -503,7 +463,6 @@ export async function runTransfer(
         s.received += written;
         received += written;
         progress();
-        await bandwidth.take(written, combined);
       }
       if (s.received !== s.end - s.start + 1) throw new TransferError('network', 'Range connection ended early.', true);
     };

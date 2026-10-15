@@ -21,7 +21,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'sources', label: tk('Websites & indexing'), icon: 'globe', blurb: tk('Sites the AI indexes, and how often'), keywords: 'websites sources add site rescan pages batch request gap rate limit refresh re-check interval indexing crawl learned layout' },
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
-  { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves speed limit bandwidth schedule night hours playing pause' },
+  { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
   { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('Adult-content visibility'), keywords: 'nsfw adult content consent classifier safe mature' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
   { id: 'sound', label: tk('Sound'), icon: 'volume', blurb: tk('Interface sounds and ambience'), keywords: 'sound audio volume hover click navigation ambient soundscape music mute alerts downloads' },
@@ -476,8 +476,6 @@ function CompatSection({ settings }: { settings: Settings }) {
   );
 }
 
-const SPEED_LIMITS = [0, 1, 2, 5, 10, 25, 50];
-
 function DownloadSection({ settings }: { settings: Settings }) {
   const pick = async (key: 'libraryDir' | 'downloadsDir', title: string) => {
     const dir = await attempt(() => api.invoke('settings:pickDirectory', { title }));
@@ -513,24 +511,6 @@ function DownloadSection({ settings }: { settings: Settings }) {
         </Row>
         <Row label={t('Downloads at once')} desc={t('Fewer simultaneous files give each one more bandwidth.')}>
           <Range label={t('Simultaneous downloads')} value={settings.maxConcurrentDownloads} min={1} max={6} onCommit={(v) => void update({ maxConcurrentDownloads: v })} />
-        </Row>
-      </Group>
-      <Group title={t('Schedule')}>
-        <Row label={t('Speed limit')} desc={t('A cap for all downloads together, so games and video calls stay smooth.')}>
-          <Choice label={t('Speed limit')} value={String(settings.downloadSpeedLimit)} options={SPEED_LIMITS.map((mb) => ({ value: String(mb * 1024 * 1024), label: mb ? t('{n} MB/s', { n: mb }) : tk('No limit') }))} onChange={(v) => void update({ downloadSpeedLimit: Number(v) })} />
-        </Row>
-        <Row label={t('Download only during these hours')} desc={t('For night-time or off-peak internet. Outside the hours, downloads wait in the queue; “Download now” in Downloads skips the wait once.')}>
-          <div className="st-inline">
-            <div className="time-range">
-              <input className="input mono" type="time" value={settings.downloadWindow.start} disabled={!settings.downloadWindow.enabled} aria-label={t('From')} onChange={(e) => e.target.value && void update({ downloadWindow: { ...settings.downloadWindow, start: e.target.value } })} />
-              <span className="muted">–</span>
-              <input className="input mono" type="time" value={settings.downloadWindow.end} disabled={!settings.downloadWindow.enabled} aria-label={t('Until')} onChange={(e) => e.target.value && void update({ downloadWindow: { ...settings.downloadWindow, end: e.target.value } })} />
-            </div>
-            <Switch checked={settings.downloadWindow.enabled} label={t('Download only during these hours')} onChange={(v) => void update({ downloadWindow: { ...settings.downloadWindow, enabled: v } })} />
-          </div>
-        </Row>
-        <Row label={t('Pause downloads while playing')} desc={t('Gives online games the whole connection. Downloads continue when the game closes.')}>
-          <Switch checked={settings.pauseDownloadsWhilePlaying} label={t('Pause downloads while playing')} onChange={(v) => void update({ pauseDownloadsWhilePlaying: v })} />
         </Row>
       </Group>
       <Group title={t('Folders')}>

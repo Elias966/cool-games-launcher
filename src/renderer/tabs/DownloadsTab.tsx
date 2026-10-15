@@ -1,12 +1,12 @@
 import { KineticTitle } from '../components/KineticTitle';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { attempt, setState, setTab, useApp } from '../state';
 import { Button, Dialog, EmptyState, IconButton, ProgressRing } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { placeholderStyle } from '../components/GameCard';
-import type { DownloadHold, DownloadItem } from '@shared/types';
+import type { DownloadItem } from '@shared/types';
 import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { duration, t, tk, locale } from '../i18n';
@@ -23,47 +23,8 @@ const STATE_LABEL: Record<DownloadItem['state'], string> = {
   cancelled: tk('Cancelled'),
 };
 
-function useDownloadHold() {
-  const [hold, setHold] = useState<DownloadHold>({ reason: null, until: null });
-  useEffect(() => {
-    let live = true;
-    void api.invoke('downloads:hold').then((h) => { if (live) setHold(h); }).catch(() => undefined);
-    const off = api.on('downloads:hold', (h) => { if (live) setHold(h); });
-    return () => { live = false; off(); };
-  }, []);
-  return hold;
-}
-
-/** Shown while the schedule holds downloads: closed download hours, or a game being played. */
-function HoldBanner({ hold, waiting }: { hold: DownloadHold; waiting: number }) {
-  const limit = useApp((s) => s.settings?.downloadSpeedLimit ?? 0);
-  if (!hold.reason && !limit) return null;
-  if (!hold.reason) {
-    return (
-      <div className="hold-banner hold-banner--quiet" role="status">
-        <Icon name="sliders" size={16} />
-        <span>{t('Speed limited to {speed} in total.', { speed: formatSpeed(limit) })}</span>
-        <Button size="sm" variant="ghost" onClick={() => setTab('settings')}>{t('Change')}</Button>
-      </div>
-    );
-  }
-  const time = hold.until ? new Date(hold.until).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) : '';
-  return (
-    <div className="hold-banner" role="status">
-      <Icon name="clock" size={18} />
-      <span>
-        {hold.reason === 'playing'
-          ? t('Downloads are paused while you play. They continue when the game closes.')
-          : t('Outside your download hours. {n} waiting downloads start at {time}.', { n: waiting, time })}
-      </span>
-      {hold.reason === 'window' && <Button size="sm" variant="secondary" icon="downloads" onClick={() => void attempt(() => api.invoke('downloads:runNow'))}>{t('Download now')}</Button>}
-    </div>
-  );
-}
-
 export function DownloadsTab() {
   const downloads = useApp((s) => s.downloads);
-  const hold = useDownloadHold();
   const groups = useMemo(() => {
     const attention = downloads.filter((d) => d.state === 'needs-user' || d.state === 'needs-resolution' || (d.state === 'paused' && d.errorCode === 'disk-full'));
     const live = downloads.filter((d) => ['active', 'queued', 'resolving'].includes(d.state) || (d.state === 'paused' && d.errorCode !== 'disk-full'));
@@ -97,7 +58,6 @@ export function DownloadsTab() {
             {t('Choose Download on a game in the Store. The AI finds the file, and the transfer appears here.')}</EmptyState>
         ) : (
           <>
-            <HoldBanner hold={hold} waiting={groups.live.filter((d) => d.state === 'queued').length} />
             <TransferMap items={[...groups.live, ...groups.attention]} />
             {groups.attention.length > 0 && <Section title={t('Needs attention')} items={groups.attention} />}
             {groups.live.length > 0 && <Section title={t('Queue')} items={groups.live} reorder />}

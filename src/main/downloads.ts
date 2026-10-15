@@ -10,8 +10,7 @@ import type { DownloadsRepo, DownloadRecord, SettingsRepo, CatalogRepo } from '.
 import { toDownloadItem } from './repos';
 import type { PolicyService } from './policy-service';
 import { publish, toast } from './bus';
-import type { DownloadErrorCode, DownloadHold, DownloadItem, UserPrompt } from '@shared/types';
-import { inWindow, nextOpening } from '@shared/schedule';
+import type { DownloadErrorCode, DownloadItem, UserPrompt } from '@shared/types';
 import { fileNameFromUrl } from '@shared/urls';
 import { uniquePath, sanitizeFileName, partialBytes, removePartial } from '../workers/transfer';
 import type { BrowserClient, BrowserDownload } from './browser-client';
@@ -32,11 +31,6 @@ export class DownloadManager extends EventEmitter {
   private browserTargets = new Map<number, string>();
   private browserWatch = new Map<number, NodeJS.Timeout>();
   private listTimer: NodeJS.Timeout | null = null;
-  private playing = false;
-  /** "Download now" during closed hours: the hours are ignored until this time. */
-  private windowOverrideUntil = 0;
-  private hold: DownloadHold = { reason: null, until: null };
-  private appliedLimit = -1;
 
   constructor(
     private worker: WorkerHost,
@@ -102,68 +96,9 @@ export class DownloadManager extends EventEmitter {
         if (this.browserWatch.has(d.id)) continue;
         this.repo.update(d.id, { state: 'queued' });
       }
-      this.appliedLimit = -1;
-      setTimeout(() => { this.applySchedule(); this.pump(); }, 1500);
+      setTimeout(() => this.pump(), 1500);
     });
     policy.on('changed', () => this.broadcastList());
-    // The download hours open and close by the clock.
-    setInterval(() => this.applySchedule(), 30_000).unref();
-  }
-
-  /** Why downloads are held right now: closed download hours, or a game being played. */
-  holdStatus(): DownloadHold {
-    return { ...this.hold };
-  }
-
-  private computeHold(now = new Date()): DownloadHold {
-    const s = this.settings.get();
-    if (this.playing && s.pauseDownloadsWhilePlaying) return { reason: 'playing', until: null };
-    const w = s.downloadWindow;
-    if (w?.enabled && now.getTime() >= this.windowOverrideUntil && !inWindow(now, w.start, w.end)) return { reason: 'window', until: nextOpening(now, w.start).toISOString() };
-    return { reason: null, until: null };
-  }
-
-  /** A game started or stopped. */
-  setPlaying(playing: boolean) {
-    this.playing = playing;
-    this.applySchedule();
-  }
-
-  /** Ignores the download hours until they would open anyway. */
-  runNow(): DownloadHold {
-    const w = this.settings.get().downloadWindow;
-    const now = new Date();
-    if (w?.enabled) this.windowOverrideUntil = nextOpening(now, w.start).getTime();
-    this.applySchedule();
-    return this.holdStatus();
-  }
-
-  /** Applies the speed limit and the hold: held transfers stop and wait in the queue; released ones start. */
-  applySchedule() {
-    const s = this.settings.get();
-    const limit = Math.max(0, s.downloadSpeedLimit ?? 0);
-    if (limit !== this.appliedLimit) {
-      this.appliedLimit = limit;
-      void this.worker.call('setLimit', { bytesPerSecond: limit }).catch(() => { this.appliedLimit = -1; });
-    }
-    const hold = this.computeHold();
-    const changed = hold.reason !== this.hold.reason || hold.until !== this.hold.until;
-    this.hold = hold;
-    if (changed) publish('downloads:hold', this.holdStatus());
-    if (hold.reason) {
-      for (const d of this.repo.byState('active')) {
-        if (this.browserWatch.has(d.id)) continue; // a Firefox download cannot be paused
-        this.repo.update(d.id, { state: 'queued' });
-        this.live.delete(d.id);
-        void this.worker.call('stop', { id: d.id }).catch(() => undefined).then(() => {
-          this.repo.update(d.id, { receivedBytes: partialBytes(d.partPath) });
-          this.broadcastList();
-        });
-      }
-      if (changed) this.broadcastList();
-    } else if (changed) {
-      this.pump();
-    }
   }
 
   /** Called once at startup: everything that was in flight resumes from its checkpoint. */
@@ -294,7 +229,6 @@ export class DownloadManager extends EventEmitter {
   }
 
   pump() {
-    if (this.hold.reason) return;
     const max = this.settings.get().maxConcurrentDownloads;
     const all = this.repo.list();
     let active = all.filter((d) => d.state === 'active').length;

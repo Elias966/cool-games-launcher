@@ -254,7 +254,6 @@ async function main() {
   const library = new Library(installWorker, gamesRepo, downloadsRepo, downloads, catalogRepo, settingsRepo, policy, () => mainWindow, compat, {agent: gameAgent, session, foreground});
   libraryRef = library;
   // While a game runs: the model is unloaded, AI requests wait, and indexing pauses.
-  library.onPlaying((playing) => downloads.setPlaying(playing));
   library.onPlaying((playing) => {
     const free = playing && settingsRepo.get().freeGpuWhilePlaying;
     foreground.hold('gaming', free);
@@ -328,7 +327,6 @@ async function main() {
   });
 
   handleMedia({ artworkDir: paths.artwork, catalog: catalogRepo, policy, browserView });
-  downloads.applySchedule();
   downloads.recover();
   compat.recover();
   models.recover();
@@ -408,7 +406,6 @@ async function main() {
       const before = settingsRepo.get();
       const s = settingsRepo.update(patch);
       setMainLanguage(s.language);
-      downloads.applySchedule();
       const aiKeys: Array<keyof Settings> = ['aiThreads', 'aiContextSize', 'aiAcceleration', 'aiImageTokens', 'aiIdleUnloadMinutes', 'classifierThreads'];
       if (aiKeys.some((k) => before[k] !== s[k])) await initInference(s);
       if (before.sendDoNotTrack !== s.sendDoNotTrack) await initBrowser(s);
@@ -657,9 +654,7 @@ async function main() {
     'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
     'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
     'launcher:updateStatus': () => selfUpdate.status(),
-    'downloads:hold': () => downloads.holdStatus(),
     'library:stats': () => gamesRepo.playStats(),
-    'downloads:runNow': () => downloads.runNow(),
     'launcher:checkUpdate': () => selfUpdate.check(true),
     'launcher:downloadUpdate': () => selfUpdate.download(),
     'launcher:cancelUpdate': () => selfUpdate.cancel(),

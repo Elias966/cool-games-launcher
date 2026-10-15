@@ -1,7 +1,7 @@
 // Downloads utility process: runs transfers independently of the UI, the
 // browser and the AI, so they keep going when the user leaves the Store.
 import { emit, serve } from './rpc';
-import { bandwidth, probeUrl, runTransfer, TransferError, removePartial, type TransferSpec } from './transfer';
+import { probeUrl, runTransfer, TransferError, removePartial, type TransferSpec } from './transfer';
 
 process.title = 'cgl-downloads';
 
@@ -57,10 +57,5 @@ serve({
   },
   list() {
     return [...active.keys()];
-  },
-  /** Bandwidth cap for all transfers together, in bytes per second (0 = no limit). */
-  setLimit(p: { bytesPerSecond: number }) {
-    bandwidth.setLimit(p.bytesPerSecond);
-    return { ok: true };
   },
 });
