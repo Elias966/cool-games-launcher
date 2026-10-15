@@ -1,5 +1,6 @@
 import { ADULT_ACCEPT_LABEL, ADULT_WARNING_TEXT, ADULT_WARNING_TITLE } from '@shared/policy';
 import { Dialog } from './ui';
+import { t } from '../i18n';
 
 /** The adult-content warning. Cancel is focused by default and never enables anything. */
 export function ConsentDialog({ open, onCancel, onAccept }: { open: boolean; onCancel: () => void; onAccept: () => void }) {
@@ -13,7 +14,7 @@ export function ConsentDialog({ open, onCancel, onAccept }: { open: boolean; onC
       actions={
         <>
           <button className="btn btn--secondary btn--md" onClick={onCancel} data-autofocus>
-            <span>Cancel</span>
+            <span>{t('Cancel')}</span>
           </button>
           <button className="btn btn--danger btn--md" onClick={onAccept}>
             <span>{ADULT_ACCEPT_LABEL}</span>

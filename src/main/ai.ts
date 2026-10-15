@@ -9,6 +9,7 @@ import type { AiStatus } from '@shared/types';
 import { publish } from './bus';
 import { isCancelled } from '@shared/worker-protocol';
 import {AGENT_LABELS, MODEL_CATALOG, type AgentRole, type ModelPin} from '@shared/models';
+import { tm } from './i18n';
 
 export type ChatContent = string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 export interface ToolCall { id:string;type:'function';function:{name:string;arguments:string} }
@@ -52,7 +53,7 @@ export class AiService {
         return;
       }
       if (this.gaming) { this.setStatus({ modelLoaded: s.modelLoaded, accel: s.accel }); return; }
-      this.setStatus({ phase: s.phase, detail: s.detail, modelLoaded: s.modelLoaded, accel: s.accel });
+      this.setStatus({ phase: s.phase, detail: s.detail && workerText(s.detail), modelLoaded: s.modelLoaded, accel: s.accel });
     });
     session.on('enter', () => this.setStatus({ storeActive: true }));
     session.on('leave', () => this.setStatus({ storeActive: false, phase: 'idle', detail: null, context: null }));
@@ -81,7 +82,7 @@ export class AiService {
       let release!: () => void;
       const done = new Promise<void>((r) => { release = r; });
       this.gaming = { done, release };
-      this.setStatus({ phase: 'paused', detail: 'A game is running — the AI waits so the game has the whole GPU', context: null });
+      this.setStatus({ phase: 'paused', detail: tm('A game is running — the AI waits so the game has the whole GPU'), context: null });
       await this.unload();
     } else if (!playing && this.gaming) {
       const g = this.gaming;
@@ -117,7 +118,7 @@ export class AiService {
     this.session.assertLive(token,'agent tool request');
     const modelId=this.agents?.()[role];
     if(!modelId)throw Error('No local model is assigned to this agent');
-    this.setStatus({phase:'thinking',detail:AGENT_LABELS[role]});
+    this.setStatus({phase:'thinking',detail:role==='browsing'?tm('Browser agent'):role==='computer'?tm('Computer agent'):tm('Page analysis')});
     const response=await this.worker.call<{message:AgentMessage;modelId:string}>('chat',{modelId,messages,tools,temperature,maxTokens,priority:role==='browsing'?10:5},token.signal);
     this.session.assertLive(token,'agent tool response');
     return response;
@@ -189,4 +190,12 @@ export function parseJsonLoose<T>(text: string): T {
     if (start >= 0 && end > start) return JSON.parse(t.slice(start, end + 1)) as T;
     throw new Error('The AI returned an unreadable answer');
   }
+}
+
+/** Status texts from the inference worker, in the chosen language. */
+function workerText(d: string): string {
+  if (d === 'Loading model (Vulkan)') return tm('Loading model (Vulkan)');
+  if (d === 'Loading model (CPU)') return tm('Loading model (CPU)');
+  const m = /^Model server stopped \(code (.+)\)$/.exec(d);
+  return m ? tm('Model server stopped (code {code})', { code: m[1] }) : d;
 }

@@ -12,6 +12,7 @@ import { Icon } from './Icon';
 import { placeholderStyle } from './GameCard';
 import { pendingStatus } from '../tabs/LibraryTab';
 import type { CatalogEntry, DownloadItem, Game } from '@shared/types';
+import { t, locale } from '../i18n';
 
 type Tile =
   | { kind: 'game'; key: string; game: Game }
@@ -59,12 +60,12 @@ export function CouchMode() {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     const installed = library.filter((g) => g.status === 'installed').sort((a, b) => (b.lastPlayedAt ?? b.addedAt).localeCompare(a.lastPlayedAt ?? a.addedAt));
-    if (installed.length) out.push({ title: 'Continue playing', tiles: installed.map((game) => ({ kind: 'game', key: `g${game.id}`, game })) });
+    if (installed.length) out.push({ title: t('Continue playing'), tiles: installed.map((game) => ({ kind: 'game', key: `g${game.id}`, game })) });
     const pending = downloads.filter((d) => d.catalogId !== null && !d.updateFor && (!d.groupId || d.groupId === d.id) && d.state !== 'cancelled' && !(d.state === 'completed' && d.installState === 'installed') && !library.some((g) => g.catalogId === d.catalogId));
-    if (pending.length) out.push({ title: 'On the way', tiles: pending.map((d) => ({ kind: 'pending', key: `d${d.id}`, d, parts: d.groupId ? downloads.filter((x) => x.groupId === d.groupId) : [] })) });
-    if (lists.trending.length) out.push({ title: 'Trending', tiles: lists.trending.map((entry) => ({ kind: 'store', key: `t${entry.id}`, entry })) });
-    if (lists.popular.length) out.push({ title: 'Popular', tiles: lists.popular.map((entry) => ({ kind: 'store', key: `p${entry.id}`, entry })) });
-    if (lists.wishlist.length) out.push({ title: 'Your wishlist', tiles: lists.wishlist.map((entry) => ({ kind: 'store', key: `w${entry.id}`, entry })) });
+    if (pending.length) out.push({ title: t('On the way'), tiles: pending.map((d) => ({ kind: 'pending', key: `d${d.id}`, d, parts: d.groupId ? downloads.filter((x) => x.groupId === d.groupId) : [] })) });
+    if (lists.trending.length) out.push({ title: t('Trending'), tiles: lists.trending.map((entry) => ({ kind: 'store', key: `t${entry.id}`, entry })) });
+    if (lists.popular.length) out.push({ title: t('Popular'), tiles: lists.popular.map((entry) => ({ kind: 'store', key: `p${entry.id}`, entry })) });
+    if (lists.wishlist.length) out.push({ title: t('Your wishlist'), tiles: lists.wishlist.map((entry) => ({ kind: 'store', key: `w${entry.id}`, entry })) });
     return out;
   }, [library, downloads, lists]);
 
@@ -80,7 +81,7 @@ export function CouchMode() {
   const act = useCallback((a: PadAction): boolean => {
     if (detail) {
       if (a === 'back') { setDetail(null); sound.play('close'); }
-      if (a === 'accept') { sound.play('download'); void attempt(() => api.invoke('download:start', { catalogId: detail.id }), `${detail.title} is on its way — it appears under “On the way”.`).then(() => setDetail(null)); }
+      if (a === 'accept') { sound.play('download'); void attempt(() => api.invoke('download:start', { catalogId: detail.id }), t('{title} is on its way — it appears under “On the way”.', { title: detail.title })).then(() => setDetail(null)); }
       if (a === 'secondary') void attempt(async () => { if (detail.wishlisted) await api.invoke('wishlist:remove', { catalogId: detail.id }); else await api.invoke('wishlist:add', { catalogId: detail.id }); }).then(() => setDetail({ ...detail, wishlisted: !detail.wishlisted }));
       if (a === 'menu') exit();
       return true;
@@ -93,12 +94,12 @@ export function CouchMode() {
     if (a === 'back' || a === 'menu') exit();
     if (a === 'accept' && focused) {
       sound.play('click');
-      if (focused.kind === 'game') void attempt(() => api.invoke('library:launch', { id: focused.game.id }), `Starting ${focused.game.title}…`);
+      if (focused.kind === 'game') void attempt(() => api.invoke('library:launch', { id: focused.game.id }), t('Starting {title}…', { title: focused.game.title }));
       if (focused.kind === 'store') setDetail(focused.entry);
     }
     if (a === 'secondary' && focused?.kind === 'store') {
       const e = focused.entry;
-      void attempt(async () => { if (e.wishlisted) await api.invoke('wishlist:remove', { catalogId: e.id }); else await api.invoke('wishlist:add', { catalogId: e.id }); }, e.wishlisted ? 'Removed from your wishlist.' : 'Added to your wishlist.');
+      void attempt(async () => { if (e.wishlisted) await api.invoke('wishlist:remove', { catalogId: e.id }); else await api.invoke('wishlist:add', { catalogId: e.id }); }, e.wishlisted ? t('Removed from your wishlist.') : t('Added to your wishlist.'));
     }
     return true;
   }, [detail, pos, row, rows.length, focused, exit]);
@@ -117,28 +118,28 @@ export function CouchMode() {
   const pending = show?.kind === 'pending' ? pendingStatus(show.d, show.parts) : null;
   const logoOk = a?.logo && !logoFailed[a.logo];
   return (
-    <div className="couch" role="application" aria-label="Couch mode">
+    <div className="couch" role="application" aria-label={t('Couch mode')}>
       <div className="couch__hero" key={show?.key ?? 'none'} style={placeholderStyle(a?.title ?? 'couch')}>
         {a?.hero && <img className="couch__hero-art" src={a.hero} alt="" onError={hideBroken} />}
         <div className="couch__hero-shade" />
         <div className="couch__hero-info">
-          {logoOk ? <img className="couch__logo" src={a!.logo!} alt={a!.title} onError={() => setLogoFailed((f) => ({ ...f, [a!.logo!]: true }))} /> : <h1 className="couch__title">{a?.title ?? 'Nothing here yet'}</h1>}
+          {logoOk ? <img className="couch__logo" src={a!.logo!} alt={a!.title} onError={() => setLogoFailed((f) => ({ ...f, [a!.logo!]: true }))} /> : <h1 className="couch__title">{a?.title ?? t('Nothing here yet')}</h1>}
           <p className="couch__meta">
-            {show?.kind === 'game' && <>{show.game.version ?? 'Installed'} · {show.game.kind === 'windows' ? 'Windows · Proton' : 'Native Linux'}{show.game.update?.state === 'available' ? ' · Update available' : ''}</>}
+            {show?.kind === 'game' && <>{show.game.version ?? t('Installed')} · {show.game.kind === 'windows' ? t('Windows · Proton') : t('Native Linux')}{show.game.update?.state === 'available' ? t(' · Update available') : ''}</>}
             {pending && <>{pending.label}{pending.pct !== null ? ` · ${Math.round(pending.pct * 100)}%` : ''}</>}
             {show?.kind === 'store' && [
-              steam?.reviews ? `${steam.reviews.label} · ${steam.reviews.percent}% of ${steam.reviews.count.toLocaleString()}` : null,
+              steam?.reviews ? `${steam.reviews.label ? t(steam.reviews.label) : t('{p}% positive', { p: steam.reviews.percent })} · ${t('{p}% of {n}', { p: steam.reviews.percent, n: steam.reviews.count.toLocaleString(locale()) })}` : null,
               steam?.released ? String(new Date(steam.released).getFullYear()) : null,
-              show.entry.installedGameId ? 'In your Library' : null,
-              show.entry.wishlisted ? '♥ Wishlisted' : null,
+              show.entry.installedGameId ? t('In your Library') : null,
+              show.entry.wishlisted ? t('♥ Wishlisted') : null,
             ].filter(Boolean).join(' · ')}
           </p>
           {show?.kind === 'store' && show.entry.description && <p className="couch__desc">{show.entry.description}</p>}
           <div className="couch__hints">
-            {show?.kind === 'game' && <span><b>A</b> Play</span>}
-            {show?.kind === 'store' && <span><b>A</b> {detail ? (show.entry.installedGameId ? 'Download again' : 'Download') : 'Open'}</span>}
-            {show?.kind === 'store' && <span><b>Y</b> {show.entry.wishlisted ? 'Remove from wishlist' : 'Wishlist'}</span>}
-            <span><b>B</b> {detail ? 'Back' : 'Leave couch mode'}</span>
+            {show?.kind === 'game' && <span><b>A</b> {' '}{t('Play')}</span>}
+            {show?.kind === 'store' && <span><b>A</b> {detail ? (show.entry.installedGameId ? t('Download again') : t('Download')) : t('Open')}</span>}
+            {show?.kind === 'store' && <span><b>Y</b> {show.entry.wishlisted ? t('Remove from wishlist') : t('Wishlist')}</span>}
+            <span><b>B</b> {detail ? t('Back') : t('Leave couch mode')}</span>
           </div>
         </div>
       </div>
@@ -147,12 +148,12 @@ export function CouchMode() {
           <section key={r.title} className={`couch__row ${ri === pos.row ? 'is-active' : ''}`} aria-label={r.title}>
             <h2 className="couch__row-title">{r.title}</h2>
             <div className="couch__strip">
-              {r.tiles.map((t, ci) => {
-                const ta = art(t);
+              {r.tiles.map((tile, ci) => {
+                const ta = art(tile);
                 const focusedTile = ri === pos.row && ci === Math.min(pos.col, r.tiles.length - 1);
-                const st = t.kind === 'pending' ? pendingStatus(t.d, t.parts) : null;
+                const st = tile.kind === 'pending' ? pendingStatus(tile.d, tile.parts) : null;
                 return (
-                  <button key={t.key} className={`couch__tile ${focusedTile ? 'is-focused' : ''} ${t.kind === 'pending' ? 'is-pending' : ''}`} style={placeholderStyle(ta.title)}
+                  <button key={tile.key} className={`couch__tile ${focusedTile ? 'is-focused' : ''} ${tile.kind === 'pending' ? 'is-pending' : ''}`} style={placeholderStyle(ta.title)}
                     onClick={() => { setPos({ row: ri, col: ci }); act('accept'); }} onMouseEnter={() => setPos({ row: ri, col: ci })} tabIndex={-1}>
                     {ta.tile && <img src={ta.tile} alt="" loading="lazy" onError={hideBroken} />}
                     {st && <span className="couch__tile-progress"><span style={{ width: `${(st.pct ?? 0) * 100}%` }} /></span>}
@@ -163,9 +164,9 @@ export function CouchMode() {
             </div>
           </section>
         ))}
-        {!rows.length && <p className="couch__empty">Add websites in Settings to fill couch mode with games.</p>}
+        {!rows.length && <p className="couch__empty">{t('Add websites in Settings to fill couch mode with games.')}</p>}
       </div>
-      <button className="couch__exit" onClick={exit} aria-label="Leave couch mode"><Icon name="close" size={22} /></button>
+      <button className="couch__exit" onClick={exit} aria-label={t('Leave couch mode')}><Icon name="close" size={22} /></button>
     </div>
   );
 }

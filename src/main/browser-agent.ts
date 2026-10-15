@@ -10,6 +10,7 @@ import {CancelledError} from '@shared/worker-protocol';
 import {isCatalogNavigation,isFileUrl} from '@shared/download-evidence';
 import {faraSystemPrompt} from '@shared/fara-chat';
 import {hostOf,siteKey} from '@shared/urls';
+import { tm } from './i18n';
 
 const actionSchema=z.object({action:z.string(),element:z.number().int().min(0).optional(),coordinate:z.tuple([z.number().min(0).max(1000),z.number().min(0).max(1000)]).optional(),keys:z.array(z.string()).max(4).optional(),text:z.string().max(2000).optional(),pixels:z.number().min(-2000).max(2000).optional(),url:z.string().max(2048).optional(),query:z.string().max(200).optional(),fact:z.string().max(1000).optional(),question:z.string().max(1000).optional(),time:z.number().min(0).max(30).optional(),answer:z.string().max(2000).optional()}).strict();
 export type ComputerAction=z.infer<typeof actionSchema>;
@@ -52,7 +53,7 @@ export class BrowserAgent {
   reset(context:BrowserContext){for(const key of this.tasks.keys())if(key.includes(`:${context}:`))this.tasks.delete(key);}
   async next(ex:PageExtract,context:BrowserContext,token:SessionToken,goal:string,observation?:string):Promise<BrowserAgentAction>{
     this.session.assertLive(token,'Fara observation');
-    this.ai.setStatus({phase:'thinking',detail:'Local AI is looking at the page',context});
+    this.ai.setStatus({phase:'thinking',detail:tm('Local AI is looking at the page'),context});
     const key=`${token.epoch}:${context}:${goal}`;
     let state=this.tasks.get(key);
     if(!state){
@@ -195,13 +196,13 @@ export class BrowserAgent {
 /** Short human-readable status for the drawer. */
 function describe(a:ComputerAction){
   switch(a.action){
-    case 'left_click':case 'double_click':case 'triple_click':case 'right_click':return 'Local AI is clicking';
-    case 'type':return 'Local AI is typing';
-    case 'scroll':case 'hscroll':return 'Local AI is scrolling';
-    case 'visit_url':return 'Local AI is opening a link';
-    case 'web_search':return `Local AI is searching: ${a.query??''}`.slice(0,120);
-    case 'read_page_answer_question':return 'Local AI is reading the page';
-    case 'wait':return 'Local AI is waiting for the page';
-    default:return `Local AI: ${a.action.replace(/_/g,' ')}`;
+    case 'left_click':case 'double_click':case 'triple_click':case 'right_click':return tm('Local AI is clicking');
+    case 'type':return tm('Local AI is typing');
+    case 'scroll':case 'hscroll':return tm('Local AI is scrolling');
+    case 'visit_url':return tm('Local AI is opening a link');
+    case 'web_search':return tm('Local AI is searching: {query}',{query:a.query??''}).slice(0,120);
+    case 'read_page_answer_question':return tm('Local AI is reading the page');
+    case 'wait':return tm('Local AI is waiting for the page');
+    default:return tm('Local AI: {action}',{action:a.action.replace(/_/g,' ')});
   }
 }

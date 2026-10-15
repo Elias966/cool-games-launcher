@@ -6,6 +6,7 @@ import type {DownloadsRepo,SettingsRepo} from './repos';
 import type {DownloadManager} from './downloads';
 import type {WorkerHost} from './worker-host';
 import {publish,toast} from './bus';
+import { tm } from './i18n';
 
 export class ModelManager {
  private verifying=new Set<number>();
@@ -64,7 +65,7 @@ export class ModelManager {
    this.deps.repo.update(entry.id,{modelAsset:{modelId:id,role:f.role},installState:'none',installDetail:'Local AI component — waiting to download',retries:0,finalPath:null,receivedBytes:0});
    this.deps.downloads.handoff(entry.id,f.url,{},`${id}-${f.role}.gguf`,f.size);
   }
-  this.broadcast();toast('info',`Downloading ${pin.name} and its vision component. Pause or resume in Downloads.`);return this.list();
+  this.broadcast();toast('info',tm('Downloading {name} and its vision component. Pause or resume in Downloads.',{name:pin.name}));return this.list();
  }
  /** One model for every role (the recommended setup): a single reload. */
  async assignAll(id:string){
@@ -103,10 +104,10 @@ export class ModelManager {
    const receipt=join(this.dir(modelId),role+'.verified.json');writeFileSync(receipt+'.tmp',JSON.stringify({sha256:hash,size:pin.size}));renameSync(receipt+'.tmp',receipt);
    this.deps.repo.update(id,{finalPath:dest,installState:'installed',installDetail:'Verified local AI component'});
    if(this.ready(modelId)){
-    toast('success',`${this.pin(modelId).name} is ready for its assigned agent.`);
+    toast('success',tm('{name} is ready for its assigned agent.',{name:this.pin(modelId).name}));
     if(this.deps.settings.get().aiModelId===modelId||Object.values(this.deps.settings.get().aiAgents??DEFAULT_AGENTS).includes(modelId))await this.deps.onSelected();
    }
-  }catch(e){this.deps.repo.update(id,{installState:'failed',installDetail:(e as Error).message});toast('error',`Model setup failed: ${(e as Error).message}`);}
+  }catch(e){this.deps.repo.update(id,{installState:'failed',installDetail:(e as Error).message});toast('error',tm('Model setup failed: {detail}',{detail:(e as Error).message}));}
   finally{this.verifying.delete(id);this.broadcast();}
  }
 }

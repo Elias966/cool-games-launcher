@@ -8,6 +8,7 @@ import type { DownloadsRepo, SettingsRepo } from './repos';
 import type { DownloadManager } from './downloads';
 import type { ProtonPackage } from '@shared/types';
 import { publish, toast } from './bus';
+import { tm } from './i18n';
 
 export interface ProtonPin { version: string; url: string; sha256: string; size: number; dir: string }
 export interface CompatStatus { protonPath: string | null; provisioning: boolean; python3: boolean }
@@ -95,7 +96,7 @@ export class CompatManager {
       const d = existing ?? this.deps.repo.create({ catalogId: null, title: `${pin.version} (Windows compatibility)`, sourceHost: 'github.com', state: 'queued' });
       this.deps.repo.update(d.id, { compatPackage: pin, installState: 'none', installDetail: null, receivedBytes: 0, retries: 0 });
       this.deps.downloads.handoff(d.id, pin.url, {}, pin.url.split('/').pop() ?? `${pin.dir}.tar.gz`, pin.size);
-      toast('info', `Downloading ${pin.version}. Progress is available in Downloads.`);
+      toast('info', tm('Downloading {name}. Progress is available in Downloads.', { name: pin.version }));
     }
     return this.status();
   }
@@ -126,7 +127,7 @@ export class CompatManager {
   notifyRuntime() {
     if (this.runtimeNoticeShown) return;
     this.runtimeNoticeShown = true;
-    toast('info', 'First Proton launch downloads the Steam Linux Runtime; this can take a few minutes.');
+    toast('info', tm('First Proton launch downloads the Steam Linux Runtime; this can take a few minutes.'));
   }
 
   private async installArchive(id: number, archive: string) {
@@ -156,11 +157,11 @@ export class CompatManager {
       this.deps.settings.update({ protonPath: dest });
       publish('settings:changed', this.deps.settings.get());
       this.deps.repo.update(id, { installState: 'installed', installDetail: `${pin.version} is ready. Press Play in the Library.` });
-      toast('success', 'Proton is ready. Windows games can now use the Proton runner.');
+      toast('success', tm('Proton is ready. Windows games can now use the Proton runner.'));
       for (const run of this.waiting.splice(0)) run();
     } catch (e) {
       this.deps.repo.update(id, { installState: 'failed', installDetail: (e as Error).message });
-      toast('error', `Proton setup failed: ${(e as Error).message}`);
+      toast('error', tm('Proton setup failed: {detail}', { detail: (e as Error).message }));
     } finally {
       try { rmSync(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* a retry removes interrupted staging before extraction */ }
       this.installing = null;

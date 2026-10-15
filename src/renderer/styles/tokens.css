@@ -1,6 +1,7 @@
 @import '@fontsource-variable/space-grotesk';
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/noto-sans-arabic';
 
 :root {
   color-scheme: dark;
@@ -38,8 +39,8 @@
   --nsfw: #ff4f8b;
 
   /* Type */
-  --font-display: 'Space Grotesk Variable', 'Space Grotesk', system-ui, sans-serif;
-  --font-body: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-display: 'Space Grotesk Variable', 'Space Grotesk', 'Noto Sans Arabic Variable', system-ui, sans-serif;
+  --font-body: 'Inter Variable', 'Inter', 'Noto Sans Arabic Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
 
   --fs-xs: 0.75rem;

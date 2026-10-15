@@ -14,6 +14,7 @@ import type { DownloadErrorCode, DownloadItem, UserPrompt } from '@shared/types'
 import { fileNameFromUrl } from '@shared/urls';
 import { uniquePath, sanitizeFileName, partialBytes, removePartial } from '../workers/transfer';
 import type { BrowserClient, BrowserDownload } from './browser-client';
+import { tm } from './i18n';
 
 const MAX_AUTO_RETRIES = 5;
 
@@ -83,7 +84,7 @@ export class DownloadManager extends EventEmitter {
         errorDetail: null,
         completedAt: new Date().toISOString(),
       });
-      if (d.catalogId !== null) toast('success', `Downloaded ${d.title}. Preparing the game for your Library.`);
+      if (d.catalogId !== null) toast('success', tm('Downloaded {title}. Preparing the game for your Library.', { title: d.title }));
       this.emit('completed', e.id, e.result.path);
       this.broadcastList();
       this.pump();
@@ -212,7 +213,7 @@ export class DownloadManager extends EventEmitter {
           renameSync(cur.target, dest);
           this.browserTargets.delete(id);
           this.repo.update(id, { state: 'completed', finalPath: dest, receivedBytes: cur.currentBytes, totalBytes: cur.currentBytes, completedAt: new Date().toISOString(), errorDetail: null });
-          toast('success', `Downloaded ${this.repo.get(id)?.title ?? 'file'}. Preparing your Library.`);
+          toast('success', tm('Downloaded {title}. Preparing your Library.', { title: this.repo.get(id)?.title ?? tm('the file') }));
           this.emit('completed', id, dest);
           this.broadcastList();
           this.pump();
@@ -270,13 +271,13 @@ export class DownloadManager extends EventEmitter {
     const partSize = partialBytes(d.partPath);
     if (e.code === 'link-expired' && d.modelAsset) {
       this.repo.update(e.id, { state: 'failed', errorCode: 'link-expired', errorDetail: 'Model download link failed. Retry from Settings → Local AI.', receivedBytes: partSize });
-      toast('warning', `Retry the download for ${d.title} in Settings → Local AI.`);
+      toast('warning', tm('Retry the download for {title} in Settings → Local AI.', { title: d.title }));
     } else if (e.code === 'link-expired') {
       this.repo.update(e.id, { state: 'needs-resolution', errorCode: 'link-expired', errorDetail: e.message, receivedBytes: partSize });
-      toast('info', `The link for ${d.title} expired — finding a fresh one.`);
+      toast('info', tm('The link for {title} expired — finding a fresh one.', { title: d.title }));
     } else if (e.code === 'disk-full') {
       this.repo.update(e.id, { state: 'paused', errorCode: 'disk-full', errorDetail: e.message, receivedBytes: partSize });
-      toast('error', 'Downloads paused: the disk is full.');
+      toast('error', tm('Downloads paused: the disk is full.'));
     } else if (e.retryable && d.retries < MAX_AUTO_RETRIES) {
       const delay = Math.min(60_000, 2000 * 2 ** d.retries);
       // Held as paused until the backoff passes, then queued again.
@@ -293,7 +294,7 @@ export class DownloadManager extends EventEmitter {
       this.retryTimers.set(e.id, t);
     } else {
       this.repo.update(e.id, { state: 'failed', errorCode: e.code as DownloadErrorCode, errorDetail: e.message, receivedBytes: partSize });
-      toast('error', `Download failed: ${d.title}`);
+      toast('error', tm('Download failed: {title}', { title: d.title }));
     }
     this.broadcastList();
     this.pump();

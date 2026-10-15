@@ -22,6 +22,7 @@ import type { HostRateLimiter } from './rate-limit';
 import type { PolicyService } from './policy-service';
 import { publish } from './bus';
 import { isCancelled } from '@shared/worker-protocol';
+import { tm } from './i18n';
 
 const DETAILS_PER_PASS = 48;
 /** Game pages read at once. Per-host spacing still applies to every request. */
@@ -303,7 +304,7 @@ export class Discovery {
     while (session.isLive(token)) {
       try {
         if(this.deps.isModelReady&&!this.deps.isModelReady()){
-          this.deps.ai.setStatus({phase:'paused',detail:'Download the browsing and analysis agents in Settings → Local AI',context:'discovery'});
+          this.deps.ai.setStatus({phase:'paused',detail:tm('Download the browsing and analysis agents in Settings → Local AI'),context:'discovery'});
           await this.wait(60_000);continue;
         }
         // A site waiting for a human check steps aside; every other source
@@ -320,7 +321,7 @@ export class Discovery {
         // Nothing to crawl: work through classification and detail backlogs.
         if (await this.detailBacklog(token)) continue;
         if (this.manualSourceId === null && await this.classifyBacklog(token)) continue;
-        this.deps.ai.setStatus({ phase: 'idle', detail: this.manualSourceId !== null ? 'Waiting for human website verification' : null });
+        this.deps.ai.setStatus({ phase: 'idle', detail: this.manualSourceId !== null ? tm('Waiting for human website verification') : null });
         const retryAt = this.deps.sources.list().map(s => this.deps.sources.cursor(s.id))
           .filter(c => c && (c.failures ?? 0) < 3 && (c.retryAt ?? 0) > Date.now())
           .map(c => c!.retryAt!);
@@ -424,7 +425,7 @@ export class Discovery {
     // A site indexed before is re-checked incrementally (see staleRun below).
     const cursor: CrawlCursor = sources.cursor(source.id) ?? { pending: [source.url], visited: [], pagesDone: 0, startedAt: new Date().toISOString(), refresh: this.incremental(source) };
     this.progress(source, 'crawling', 'Reading listing pages', cursor.pagesDone, catalog.count(source.id));
-    this.deps.ai.setStatus({ phase: 'navigating', detail: `Indexing ${source.name}`, context: 'discovery' });
+    this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Indexing {name}', { name: source.name }), context: 'discovery' });
     const host = hostOf(source.url);
     const batchStart = cursor.pagesDone;
     const started = Date.now();
@@ -777,7 +778,7 @@ export class Discovery {
     for (const delay of [1000, 2000, 3000]) {
       this.deps.session.assertLive(token, 'page verification');
       if (!ex.gates.captcha || ex.gates.blocked) break;
-      this.deps.ai.setStatus({ phase: 'navigating', detail: 'Waiting for website verification', context: 'discovery' });
+      this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Waiting for website verification'), context: 'discovery' });
       await sleep(delay, token.signal);
       ex = await this.deps.browser.extract('discovery', token.signal);
     }
@@ -827,7 +828,7 @@ export class Discovery {
     const { catalog, classification, session } = this.deps;
     const todo = catalog.needingClassification(CLASSIFIER_VERSION, limit, true);
     if (!todo.length) return false;
-    this.deps.ai.setStatus({ phase: 'classifying', detail: `Checking artwork for ${todo.length} game${todo.length === 1 ? '' : 's'}`, context: 'discovery' });
+    this.deps.ai.setStatus({ phase: 'classifying', detail: tm('Checking artwork for {n} games', { n: todo.length }), context: 'discovery' });
     for (const e of todo) {
       session.assertLive(token);
       await classification.classifyEntry(e.id, token.signal);
@@ -912,7 +913,7 @@ export class Discovery {
         }
         done++;
         const rate = done / Math.max(0.5, (Date.now() - started) / 1000);
-        this.deps.ai.setStatus({ phase: 'navigating', detail: `Verifying games ${done}/${todo.length} · ${rate.toFixed(1)}/s`, context: 'discovery' });
+        this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Verifying games {done}/{total} · {rate}/s', { done, total: todo.length, rate: rate.toFixed(1) }), context: 'discovery' });
         this.status(source, `Verifying games ${done}/${todo.length} · ${rate.toFixed(1)} per second`, sources.cursor(source.id)?.pagesDone ?? 0);
       }
     };

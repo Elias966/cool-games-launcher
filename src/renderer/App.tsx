@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { boot, pushToast, setState, setTab, useApp } from './state';
 import { Dock, TABS, TitleBar } from './components/Chrome';
 import { Toasts } from './components/ui';
@@ -12,6 +12,7 @@ import { StoreTab } from './tabs/StoreTab';
 import { LibraryTab } from './tabs/LibraryTab';
 import { DownloadsTab } from './tabs/DownloadsTab';
 import { SettingsTab } from './tabs/SettingsTab';
+import { language, setLanguage, t } from './i18n';
 
 const OrbitalScene = lazy(() => import('./scene/OrbitalScene').then((m) => ({ default: m.OrbitalScene })));
 
@@ -43,11 +44,11 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.altKey) && !e.shiftKey) {
-        const t = TABS.find((x) => x.key === e.key);
-        if (t) {
+        const hit = TABS.find((x) => x.key === e.key);
+        if (hit) {
           e.preventDefault();
-          setTab(t.id);
-          document.getElementById(`tab-${t.id}`)?.focus();
+          setTab(hit.id);
+          document.getElementById(`tab-${hit.id}`)?.focus();
         }
       }
     };
@@ -56,6 +57,9 @@ export function App() {
   }, []);
 
   // Interface sounds follow the user's setting; one delegated listener covers every control.
+  // Applied during render so every text below is drawn in the chosen language.
+  const lang = useApp((s) => s.settings?.language ?? 'en');
+  if (language() !== lang) setLanguage(lang);
   const uiSounds = useApp((s) => s.settings?.uiSounds ?? true);
   const uiVolume = useApp((s) => s.settings?.uiVolume ?? 0.5);
   const uiAmbient = useApp((s) => s.settings?.uiAmbient ?? true);
@@ -109,7 +113,7 @@ export function App() {
     const stop = startGamepad(() => {
       if (hinted) return;
       hinted = true;
-      pushToast('info', 'Controller connected — press Start (Menu) for couch mode.');
+      pushToast('info', t('Controller connected — press Start (Menu) for couch mode.'));
     });
     const off = onPad((a) => {
       if (a === 'menu') { setState((s) => ({ couch: !s.couch })); return true; }
@@ -154,15 +158,16 @@ export function App() {
         </SceneBoundary>
         <div className="vignette" aria-hidden="true" />
         <div className="spotlight" aria-hidden="true" ref={spotlight} />
+        <Fragment key={lang}>
         <TitleBar />
         <main className="stage">
           {error ? (
             <div className="boot-error" role="alert">
-              <h1>Something went wrong while starting</h1>
+              <h1>{t('Something went wrong while starting')}</h1>
               <p>{error}</p>
             </div>
           ) : !ready ? (
-            <div className="boot" role="status" aria-label="Starting">
+            <div className="boot" role="status" aria-label={t('Starting')}>
               <span className="boot__orbit" />
             </div>
           ) : (
@@ -190,6 +195,7 @@ export function App() {
         <Dock />
         {couch && ready && <CouchMode />}
         <Toasts />
+        </Fragment>
       </div>
     </MotionConfig>
   );

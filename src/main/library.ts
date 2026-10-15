@@ -25,6 +25,7 @@ import type { PolicyService } from './policy-service';
 import { publish, toast } from './bus';
 import { paths, vendor } from './paths';
 import type { Game, GameUpdateInfo, LaunchOptions, Runner, SaveBackup } from '@shared/types';
+import { tm } from './i18n';
 
 function slug(s: string) {
   return (
@@ -156,8 +157,8 @@ export class Library {
       if (this.runningIds.size === 0) this.playingListener?.(false);
       if (e.installer) void this.afterInstaller(e.gameId);
       else { this.games.recordPlay(e.gameId, e.seconds); void this.afterPlay(e.gameId, e.seconds, e.code, !!e.error); }
-      if (e.error) toast('error', `Could not start: ${e.error}`);
-      else if (!e.installer && e.code && e.code !== 0 && e.seconds < 5) toast('warning', 'The game exited immediately. Check its runner and executable in the game settings.');
+      if (e.error) toast('error', tm('Could not start: {detail}', { detail: e.error }));
+      else if (!e.installer && e.code && e.code !== 0 && e.seconds < 5) toast('warning', tm('The game exited immediately. Check its runner and executable in the game settings.'));
       this.broadcast();
     });
     worker.on('event:install-progress', (e: { downloadId: number; detail: string; fraction?: number | null }) => {
@@ -258,7 +259,7 @@ export class Library {
       while (this.preparationQueue.length && this.agentContext.session.active) {
         const id = this.preparationQueue.shift()!;
         if (!this.downloadsRepo.get(id)) continue;
-        await this.installFromDownload(id).catch((e) => toast('error', `Could not prepare the game: ${(e as Error).message}`));
+        await this.installFromDownload(id).catch((e) => toast('error', tm('Could not prepare the game: {detail}', { detail: (e as Error).message })));
       }
     } finally { this.preparing = false; }
   }
@@ -339,7 +340,7 @@ export class Library {
   private afterInstalled(gameId: number) {
     if (this.settings.get().afterInstall !== 'delete') return;
     const { freed } = this.deleteArchive(gameId);
-    if (freed) toast('info', `Deleted the downloaded files (${(freed / 1024 ** 3).toFixed(freed > 1024 ** 3 ? 1 : 2)} GB freed).`);
+    if (freed) toast('info', tm('Deleted the downloaded files ({size} GB freed).', { size: (freed / 1024 ** 3).toFixed(freed > 1024 ** 3 ? 1 : 2) }));
   }
 
   /**
@@ -361,7 +362,7 @@ export class Library {
         resolution: p.groupId && p.id !== p.groupId && p.resolution ? { ...p.resolution, steps: 0, history: [] } : null,
       });
     }
-    toast('warning', `The download of ${d.title} was damaged. Downloading a fresh copy…`);
+    toast('warning', tm('The download of {title} was damaged. Downloading a fresh copy…', { title: d.title }));
     this.recovery.redownload(parts.map((p) => p.id));
     this.downloads.broadcastList();
     return true;
@@ -379,9 +380,9 @@ export class Library {
     const d = u.downloadId ? this.downloadsRepo.get(u.downloadId) : null;
     if (!d || d.state === 'cancelled' || d.state === 'failed') return { ...u, state: 'failed', detail: d?.errorDetail ?? 'The update download stopped. Try again.' };
     if (d.state === 'needs-user') return { ...u, detail: d.userPrompt?.message ?? 'The download needs you in the browser.' };
-    if (d.state === 'needs-resolution' || (d.state === 'resolving' && !this.agentContext.session.active)) return { ...u, detail: 'Finding the download…' };
-    if (d.state === 'resolving') return { ...u, detail: 'Finding the download…' };
-    if (d.state === 'completed') return { ...u, state: 'preparing', detail: 'Unpacking the new version…' };
+    if (d.state === 'needs-resolution' || (d.state === 'resolving' && !this.agentContext.session.active)) return { ...u, detail: tm('Finding the download…') };
+    if (d.state === 'resolving') return { ...u, detail: tm('Finding the download…') };
+    if (d.state === 'completed') return { ...u, state: 'preparing', detail: tm('Unpacking the new version…') };
     return { ...u, detail: d.totalBytes ? `Downloading ${Math.round((d.receivedBytes / d.totalBytes) * 100)}%` : 'Downloading…' };
   }
 
@@ -514,7 +515,7 @@ export class Library {
         gameId: game.id,
       });
       if (d.groupId) for (const p of this.downloadsRepo.group(d.groupId)) if (p.id !== downloadId) this.downloadsRepo.update(p.id, { installState: 'installed', installDetail: `Part of ${game.title}`, gameId: game.id });
-      toast('success', r.status === 'installed' ? `${game.title} is ready in your Library.` : `${game.title} needs one more step in the Library.`);
+      toast('success', r.status === 'installed' ? tm('{title} is ready in your Library.', { title: game.title }) : tm('{title} needs one more step in the Library.', { title: game.title }));
       if (r.status === 'installed') this.afterInstalled(game.id);
     } catch (e) {
       const paused = isCancelled(e);
@@ -523,7 +524,7 @@ export class Library {
       if (paused) this.pausePreparation(downloadId);
       else this.downloadsRepo.update(downloadId, { installState: interrupted ? 'none' : 'failed', installDetail: interrupted ? 'Preparation interrupted; retrying…' : (e as { code?: string }).code === 'corrupt' ? `The downloaded file is damaged again — the file on the website is probably broken. (${(e as Error).message.slice(0, 200)})` : (e as Error).message.slice(0, 300) });
       if (!paused && interrupted && !this.work.signal.aborted) setTimeout(() => this.enqueuePreparation(downloadId), 2000).unref();
-      else if (!interrupted) toast('error', `Could not prepare ${d.title}: ${(e as Error).message}`);
+      else if (!interrupted) toast('error', tm('Could not prepare {title}: {detail}', { title: d.title, detail: (e as Error).message }));
     } finally {
       this.installing.delete(downloadId);
       this.downloads.broadcastList();
@@ -566,7 +567,7 @@ export class Library {
   private failUpdate(id: number, e: unknown) {
     const message = (e as Error).message?.slice(0, 300) ?? String(e);
     this.setUpdate(id, { state: 'failed', detail: message, prepared: null });
-    toast('error', `Could not update ${this.games.get(id)?.title ?? 'the game'}: ${message}`);
+    toast('error', tm('Could not update {title}: {detail}', { title: this.games.get(id)?.title ?? tm('the game'), detail: message }));
   }
 
   private async prepareUpdate(d: DownloadRecord, old: GameRecord) {
@@ -577,7 +578,7 @@ export class Library {
     const signal = this.work.signal;
     this.downloadsRepo.update(d.id, { installState: 'installing', installDetail: `Preparing the update for ${old.title}…` });
     this.downloads.broadcastList();
-    this.setUpdate(old.id, { state: 'preparing', detail: 'Unpacking the new version…' });
+    this.setUpdate(old.id, { state: 'preparing', detail: tm('Unpacking the new version…') });
     try {
       let r = d.preparation;
       if (!r || !existsSync(r.installDir)) {
@@ -604,9 +605,9 @@ export class Library {
       if (kind === 'linux') chmodSync(selected.path, 0o755);
       const prepared: PreparedBuild = { installDir: r.installDir, executable: selected.path, kind, candidates: r.candidates.map((c) => c.path), downloadId: d.id };
       if (this.runningIds.has(old.id)) {
-        this.setUpdate(old.id, { state: 'waiting', prepared, detail: 'Installs when you close the game' });
+        this.setUpdate(old.id, { state: 'waiting', prepared, detail: tm('Installs when you close the game') });
         this.downloadsRepo.update(d.id, { installState: 'installing', installDetail: 'Update ready — installs when the game closes' });
-        toast('info', `The update for ${old.title} is ready and installs when you close the game.`);
+        toast('info', tm('The update for {title} is ready and installs when you close the game.', { title: old.title }));
         return;
       }
       await this.applyUpdate(old.id, prepared);
@@ -614,7 +615,7 @@ export class Library {
       const paused = isCancelled(e);
       if (paused || (e as { code?: string }).code === 'worker-exit') {
         this.downloadsRepo.update(d.id, { installState: 'none', installDetail: 'Update preparation paused; it continues automatically' });
-        this.setUpdate(old.id, { state: 'preparing', detail: 'Paused — continues automatically' });
+        this.setUpdate(old.id, { state: 'preparing', detail: tm('Paused — continues automatically') });
         if (!this.preparationQueue.includes(d.id)) this.preparationQueue.push(d.id);
         if (!paused && !this.work.signal.aborted) setTimeout(() => this.enqueuePreparation(d.id), 2000).unref();
       } else {
@@ -634,7 +635,7 @@ export class Library {
     if (!g) return;
     if (this.runningIds.has(id)) { this.setUpdate(id, { state: 'waiting', prepared }); return; }
     if (!existsSync(prepared.executable)) throw new Error('The prepared update is missing; download it again');
-    this.setUpdate(id, { state: 'preparing', detail: 'Moving your saves to the new version…' });
+    this.setUpdate(id, { state: 'preparing', detail: tm('Moving your saves to the new version…') });
     if (this.settings.get().saveBackups) await this.backupSaves(id, 'before updating');
     let carried = 0;
     if (g.installDir && g.executable && existsSync(g.installDir)) {
@@ -665,7 +666,7 @@ export class Library {
     });
     this.downloadsRepo.update(prepared.downloadId, { installState: 'installed', installDetail: `Updated ${g.title}${to ? ` to ${to}` : ''}`, gameId: id });
     if (prepared.kind === 'windows') void this.compat.ensureProton().catch(() => undefined);
-    toast('success', `${g.title} updated${to ? ` to ${to}` : ''}.${carried ? ` ${carried} save/settings file${carried === 1 ? '' : 's'} carried over.` : ''} The previous version is kept until you have played the new one.`);
+    toast('success', [to ? tm('{title} updated to {version}.', { title: g.title, version: to }) : tm('{title} updated.', { title: g.title }), carried ? tm('{n} save/settings files were carried over.', { n: carried }) : '', tm('The previous version is kept until you have played the new one.')].filter(Boolean).join(' '));
     this.afterInstalled(id);
     this.downloads.broadcastList();
     this.broadcast();
@@ -722,7 +723,7 @@ export class Library {
     if (!existsSync(join(from, 'backup.json'))) throw new Error('That backup no longer exists');
     await this.backupSaves(id, 'before restoring an older backup');
     const r = await this.worker.call<{ files: number }>('restoreSaves', { from, gameRoot: g.managed ? g.installDir : null, prefix: g.prefixDir });
-    toast('success', `Restored ${r.files} save file${r.files === 1 ? '' : 's'} for ${g.title}.`);
+    toast('success', tm('Restored {n} save files for {title}.', { n: r.files, title: g.title }));
     return r;
   }
 
@@ -742,7 +743,7 @@ export class Library {
     }
     if (!g.previous) return;
     if (failed || (code && code !== 0 && seconds < 20)) {
-      toast('warning', `${g.title} closed right after starting. If the update broke it, use “Roll back” in the Library.`);
+      toast('warning', tm('{title} closed right after starting. If the update broke it, use “Roll back” in the Library.', { title: g.title }));
       return;
     }
     if (seconds < 60) return;
@@ -773,7 +774,7 @@ export class Library {
       update: { state: 'ignored', from: versionLabel(p.version), to: versionLabel(g.installedVersion), reason: 'rolled back', detectedAt: now, key },
     });
     if (current && current !== p.installDir) await this.removeBuild(current);
-    toast('success', `${g.title} is back on ${versionLabel(p.version) ?? 'the previous version'}.`);
+    toast('success', tm('{title} is back on {version}.', { title: g.title, version: versionLabel(p.version) ?? tm('the previous version') }));
     this.broadcast();
   }
 
@@ -830,9 +831,9 @@ export class Library {
       if ((e as { code?: string }).code !== 'proton-provisioning') throw e;
       if (!this.pendingLaunch.has(id)) {
         this.pendingLaunch.add(id);
-        this.compat.whenReady(() => { this.pendingLaunch.delete(id); void this.launch(id).catch((err) => toast('error', `Could not start ${g.title}: ${(err as Error).message}`)); });
+        this.compat.whenReady(() => { this.pendingLaunch.delete(id); void this.launch(id).catch((err) => toast('error', tm('Could not start {title}: {detail}', { title: g.title, detail: (err as Error).message }))); });
       }
-      toast('info', `Setting up Proton for ${g.title} — it will start automatically when ready (progress in Downloads).`);
+      toast('info', tm('Setting up Proton for {title} — it will start automatically when ready (progress in Downloads).', { title: g.title }));
       return;
     }
     if (runner === 'proton') this.compat.notifyRuntime();
@@ -863,7 +864,7 @@ export class Library {
     if (found.length) {
       this.installingRuntimes.add(g.id);
       this.broadcast();
-      toast('info', `First start of ${g.title}: installing ${[...new Set(found.map((r) => r.label))].join(', ')} into its Windows environment (once)…`);
+      toast('info', tm('First start of {title}: installing {list} into its Windows environment (once)…', { title: g.title, list: [...new Set(found.map((r) => r.label))].join(', ') }));
       for (const r of found) {
         const result = await this.worker.call<{ code: number | null }>('runSetup', {
           gameId: g.id, executable: r.path, args: r.args, runner, prefixDir: g.prefixDir ?? join(paths.prefixes, `game-${g.id}`), ...env,
@@ -933,11 +934,11 @@ export class Library {
     });
     if (usable.length === 1) {
       this.games.update(id, { executable: usable[0].path, status: 'installed' });
-      toast('success', `${g.title} is installed.`);
+      toast('success', tm('{title} is installed.', { title: g.title }));
     } else if (usable.length) {
-      toast('info', `Installer finished. Choose which program starts ${g.title}.`);
+      toast('info', tm('Installer finished. Choose which program starts {title}.', { title: g.title }));
     } else {
-      toast('warning', 'The installer finished but no game program was found. Run it again or pick the file manually.');
+      toast('warning', tm('The installer finished but no game program was found. Run it again or pick the file manually.'));
     }
     this.broadcast();
   }

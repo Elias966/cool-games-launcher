@@ -7,6 +7,7 @@ import { Icon, type IconName } from './Icon';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { platformLabel } from '@shared/format';
 import type { Platform } from '@shared/types';
+import { t } from '../i18n';
 
 /** Accessible modal dialog with focus trap; Escape cancels. */
 export function Dialog({
@@ -169,9 +170,8 @@ export function ProgressRing({ value, size = 56, stroke = 4, indeterminate, chil
 
 export function NsfwBadge({ small }: { small?: boolean }) {
   return (
-    <span className={`badge badge--nsfw ${small ? 'badge--sm' : ''}`} title="Adult content">
-      NSFW
-    </span>
+    <span className={`badge badge--nsfw ${small ? 'badge--sm' : ''}`} title={t('Adult content')}>
+      {t('NSFW')}</span>
   );
 }
 
@@ -180,7 +180,7 @@ const PLATFORM_ICON: Record<Platform, IconName> = { linux: 'linux', windows: 'wi
 export function PlatformIcons({ platforms, size = 15 }: { platforms: Platform[]; size?: number }) {
   if (!platforms.length) return null;
   return (
-    <span className="platforms" aria-label={`Platforms: ${platforms.map(platformLabel).join(', ')}`}>
+    <span className="platforms" aria-label={t('Platforms: {list}', { list: platforms.map(platformLabel).join(', ') })}>
       {platforms.map((p) => (
         <span key={p} className={`platforms__item platforms__item--${p}`} title={platformLabel(p)}>
           <Icon name={PLATFORM_ICON[p]} size={size} />
@@ -217,22 +217,22 @@ export function Toasts() {
   const toasts = useApp((s) => s.toasts);
   const { reduced } = useMotionPrefs();
   return (
-    <div className="toasts" role="region" aria-label="Notifications" aria-live="polite">
+    <div className="toasts" role="region" aria-label={t('Notifications')} aria-live="polite">
       <AnimatePresence initial={false}>
-        {toasts.map((t) => (
+        {toasts.map((toast) => (
           <motion.div
-            key={t.id}
+            key={toast.id}
             layout={!reduced}
-            className={`toast toast--${t.kind}`}
+            className={`toast toast--${toast.kind}`}
             initial={reduced ? false : { opacity: 0, x: 30 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: reduced ? 0 : 30 }}
             transition={{ duration: reduced ? 0 : 0.25 }}
-            role={t.kind === 'error' ? 'alert' : 'status'}
+            role={toast.kind === 'error' ? 'alert' : 'status'}
           >
-            <Icon name={t.kind === 'success' ? 'check' : t.kind === 'info' ? 'info' : 'alert'} size={18} />
-            <p>{t.message}</p>
-            <button className="toast__close" onClick={() => dismissToast(t.id)} aria-label="Dismiss notification">
+            <Icon name={toast.kind === 'success' ? 'check' : toast.kind === 'info' ? 'info' : 'alert'} size={18} />
+            <p>{toast.message}</p>
+            <button className="toast__close" onClick={() => dismissToast(toast.id)} aria-label={t('Dismiss notification')}>
               <Icon name="close" size={14} />
             </button>
           </motion.div>

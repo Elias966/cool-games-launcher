@@ -21,6 +21,7 @@ import { isCancelled } from '@shared/worker-protocol';
 import { hostOf } from '@shared/urls';
 import { partFileName, partOf, partTotal, type PartName } from '@shared/parts';
 import { basename } from 'node:path';
+import { tm } from './i18n';
 
 const MAX_STEPS = 24;
 /** Optional-payment pages ("pay what you want") offer a free path; only a required payment pauses. */
@@ -192,7 +193,7 @@ export class Resolver {
     const checkpoint: ResolutionCheckpoint = d.resolution ?? { pageUrl: entry.pageUrl, steps: 0, history: [] };
     downloadsRepo.update(id, { state: 'resolving', errorCode: null, errorDetail: null });
     this.deps.downloads.broadcastList();
-    ai.setStatus({ phase: 'navigating', detail: `Finding the download for ${entry.title}`, context: 'interactive' });
+    ai.setStatus({ phase: 'navigating', detail: tm('Finding the download for {title}', { title: entry.title }), context: 'interactive' });
     this.deps.openDrawer(`Finding the download for ${entry.title}`);
 
     session.assertLive(token);
@@ -231,7 +232,7 @@ export class Resolver {
         if (gated.length <= 3) {
           checkpoint.history.push(`gate:${hostOf(ex.url)}`);
           downloadsRepo.update(id, { resolution: checkpoint });
-          ai.setStatus({ phase: 'navigating', detail: `${hostOf(ex.url)} wants a human check — trying another mirror`, context: 'interactive' });
+          ai.setStatus({ phase: 'navigating', detail: tm('{host} wants a human check — trying another mirror', { host: hostOf(ex.url) }), context: 'interactive' });
           await browser.navigate('interactive', entry.pageUrl, token.signal);
           note = `The host${gated.length > 1 ? 's' : ''} ${gated.join(', ')} showed a human-verification page, so the launcher returned to the game page. Choose a DIFFERENT download mirror or host.`;
           continue;
@@ -240,18 +241,18 @@ export class Resolver {
 
 
       // Gates the user has to handle personally.
-      if (ex.gates.captcha) return this.pause(id, { kind: 'captcha', message: checkpoint.gatedHosts?.length ? `Every mirror tried (${checkpoint.gatedHosts.join(', ')}) wants a human check. Complete it in the browser below and the download continues automatically.` : 'This site wants a human check. Complete it in the browser below and the download continues automatically.' }, checkpoint);
-      if (ex.gates.login) return this.pause(id, { kind: 'login', message: 'The site asks you to log in. Sign in yourself in the browser below, then press Continue.' }, checkpoint);
+      if (ex.gates.captcha) return this.pause(id, { kind: 'captcha', message: checkpoint.gatedHosts?.length ? tm('Every mirror tried ({hosts}) wants a human check. Complete it in the browser below and the download continues automatically.', { hosts: checkpoint.gatedHosts.join(', ') }) : tm('This site wants a human check. Complete it in the browser below and the download continues automatically.') }, checkpoint);
+      if (ex.gates.login) return this.pause(id, { kind: 'login', message: tm('The site asks you to log in. Sign in yourself in the browser below, then press Continue.') }, checkpoint);
       const freePath = ex.controls.find((c) => FREE_PATH_TEXT.test(c.text));
       // "Name your own price" stores embed payment widgets next to a free
       // path; the agent takes that path. Only a required payment pauses.
       const optionalPayment = /\b(?:name your own price|pay what you want|no thanks,? just take me to the downloads|\$0(?:\.00)? or more)\b/i.test(ex.text);
-      if (ex.gates.payment && !freePath && !optionalPayment) return this.pause(id, { kind: 'payment', message: 'This download needs a payment. Purchases are never automated — complete it yourself if you want, then press Continue.' }, checkpoint);
+      if (ex.gates.payment && !freePath && !optionalPayment) return this.pause(id, { kind: 'payment', message: tm('This download needs a payment. Purchases are never automated — complete it yourself if you want, then press Continue.') }, checkpoint);
       if (ex.gates.ageGate) {
         if (!this.deps.policy.policy().showNsfw) throw new Error('The site shows an adult-content age gate; adult content is hidden by your settings');
-        return this.pause(id, { kind: 'confirm', message: 'The site asks you to confirm your age. Answer it yourself in the browser below, then press Continue.' }, checkpoint);
+        return this.pause(id, { kind: 'confirm', message: tm('The site asks you to confirm your age. Answer it yourself in the browser below, then press Continue.') }, checkpoint);
       }
-      if (ex.gates.blocked) return this.pause(id, { kind: 'blocked', message: 'The site blocked automated access. You can try navigating in the browser below, then press Continue.' }, checkpoint);
+      if (ex.gates.blocked) return this.pause(id, { kind: 'blocked', message: tm('The site blocked automated access. You can try navigating in the browser below, then press Continue.') }, checkpoint);
 
       this.lastPage = ex;
       const candidates = this.candidatesFrom(ex).filter((c) => !rejected.has(`${ex.url}|${c.url}`));
@@ -285,7 +286,7 @@ export class Resolver {
           await delay(500,undefined,{signal:token.signal});session.assertLive(token);
           if(await this.tryBrowserDownload(id,token))return;
         }
-        if(result==='human')return this.pause(id,{kind:'confirm',message:action.computer.action.question??'The browser agent needs your help on this page.'},checkpoint);
+        if(result==='human')return this.pause(id,{kind:'confirm',message:action.computer.action.question??tm('The browser agent needs your help on this page.')},checkpoint);
         if(result==='done')throw Error(action.computer.action.answer??'The browser agent stopped before a game download started.');
       } else if (action.kind === 'stop') {
         throw new Error(action.label || 'No download link was found on this page');
@@ -297,7 +298,7 @@ export class Resolver {
       } else if (action.kind === 'wait') {
         await delay(1500,undefined,{signal:token.signal});
       } else if (action.kind === 'click') {
-        ai.setStatus({ phase: 'navigating', detail: `Opening “${action.label}”`, context: 'interactive' });
+        ai.setStatus({ phase: 'navigating', detail: tm('Opening “{label}”', { label: action.label }), context: 'interactive' });
         // Click the observed control so host scripts, tokens and popups work
         // exactly as they do in Firefox; naked navigation can skip that logic.
         await browser.clickElement('interactive', action.index!, token.signal);
@@ -368,7 +369,7 @@ export class Resolver {
       const n = Number(upload[1]);
       const btn = ex.game?.uploads[n];
       if (!btn || btn.i === null) return 'unavailable';
-      this.deps.ai.setStatus({ phase: 'navigating', detail: `Requesting ${c.fileName ?? 'the file'}`, context: 'interactive' });
+      this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Requesting {file}', { file: c.fileName ?? tm('the file') }), context: 'interactive' });
       await browser.clickElement('interactive', btn.i, token.signal);
       for (let i = 0; i < 12; i++) {
         session.assertLive(token);
@@ -409,7 +410,7 @@ export class Resolver {
     this.deps.downloads.handoff(id, url, headers, name, probe.totalBytes);
     this.afterFile(id, name);
     this.deps.foreground?.transferHandoff();
-    this.deps.ai.setStatus({ phase: 'idle', detail: 'Download handed to the download manager' });
+    this.deps.ai.setStatus({ phase: 'idle', detail: tm('Download handed to the download manager') });
     return true;
   }
 

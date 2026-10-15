@@ -10,6 +10,7 @@ import { useMotionPrefs } from '../hooks/useMotion';
 import { hostOf } from '@shared/urls';
 import { platformLabel } from '@shared/format';
 import { browserPoint } from '@shared/browser-input';
+import { t } from '../i18n';
 
 function AddressBar({ url, loading, disabled }: { url: string | null; loading: boolean; disabled: boolean }) {
   const [editing, setEditing] = useState(false);
@@ -33,13 +34,12 @@ function AddressBar({ url, loading, disabled }: { url: string | null; loading: b
       >
         <Icon name="globe" size={14} />
         <label className="sr-only" htmlFor="drawer-address">
-          Web address
-        </label>
+          {t('Web address')}</label>
         <input
           id="drawer-address"
           autoFocus={editing}
           value={value}
-          placeholder="Enter a web address"
+          placeholder={t('Enter a web address')}
           disabled={disabled}
           onChange={(e) => setValue(e.target.value)}
           onBlur={() => isPage && setEditing(false)}
@@ -57,12 +57,12 @@ function AddressBar({ url, loading, disabled }: { url: string | null; loading: b
         setValue(url ?? '');
         setEditing(true);
       }}
-      aria-label={`Address: ${url}. Activate to edit.`}
+      aria-label={t('Address: {url}. Activate to edit.', { url })}
     >
       <Icon name={url!.startsWith('https:') ? 'lock' : 'globe'} size={14} />
       <span className="drawer__host">{hostOf(url!)}</span>
       <span className="drawer__path">{url!.replace(/^https?:\/\/[^/]+/, '')}</span>
-      {loading && <span className="drawer__loading" aria-label="Loading" />}
+      {loading && <span className="drawer__loading" aria-label={t('Loading')} />}
     </button>
   );
 }
@@ -123,7 +123,7 @@ export function BrowserDrawer() {
   return (
     <motion.aside
       className="drawer"
-      aria-label="Store browser"
+      aria-label={t('Store browser')}
       initial={reduced ? false : { x: '100%', opacity: 0.6 }}
       animate={{ x: 0, opacity: 1 }}
       exit={reduced ? { opacity: 0 } : { x: '100%', opacity: 0 }}
@@ -131,44 +131,43 @@ export function BrowserDrawer() {
     >
       <div className="drawer__bar">
         <div className="drawer__nav">
-          <button className="icon-btn" aria-label="Back" onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'back' }))} disabled={aiDriving || !!browser.humanMode}>
+          <button className="icon-btn" aria-label={t('Back')} onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'back' }))} disabled={aiDriving || !!browser.humanMode}>
             <Icon name="back" size={17} />
           </button>
-          <button className="icon-btn" aria-label="Forward" onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'forward' }))} disabled={aiDriving || !!browser.humanMode}>
+          <button className="icon-btn" aria-label={t('Forward')} onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'forward' }))} disabled={aiDriving || !!browser.humanMode}>
             <Icon name="forward" size={17} />
           </button>
-          <button className="icon-btn" aria-label="Reload" onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'reload' }))} disabled={aiDriving || !!browser.humanMode}>
+          <button className="icon-btn" aria-label={t('Reload')} onClick={() => void attempt(() => api.invoke('browser:navigate', { action: 'reload' }))} disabled={aiDriving || !!browser.humanMode}>
             <Icon name="reload" size={16} />
           </button>
         </div>
         <AddressBar url={snap?.url ?? null} loading={!!snap?.loading} disabled={aiDriving || !!browser.humanMode} />
-        <span className="drawer__ublock" title="uBlock Origin is active in this browser">
-          <Icon name="shield" size={14} /> uBlock
-        </span>
-        <button className="icon-btn" aria-label="Close browser" onClick={close}>
+        <span className="drawer__ublock" title={t('uBlock Origin is active in this browser')}>
+          <Icon name="shield" size={14} /> {' '}{t('uBlock')}</span>
+        <button className="icon-btn" aria-label={t('Close browser')} onClick={close}>
           <Icon name="close" size={17} />
         </button>
       </div>
 
       <div className="drawer__prompt" role="status">
-        <div className="drawer__prompt-body"><p>{browser.humanMode ? 'Firefox is open for direct, full-speed browsing. AI is paused.' : 'For smooth browsing and website verification, use the full Firefox window. It shows websites directly; Store filters still apply.'}</p></div>
+        <div className="drawer__prompt-body"><p>{browser.humanMode ? t('Firefox is open for direct, full-speed browsing. AI is paused.') : t('For smooth browsing and website verification, use the full Firefox window. It shows websites directly; Store filters still apply.')}</p></div>
         <Button variant="primary" size="sm" onClick={() => void attempt(() => api.invoke(browser.humanMode ? 'browser:humanFinish' : 'browser:humanStart'))}>
-          {browser.humanMode ? 'Return to launcher' : 'Open full-speed Firefox'}
+          {browser.humanMode ? t('Return to launcher') : t('Open full-speed Firefox')}
         </Button>
       </div>
 
       {browser.attention && browser.attentionSourceId != null && !prompt && (
         <div className="drawer__prompt" role="status">
           <Icon name="alert" size={18} />
-          <div className="drawer__prompt-body"><p>{browser.attention}</p><p>Indexing continues by itself when the check clears, or skip this page and keep going.</p></div>
+          <div className="drawer__prompt-body"><p>{browser.attention}</p><p>{t('Indexing continues by itself when the check clears, or skip this page and keep going.')}</p></div>
           <Button variant="primary" size="sm" onClick={() => void attempt(async () => {
             await api.invoke('sources:resume', { id: browser.attentionSourceId! });
             setState((s) => ({ browser: { ...s.browser, attention: null, attentionSourceId: null } }));
-          })}>Resume discovery</Button>
+          })}>{t('Resume discovery')}</Button>
           <Button variant="ghost" size="sm" onClick={() => void attempt(async () => {
             await api.invoke('sources:skipCheck', { id: browser.attentionSourceId! });
             setState((s) => ({ browser: { ...s.browser, attention: null, attentionSourceId: null } }));
-          })}>Skip this page</Button>
+          })}>{t('Skip this page')}</Button>
         </div>
       )}
 
@@ -186,7 +185,7 @@ export function BrowserDrawer() {
                     <button className="choice" onClick={() => void attempt(() => api.invoke('download:chooseFile', { id: prompt.id, url: c.url }))}>
                       <span className="choice__name">{c.fileName ?? c.label}</span>
                       <span className="choice__meta">
-                        {c.platform ? platformLabel(c.platform) : 'Unknown platform'}
+                        {c.platform ? platformLabel(c.platform) : t('Unknown platform')}
                         {c.sizeText ? ` · ${c.sizeText}` : ''}
                       </span>
                     </button>
@@ -198,11 +197,9 @@ export function BrowserDrawer() {
           {prompt.userPrompt.kind !== 'choose-file' && (
             <div className="drawer__prompt-actions">
               <Button variant="primary" size="sm" onClick={() => void attempt(() => api.invoke('download:continueResolution', { id: prompt.id }))}>
-                Continue
-              </Button>
+                {t('Continue')}</Button>
               <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('download:cancel', { id: prompt.id }))}>
-                Cancel download
-              </Button>
+                {t('Cancel download')}</Button>
             </div>
           )}
         </div>
@@ -213,7 +210,7 @@ export function BrowserDrawer() {
         className={`drawer__surface ${focused ? 'is-focused' : ''} ${inputLocked ? 'is-locked' : ''}`}
         tabIndex={0}
         role="application"
-        aria-label={masked ? 'Page preview hidden' : `Web page: ${snap?.title ?? ''}. Click to interact; typing is sent to the page.`}
+        aria-label={masked ? t('Page preview hidden') : t('Web page: {title}. Click to interact; typing is sent to the page.', { title: snap?.title ?? '' })}
         onFocus={() => setFocused(true)}
         onBlur={() => {
           setFocused(false);
@@ -259,20 +256,19 @@ export function BrowserDrawer() {
         {(masked || browser.humanMode) && (
           <div className="drawer__mask">
             <Icon name="eyeOff" size={34} />
-            <p className="drawer__mask-title">{browser.humanMode ? 'Use the Firefox window, then return here' : !snap ? 'Opening the page…' : browser.stale ? 'Re-checking the page for your content settings…' : emptyPage ? 'Enter a website address to start browsing' : 'Preview hidden'}</p>
+            <p className="drawer__mask-title">{browser.humanMode ? t('Use the Firefox window, then return here') : !snap ? t('Opening the page…') : browser.stale ? t('Re-checking the page for your content settings…') : emptyPage ? t('Enter a website address to start browsing') : t('Preview hidden')}</p>
             {snap?.masked && snap.maskReason && <p className="drawer__mask-reason">{snap.maskReason}</p>}
           </div>
         )}
         {aiDriving && (
           <div className="drawer__ai" role="status">
             <span className="drawer__ai-orbit" aria-hidden="true" />
-            <span>{ai.detail ?? 'The AI is navigating…'}</span>
+            <span>{ai.detail ?? t('The AI is navigating…')}</span>
           </div>
         )}
       </div>
       <p className="drawer__hint">
-        <Icon name="keyboard" size={14} /> Click the page to interact. Typing goes to the page; Esc returns focus to the launcher. The AI can only navigate — it never purchases, signs in, or touches your files.
-      </p>
+        <Icon name="keyboard" size={14} /> {' '}{t('Click the page to interact. Typing goes to the page; Esc returns focus to the launcher. The AI can only navigate — it never purchases, signs in, or touches your files.')}</p>
     </motion.aside>
   );
 }

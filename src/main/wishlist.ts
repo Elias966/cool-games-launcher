@@ -9,6 +9,7 @@ import type { WishItem } from '@shared/types';
 import type { CatalogRepo, SourcesRepo, WishlistRepo } from './repos';
 import type { PolicyService } from './policy-service';
 import { sameGame } from './descriptions';
+import { tm } from './i18n';
 
 /** The same game, allowing small typos but never another entry of a series ("Portal" ≠ "Portal 2"). */
 export function wantedMatch(wanted: string, title: string): boolean {
@@ -52,19 +53,19 @@ export class WishlistService {
     const entry = catalog.raw(catalogId);
     if (!entry || entry.downloadStatus !== 'available' || !visibleRatings(policy.policy()).includes(entry.rating)) return;
     const key = entry.version ? fingerprintKey(entry.version) : null;
-    const source = this.deps.sources.get(entry.sourceId)?.name ?? 'your websites';
+    const source = this.deps.sources.get(entry.sourceId)?.name ?? tm('your websites');
     const linked = wishlist.forCatalog(catalogId);
     if (linked) {
       if (key && linked.versionKey && key !== linked.versionKey) {
         wishlist.setVersion(linked.id, key, true);
-        this.deps.notify(`New version of ${entry.title}`, `${versionLabel(entry.version) ?? 'An updated build'} is on ${source}.`, catalogId);
+        this.deps.notify(tm('New version of {title}', { title: entry.title }), versionLabel(entry.version) ? tm('{version} is on {source}.', { version: versionLabel(entry.version), source }) : tm('An updated build is on {source}.', { source }), catalogId);
       } else if (key && !linked.versionKey) wishlist.setVersion(linked.id, key, false);
       return;
     }
     for (const w of wishlist.waiting()) {
       if (!wantedMatch(w.title, entry.title)) continue;
       wishlist.link(w.id, catalogId, key);
-      this.deps.notify(`${entry.title} is now available`, `Found on ${source}. Open it to download.`, catalogId);
+      this.deps.notify(tm('{title} is now available', { title: entry.title }), tm('Found on {source}. Open it to download.', { source }), catalogId);
       this.deps.changed();
       return;
     }

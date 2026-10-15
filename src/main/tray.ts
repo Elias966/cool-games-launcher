@@ -3,6 +3,7 @@
 // couch mode, starts recent games or quits.
 import { Menu, Tray, nativeImage, type BrowserWindow } from 'electron';
 import type { Game } from '@shared/types';
+import { tm } from './i18n';
 
 export class LauncherTray {
   private tray: Tray | null = null;
@@ -41,15 +42,20 @@ export class LauncherTray {
     w.focus();
   }
 
+  /** Draws the menu again, e.g. after the language changed. */
+  refresh() {
+    this.render();
+  }
+
   private render() {
     if (!this.tray) return;
     this.tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Show Cool Games Launcher', click: () => this.show() },
-      { label: 'Couch mode', click: () => { this.show(); this.deps.couch(); } },
+      { label: tm('Show Cool Games Launcher'), click: () => this.show() },
+      { label: tm('Couch mode'), click: () => { this.show(); this.deps.couch(); } },
       { type: 'separator' },
-      ...(this.games.length ? this.games.map((g) => ({ label: `Play ${g.title}`, click: () => this.deps.launch(g.id) })) : [{ label: 'No games installed yet', enabled: false }]),
+      ...(this.games.length ? this.games.map((g) => ({ label: tm('Play {title}', { title: g.title }), click: () => this.deps.launch(g.id) })) : [{ label: tm('No games installed yet'), enabled: false }]),
       { type: 'separator' },
-      { label: 'Quit', click: () => this.deps.quit() },
+      { label: tm('Quit'), click: () => this.deps.quit() },
     ]));
   }
 

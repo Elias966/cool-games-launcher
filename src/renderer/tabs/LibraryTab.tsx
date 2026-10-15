@@ -11,6 +11,7 @@ import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { formatBytes, formatPlaytime, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
+import { t, tk, locale } from '../i18n';
 
 type Filter = 'all' | 'favorites' | 'linux' | 'windows';
 
@@ -24,22 +25,22 @@ export function pendingStatus(d: DownloadItem, parts: DownloadItem[] = []): { la
     const done = parts.filter((p) => p.state === 'completed').length;
     const failed = parts.find((p) => p.state === 'failed');
     const needs = parts.find((p) => p.state === 'needs-user');
-    if (failed) return { label: `Part ${failed.partIndex} failed`, detail: failed.errorDetail, pct, failed: true, waiting: false };
-    if (needs) return { label: 'Needs you', detail: needs.userPrompt?.message ?? null, pct, failed: false, waiting: true };
-    return { label: `Downloading ${done}/${total} parts`, detail: null, pct, failed: false, waiting: false };
+    if (failed) return { label: t('Part {n} failed', { n: failed.partIndex ?? '?' }), detail: failed.errorDetail, pct, failed: true, waiting: false };
+    if (needs) return { label: t('Needs you'), detail: needs.userPrompt?.message ?? null, pct, failed: false, waiting: true };
+    return { label: t('Downloading {done}/{total} parts', { done, total }), detail: null, pct, failed: false, waiting: false };
   }
   const pct = d.totalBytes ? Math.min(1, d.receivedBytes / d.totalBytes) : null;
   const unpack = /(\d+)%/.exec(d.installDetail ?? '');
   if (d.state === 'completed') {
-    if (d.installState === 'failed') return { label: 'Could not prepare', detail: d.installDetail, pct: null, failed: true, waiting: false };
-    return { label: unpack ? 'Unpacking' : 'Preparing', detail: d.installDetail, pct: unpack ? Number(unpack[1]) / 100 : null, failed: false, waiting: false };
+    if (d.installState === 'failed') return { label: t('Could not prepare'), detail: d.installDetail, pct: null, failed: true, waiting: false };
+    return { label: unpack ? t('Unpacking') : t('Preparing'), detail: d.installDetail, pct: unpack ? Number(unpack[1]) / 100 : null, failed: false, waiting: false };
   }
-  if (d.state === 'failed') return { label: 'Download failed', detail: d.errorDetail, pct, failed: true, waiting: false };
-  if (d.state === 'needs-user') return { label: 'Needs you', detail: d.userPrompt?.message ?? null, pct: null, failed: false, waiting: true };
-  if (d.state === 'resolving' || d.state === 'needs-resolution') return { label: 'Finding the download', detail: null, pct: null, failed: false, waiting: false };
-  if (d.state === 'paused') return { label: 'Paused', detail: d.errorDetail, pct, failed: false, waiting: true };
-  if (d.state === 'queued') return { label: 'Queued', detail: null, pct, failed: false, waiting: false };
-  return { label: 'Downloading', detail: null, pct, failed: false, waiting: false };
+  if (d.state === 'failed') return { label: t('Download failed'), detail: d.errorDetail, pct, failed: true, waiting: false };
+  if (d.state === 'needs-user') return { label: t('Needs you'), detail: d.userPrompt?.message ?? null, pct: null, failed: false, waiting: true };
+  if (d.state === 'resolving' || d.state === 'needs-resolution') return { label: t('Finding the download'), detail: null, pct: null, failed: false, waiting: false };
+  if (d.state === 'paused') return { label: t('Paused'), detail: d.errorDetail, pct, failed: false, waiting: true };
+  if (d.state === 'queued') return { label: t('Queued'), detail: null, pct, failed: false, waiting: false };
+  return { label: t('Downloading'), detail: null, pct, failed: false, waiting: false };
 }
 
 export function LibraryTab() {
@@ -88,10 +89,15 @@ export function LibraryTab() {
       <div className="page__scroll">
         <header className="page__header">
           <div className="page__titles">
-            <p className="eyebrow">Collection</p>
-            <KineticTitle text="Library" />
+            <p className="eyebrow">{t('Collection')}</p>
+            <KineticTitle text={t('Library')} />
             <p className="page__subtitle">
-              {games.length === 0 && !pending.length ? 'Installed and imported games appear here.' : `${games.length} game${games.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} on the way` : ''} · ${games.filter((g) => g.running).length ? 'a game is running' : 'ready for launch'}${updateCount ? ` · ${updateCount} update${updateCount === 1 ? '' : 's'} available` : ''}`}
+              {games.length === 0 && !pending.length ? t('Installed and imported games appear here.') : [
+                t(games.length === 1 ? '{n} game' : '{n} games', { n: games.length }),
+                pending.length ? t('{n} on the way', { n: pending.length }) : null,
+                games.some((g) => g.running) ? t('a game is running') : t('ready for launch'),
+                updateCount ? t(updateCount === 1 ? '{n} update available' : '{n} updates available', { n: updateCount }) : null,
+              ].filter(Boolean).join(' · ')}
             </p>
           </div>
           <div className="page__actions">
@@ -99,33 +105,29 @@ export function LibraryTab() {
               <Button variant="ghost" icon="reload" onClick={() => void attempt(async () => {
                 const r = await api.invoke('library:checkUpdates');
                 return r;
-              }, 'Checking your games for updates…')}>
-                Check for updates
-              </Button>
+              }, t('Checking your games for updates…'))}>
+                {t('Check for updates')}</Button>
             )}
             <Button variant="secondary" icon="import" onClick={() => void attempt(async () => {
               const g = await api.invoke('library:import');
               if (g) setSelectedId(g.id);
             })}>
-              Import game
-            </Button>
+              {t('Import game')}</Button>
           </div>
         </header>
 
         {games.length === 0 && pending.length === 0 ? (
           <EmptyState
             icon="library"
-            title="No games in your Library yet"
+            title={t('No games in your Library yet')}
             action={
               <div className="empty__actions">
                 <Button variant="primary" icon="store" onClick={() => setTab('store')}>
-                  Browse the Store
-                </Button>
+                  {t('Browse the Store')}</Button>
               </div>
             }
           >
-            Download a game from the Store and install it from Downloads, or import a game you already have with “Import game”.
-          </EmptyState>
+            {t('Download a game from the Store and install it from Downloads, or import a game you already have with “Import game”.')}</EmptyState>
         ) : (
           <div className="library">
             {selectedPending ? <PendingHero key={`dl-${selectedPending.id}`} d={selectedPending} parts={partsOf(selectedPending)} /> : selected && <LibraryHero key={selected.id} game={selected} />}
@@ -133,25 +135,25 @@ export function LibraryTab() {
               <div className="toolbar toolbar--compact">
                 <label className="search search--sm">
                   <Icon name="search" size={16} />
-                  <span className="sr-only">Search your Library</span>
-                  <input type="search" placeholder="Search library" value={search} onChange={(e) => setSearch(e.target.value)} />
+                  <span className="sr-only">{t('Search your Library')}</span>
+                  <input type="search" placeholder={t('Search library')} value={search} onChange={(e) => setSearch(e.target.value)} />
                 </label>
-                <div className="chips" role="group" aria-label="Filter library">
+                <div className="chips" role="group" aria-label={t('Filter library')}>
                   {(['all', 'favorites', 'linux', 'windows'] as Filter[]).map((f) => (
                     <button key={f} className={`chip ${filter === f ? 'is-on' : ''}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>
-                      {f === 'all' ? 'All' : f === 'favorites' ? 'Favorites' : f === 'linux' ? 'Linux' : 'Windows'}
+                      {f === 'all' ? t('All') : f === 'favorites' ? t('Favorites') : f === 'linux' ? t('Linux') : t('Windows')}
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="covers" role="listbox" aria-label="Games" aria-activedescendant={selected ? `cover-${selected.id}` : undefined}>
+              <div className="covers" role="listbox" aria-label={t('Games')} aria-activedescendant={selected ? `cover-${selected.id}` : undefined}>
                 {shownPending.map((d, i) => (
                   <PendingCover key={`dl-${d.id}`} d={d} parts={partsOf(d)} index={i} selected={selectedPending?.id === d.id} onSelect={() => setPendingId(d.id)} />
                 ))}
                 {shown.map((g, i) => (
                   <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setSelectedId(g.id); }} />
                 ))}
-                {shown.length === 0 && shownPending.length === 0 && <p className="muted">No games match.</p>}
+                {shown.length === 0 && shownPending.length === 0 && <p className="muted">{t('No games match.')}</p>}
               </div>
             </div>
           </div>
@@ -200,23 +202,23 @@ function PendingHero({ d, parts }: { d: DownloadItem; parts: DownloadItem[] }) {
       </div>
       <div className="hero__content">
         <div className="hero__main">
-          <p className="eyebrow">{d.sourceHost ?? 'Download'} · on its way to your Library</p>
+          <p className="eyebrow">{t('{source} · on its way to your Library', { source: d.sourceHost ?? t('Download') })}</p>
           <h2 className="hero__title">{d.title}</h2>
           <p className="hero__stats">
             <span>{st.label}{st.pct !== null ? ` · ${Math.round(st.pct * 100)}%` : ''}</span>
-            {d.state === 'active' && d.totalBytes ? <span className="mono">{formatBytes(d.receivedBytes)} of {formatBytes(d.totalBytes)} · {formatSpeed(d.speedBps)}</span> : null}
+            {d.state === 'active' && d.totalBytes ? <span className="mono">{t('{done} of {total}', { done: formatBytes(d.receivedBytes), total: formatBytes(d.totalBytes) })} · {formatSpeed(d.speedBps)}</span> : null}
           </p>
           {st.detail && <p className="muted hero__pending-detail">{st.detail}</p>}
           <div className="bar hero__pending-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={st.pct !== null ? Math.round(st.pct * 100) : undefined}>
             <span style={{ width: st.pct !== null ? `${st.pct * 100}%` : '30%' }} className={st.pct === null ? 'is-indeterminate' : ''} />
           </div>
-          <p className="muted">It unlocks here as soon as it is ready to play. The AI keeps working while you use other tabs.</p>
+          <p className="muted">{t('It unlocks here as soon as it is ready to play. The AI keeps working while you use other tabs.')}</p>
           <div className="hero__update-actions">
-            {d.state === 'active' && <Button variant="ghost" size="sm" icon="pause" onClick={() => void attempt(() => api.invoke('download:pause', { id: d.id }))}>Pause</Button>}
-            {d.state === 'paused' && <Button variant="primary" size="sm" icon="resume" onClick={() => void attempt(() => api.invoke('download:resume', { id: d.id }))}>Resume</Button>}
-            {d.state === 'failed' && <Button variant="primary" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('download:retry', { id: d.id }))}>Try again</Button>}
-            {d.state === 'completed' && d.installState === 'failed' && <Button variant="primary" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('download:install', { id: d.id }))}>Prepare again</Button>}
-            <Button variant="ghost" size="sm" icon="downloads" onClick={() => setTab('downloads')}>Show in Downloads</Button>
+            {d.state === 'active' && <Button variant="ghost" size="sm" icon="pause" onClick={() => void attempt(() => api.invoke('download:pause', { id: d.id }))}>{t('Pause')}</Button>}
+            {d.state === 'paused' && <Button variant="primary" size="sm" icon="resume" onClick={() => void attempt(() => api.invoke('download:resume', { id: d.id }))}>{t('Resume')}</Button>}
+            {d.state === 'failed' && <Button variant="primary" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('download:retry', { id: d.id }))}>{t('Try again')}</Button>}
+            {d.state === 'completed' && d.installState === 'failed' && <Button variant="primary" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('download:install', { id: d.id }))}>{t('Prepare again')}</Button>}
+            <Button variant="ghost" size="sm" icon="downloads" onClick={() => setTab('downloads')}>{t('Show in Downloads')}</Button>
           </div>
         </div>
       </div>
@@ -254,15 +256,15 @@ function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: nu
         <span className="cover__edge" aria-hidden="true" />
         <span className="cover__title">{game.title}</span>
         {game.favorite && (
-          <span className="cover__fav" aria-label="Favorite">
+          <span className="cover__fav" aria-label={t('Favorite')}>
             <Icon name="heart" size={13} />
           </span>
         )}
-        {game.running && <span className="cover__live">Running</span>}
+        {game.running && <span className="cover__live">{t('Running')}</span>}
         {!game.running && game.update && ['available', 'downloading', 'preparing', 'waiting'].includes(game.update.state) && (
-          <span className={`cover__update ${game.update.state === 'available' ? '' : 'is-busy'}`}>{game.update.state === 'available' ? 'Update' : 'Updating'}</span>
+          <span className={`cover__update ${game.update.state === 'available' ? '' : 'is-busy'}`}>{game.update.state === 'available' ? t('Update') : t('Updating')}</span>
         )}
-        {game.status !== 'installed' && <span className="cover__attention">Setup needed</span>}
+        {game.status !== 'installed' && <span className="cover__attention">{t('Setup needed')}</span>}
       </span>
     </motion.button>
   );
@@ -289,15 +291,15 @@ function PlayControl({ game }: { game: Game }) {
         <circle cx="60" cy="60" r="56" fill="none" stroke="url(#play-g)" strokeWidth="1.2" strokeDasharray="3 7" opacity="0.7" />
         <circle cx="60" cy="60" r="49" fill="none" stroke="url(#play-g)" strokeWidth="2" strokeDasharray="60 250" strokeLinecap="round" />
       </svg>
-      <button className="play__btn" onClick={onClick} disabled={!ready || busy} aria-label={game.running ? `Stop ${game.title}` : `Play ${game.title}`}>
+      <button className="play__btn" onClick={onClick} disabled={!ready || busy} aria-label={game.running ? t('Stop {title}', { title: game.title }) : t('Play {title}', { title: game.title })}>
         <Icon name={game.running ? 'stop' : 'play'} size={34} />
       </button>
-      <span className="play__label">{game.running ? 'Stop' : 'Play'}</span>
+      <span className="play__label">{game.running ? t('Stop') : t('Play')}</span>
     </div>
   );
 }
 
-const UPDATE_STEP: Record<string, string> = { downloading: 'Downloading the update', preparing: 'Installing the update', waiting: 'Update ready' };
+const UPDATE_STEP: Record<string, string> = { downloading: tk('Downloading the update'), preparing: tk('Installing the update'), waiting: tk('Update ready') };
 
 /** New version available, in progress, installed (with rollback) or failed. */
 function UpdatePanel({ game }: { game: Game }) {
@@ -310,16 +312,14 @@ function UpdatePanel({ game }: { game: Game }) {
         <Icon name="downloads" size={18} />
         <div>
           <p>
-            <strong>Update available{versions ? `: ${versions}` : ''}.</strong> <span className="muted">{u.reason}</span>
+            <strong>{t('Update available')}{versions ? `: ${versions}` : ''}.</strong> <span className="muted">{u.reason}</span>
           </p>
-          <p className="muted">Your saves are carried over, and the current version is kept until you have played the new one.</p>
+          <p className="muted">{t('Your saves are carried over, and the current version is kept until you have played the new one.')}</p>
           <div className="hero__update-actions">
             <Button variant="primary" size="sm" icon="downloads" onClick={() => void attempt(() => api.invoke('library:update', { id: game.id }))}>
-              Update now
-            </Button>
+              {t('Update now')}</Button>
             <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:ignoreUpdate', { id: game.id }))}>
-              Skip this version
-            </Button>
+              {t('Skip this version')}</Button>
           </div>
         </div>
       </motion.div>
@@ -331,12 +331,12 @@ function UpdatePanel({ game }: { game: Game }) {
         <span className="spinner" aria-hidden="true" />
         <div>
           <p>
-            <strong>{UPDATE_STEP[u.state]}{versions ? ` (${versions})` : ''}.</strong> {u.detail ?? ''}
+            <strong>{t(UPDATE_STEP[u.state])}{versions ? ` (${versions})` : ''}.</strong> {u.detail ?? ''}
           </p>
-          <p className="muted">You can keep playing the installed version meanwhile.</p>
+          <p className="muted">{t('You can keep playing the installed version meanwhile.')}</p>
           {u.state === 'downloading' && (
             <div className="hero__update-actions">
-              <Button variant="ghost" size="sm" icon="downloads" onClick={() => setTab('downloads')}>Show in Downloads</Button>
+              <Button variant="ghost" size="sm" icon="downloads" onClick={() => setTab('downloads')}>{t('Show in Downloads')}</Button>
             </div>
           )}
         </div>
@@ -349,12 +349,12 @@ function UpdatePanel({ game }: { game: Game }) {
         <Icon name="alert" size={18} />
         <div>
           <p>
-            <strong>The update{versions ? ` (${versions})` : ''} did not finish.</strong> {u.detail ?? ''}
+            <strong>{versions ? t('The update ({versions}) did not finish.', { versions }) : t('The update did not finish.')}</strong> {u.detail ?? ''}
           </p>
-          <p className="muted">The installed version was not changed.</p>
+          <p className="muted">{t('The installed version was not changed.')}</p>
           <div className="hero__update-actions">
-            <Button variant="primary" size="sm" icon="reload" onClick={() => void attempt(() => api.invoke('library:update', { id: game.id }))}>Try again</Button>
-            <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:ignoreUpdate', { id: game.id }))}>Skip this version</Button>
+            <Button variant="primary" size="sm" icon="reload" onClick={() => void attempt(() => api.invoke('library:update', { id: game.id }))}>{t('Try again')}</Button>
+            <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:ignoreUpdate', { id: game.id }))}>{t('Skip this version')}</Button>
           </div>
         </div>
       </motion.div>
@@ -366,14 +366,14 @@ function UpdatePanel({ game }: { game: Game }) {
       <Icon name="check" size={18} />
       <div>
         <p>
-          <strong>Updated{u.to ? ` to ${u.to}` : ''}.</strong>{' '}
-          {u.carried ? `${u.carried} save/settings file${u.carried === 1 ? ' was' : 's were'} carried over. ` : ''}
-          {game.canRollback ? `${game.previousVersion} is kept until you have played this version.` : ''}
+          <strong>{u.to ? t('Updated to {version}.', { version: u.to }) : t('Updated.')}</strong>{' '}
+          {u.carried ? t('{n} save/settings files were carried over.', { n: u.carried }) + ' ' : ''}
+          {game.canRollback ? t('{version} is kept until you have played this version.', { version: game.previousVersion ?? '' }) : ''}
         </p>
         {game.canRollback && (
           <div className="hero__update-actions">
             <Button variant="ghost" size="sm" icon="reload" disabled={game.running} onClick={() => void attempt(() => api.invoke('library:rollback', { id: game.id }))}>
-              Roll back to {game.previousVersion}
+              {t('Roll back to {version}', { version: game.previousVersion })}
             </Button>
           </div>
         )}
@@ -391,24 +391,24 @@ function SavesPanel({ game }: { game: Game }) {
   const run = async (fn: () => Promise<unknown>, ok?: string) => { setBusy(true); await attempt(fn, ok); setBusy(false); load(); };
   return (
     <div className="field">
-      <span className="field__label">Save backups</span>
-      {saves === null ? <span className="muted">Loading…</span> : saves.length === 0 ? (
-        <span className="field__hint">No backups yet. Saves are backed up after each play session of a minute or more, and before updates.</span>
+      <span className="field__label">{t('Save backups')}</span>
+      {saves === null ? <span className="muted">{t('Loading…')}</span> : saves.length === 0 ? (
+        <span className="field__hint">{t('No backups yet. Saves are backed up after each play session of a minute or more, and before updates.')}</span>
       ) : (
         <ul className="saves-list">
           {saves.slice(0, 6).map((s) => (
             <li key={s.stamp}>
               <span>
-                {new Date(s.at).toLocaleString()} <span className="muted">· {s.reason}{s.version ? ` · ${s.version}` : ''} · {s.files} file{s.files === 1 ? '' : 's'}, {formatBytes(s.bytes)}</span>
+                {new Date(s.at).toLocaleString()} <span className="muted">· {s.reason}{s.version ? ` · ${s.version}` : ''} · {s.files === 1 ? t('1 file') : t('{n} files', { n: s.files })}, {formatBytes(s.bytes)}</span>
               </span>
-              <Button variant="ghost" size="sm" icon="retry" disabled={busy || game.running} onClick={() => void run(() => api.invoke('library:restoreSaves', { id: game.id, stamp: s.stamp }))}>Restore</Button>
+              <Button variant="ghost" size="sm" icon="retry" disabled={busy || game.running} onClick={() => void run(() => api.invoke('library:restoreSaves', { id: game.id, stamp: s.stamp }))}>{t('Restore')}</Button>
             </li>
           ))}
         </ul>
       )}
       <div className="launch-row">
-        <Button variant="ghost" size="sm" icon="downloads" disabled={busy} onClick={() => void run(async () => { const b = await api.invoke('library:backupSaves', { id: game.id }); if (!b) throw new Error('No save files were found yet — play the game first.'); return b; }, 'Saves backed up.')}>Back up now</Button>
-        {!!saves?.length && <Button variant="ghost" size="sm" icon="folder" onClick={() => void attempt(() => api.invoke('library:openSaves', { id: game.id }))}>Open backups folder</Button>}
+        <Button variant="ghost" size="sm" icon="downloads" disabled={busy} onClick={() => void run(async () => { const b = await api.invoke('library:backupSaves', { id: game.id }); if (!b) throw new Error(t('No save files were found yet — play the game first.')); return b; }, t('Saves backed up.'))}>{t('Back up now')}</Button>
+        {!!saves?.length && <Button variant="ghost" size="sm" icon="folder" onClick={() => void attempt(() => api.invoke('library:openSaves', { id: game.id }))}>{t('Open backups folder')}</Button>}
       </div>
     </div>
   );
@@ -430,76 +430,76 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
   const l = game.launch;
   const set = (launch: Partial<LaunchOptions>) => void attempt(() => api.invoke('library:configure', { id: game.id, launch }));
   const windows = game.kind === 'windows';
-  const missing = (name: string) => <span className="field__hint">Not installed — install “{name}” with your distribution’s package manager to use this.</span>;
+  const missing = (name: string) => <span className="field__hint">{t('Not installed — install “{name}” with your distribution’s package manager to use this.', { name })}</span>;
   return (
     <>
       {windows && (
         <div className="field">
-          <label className="field__label" htmlFor={`proton-${game.id}`}>Proton version</label>
+          <label className="field__label" htmlFor={`proton-${game.id}`}>{t('Proton version')}</label>
           <select id={`proton-${game.id}`} className="input" value={l.protonPath ?? ''} onChange={(e) => set({ protonPath: e.target.value || null })}>
-            <option value="">Launcher default (Settings → Windows games)</option>
+            <option value="">{t('Launcher default (Settings → Windows games)')}</option>
             {protons.map((p) => <option key={p.path} value={p.path}>{p.name}</option>)}
           </select>
         </div>
       )}
       <div className="field">
-        <span className="field__label">Display</span>
+        <span className="field__label">{t('Display')}</span>
         <label className="check">
           <input type="checkbox" checked={l.gamescope} disabled={!tools.gamescope} onChange={(e) => set({ gamescope: e.target.checked })} />
-          <span>True fullscreen with Gamescope</span>
+          <span>{t('True fullscreen with Gamescope')}</span>
         </label>
         {!tools.gamescope && missing('gamescope')}
         {l.gamescope && tools.gamescope && (
           <div className="launch-row">
-            <select aria-label="Resolution" className="input" value={l.resolution ?? ''} onChange={(e) => set({ resolution: e.target.value || null })}>
-              <option value="">Screen resolution</option>
+            <select aria-label={t('Resolution')} className="input" value={l.resolution ?? ''} onChange={(e) => set({ resolution: e.target.value || null })}>
+              <option value="">{t('Screen resolution')}</option>
               {RESOLUTIONS.map((r) => <option key={r} value={r}>{r.replace('x', ' × ')}</option>)}
             </select>
-            <select aria-label="Upscaling" className="input" value={l.upscale} onChange={(e) => set({ upscale: e.target.value as LaunchOptions['upscale'] })}>
-              <option value="off">No upscaling</option>
-              <option value="fsr">AMD FSR upscaling</option>
-              <option value="nis">NVIDIA NIS upscaling</option>
+            <select aria-label={t('Upscaling')} className="input" value={l.upscale} onChange={(e) => set({ upscale: e.target.value as LaunchOptions['upscale'] })}>
+              <option value="off">{t('No upscaling')}</option>
+              <option value="fsr">{t('AMD FSR upscaling')}</option>
+              <option value="nis">{t('NVIDIA NIS upscaling')}</option>
             </select>
           </div>
         )}
       </div>
       <div className="field">
-        <label className="field__label" htmlFor={`fps-${game.id}`}>Frame rate limit</label>
+        <label className="field__label" htmlFor={`fps-${game.id}`}>{t('Frame rate limit')}</label>
         <select id={`fps-${game.id}`} className="input" value={l.fpsLimit ?? ''} onChange={(e) => set({ fpsLimit: e.target.value ? Number(e.target.value) : null })}>
-          <option value="">No limit</option>
-          {FPS.map((f) => <option key={f} value={f}>{f} FPS</option>)}
+          <option value="">{t('No limit')}</option>
+          {FPS.map((f) => <option key={f} value={f}>{t('{n} FPS', { n: f })}</option>)}
         </select>
-        {!l.gamescope && l.fpsLimit && <span className="field__hint">Applies to Direct3D games (through DXVK / VKD3D).</span>}
+        {!l.gamescope && l.fpsLimit && <span className="field__hint">{t('Applies to Direct3D games (through DXVK / VKD3D).')}</span>}
       </div>
       <div className="field">
-        <span className="field__label">Performance</span>
+        <span className="field__label">{t('Performance')}</span>
         <label className="check">
           <input type="checkbox" checked={l.gamemode} disabled={!tools.gamemode} onChange={(e) => set({ gamemode: e.target.checked })} />
-          <span>GameMode (CPU and GPU performance mode while playing)</span>
+          <span>{t('GameMode (CPU and GPU performance mode while playing)')}</span>
         </label>
         {!tools.gamemode && missing('gamemode')}
         <label className="check">
           <input type="checkbox" checked={l.mangohud} disabled={!tools.mangohud} onChange={(e) => set({ mangohud: e.target.checked })} />
-          <span>MangoHud overlay (FPS, frame times, temperatures)</span>
+          <span>{t('MangoHud overlay (FPS, frame times, temperatures)')}</span>
         </label>
         {!tools.mangohud && missing('mangohud')}
       </div>
       {windows && (
         <div className="field">
-          <span className="field__label">Proton options</span>
+          <span className="field__label">{t('Proton options')}</span>
           <label className="check">
             <input type="checkbox" checked={l.nvapi} onChange={(e) => set({ nvapi: e.target.checked })} />
-            <span>NVIDIA DLSS and Reflex (NVAPI)</span>
+            <span>{t('NVIDIA DLSS and Reflex (NVAPI)')}</span>
           </label>
           <label className="check">
             <input type="checkbox" checked={l.wined3d} onChange={(e) => set({ wined3d: e.target.checked })} />
-            <span>Compatibility renderer (WineD3D) — for games that crash or show black screens</span>
+            <span>{t('Compatibility renderer (WineD3D) — for games that crash or show black screens')}</span>
           </label>
         </div>
       )}
       <div className="field">
-        <label className="field__label" htmlFor={`env-${game.id}`}>Environment variables</label>
-        <textarea id={`env-${game.id}`} className="input mono launch-env" rows={3} placeholder={'One per line, e.g.\nDXVK_HUD=fps'} value={env}
+        <label className="field__label" htmlFor={`env-${game.id}`}>{t('Environment variables')}</label>
+        <textarea id={`env-${game.id}`} className="input mono launch-env" rows={3} placeholder={t('One per line, e.g.\nDXVK_HUD=fps')} value={env}
           onChange={(e) => setEnv(e.target.value)} onBlur={() => env !== l.env && set({ env })} />
       </div>
     </>
@@ -544,18 +544,18 @@ function LibraryHero({ game }: { game: Game }) {
       </div>
       <div className="hero__content">
         <div className="hero__main">
-          <p className="eyebrow">{game.kind === 'windows' ? `Windows · ${game.runner === 'proton' ? 'Proton' : 'Wine'}` : 'Native Linux'}{game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : ' · Imported'}</p>
+          <p className="eyebrow">{game.kind === 'windows' ? `${t('Windows')} · ${game.runner === 'proton' ? 'Proton' : 'Wine'}` : t('Native Linux')}{game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : t(' · Imported')}</p>
           <GameLogo game={game} />
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
             {game.kind === 'windows' && game.art?.appid ? <ProtonDbBadge appid={game.art.appid} /> : null}
             <span>{formatPlaytime(game.playtimeSeconds)}</span>
-            {game.lastPlayedAt && <span>Last played {new Date(game.lastPlayedAt).toLocaleDateString()}</span>}
+            {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
           </p>
           <div className="hero__quick">
-            <IconButton icon="heart" label={game.favorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
-            <IconButton icon="folder" label="Show files" onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
-            <IconButton icon="trash" label="Uninstall" onClick={() => setUninstallOpen(true)} disabled={game.running} />
+            <IconButton icon="heart" label={game.favorite ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
+            <IconButton icon="folder" label={t('Show files')} onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
+            <IconButton icon="trash" label={t('Uninstall')} onClick={() => setUninstallOpen(true)} disabled={game.running} />
           </div>
         </div>
         <PlayControl game={game} />
@@ -568,13 +568,13 @@ function LibraryHero({ game }: { game: Game }) {
             <Icon name="hdd" size={18} />
             <div>
               <p>
-                <strong>{formatBytes(game.archive.bytes)} of downloaded files can be deleted.</strong> {game.title} is installed and no longer needs {game.archive.files === 1 ? 'its download' : `its ${game.archive.files} downloaded parts`}.
+                <strong>{t('{size} of downloaded files can be deleted.', { size: formatBytes(game.archive.bytes) })}</strong>{' '}
+                {t(game.archive.files === 1 ? '{title} is installed and no longer needs its download.' : '{title} is installed and no longer needs its {n} downloaded parts.', { title: game.title, n: game.archive.files })}
               </p>
               <div className="hero__update-actions">
-                <Button variant="primary" size="sm" icon="trash" onClick={() => void attempt(async () => { const r = await api.invoke('library:deleteArchive', { id: game.id }); return r; }, `Freed ${formatBytes(game.archive!.bytes)}.`)}>
-                  Delete them
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:keepArchive', { id: game.id }))}>Keep</Button>
+                <Button variant="primary" size="sm" icon="trash" onClick={() => void attempt(async () => { const r = await api.invoke('library:deleteArchive', { id: game.id }); return r; }, t('Freed {size}.', { size: formatBytes(game.archive!.bytes) }))}>
+                  {t('Delete them')}</Button>
+                <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:keepArchive', { id: game.id }))}>{t('Keep')}</Button>
               </div>
             </div>
           </motion.div>
@@ -584,18 +584,16 @@ function LibraryHero({ game }: { game: Game }) {
             <Icon name="info" size={18} />
             <div>
               <p>
-                <strong>This game ships with a Windows installer.</strong> Run it yourself — it opens in {game.runner === 'proton' ? 'Proton' : 'Wine'} inside this game's own prefix. Afterwards, choose the installed program.
-              </p>
+                <strong>{t('This game ships with a Windows installer.')}</strong> {' '}{t('Run it yourself — it opens in {runner} inside this game\'s own prefix. Afterwards, choose the installed program.', { runner: game.runner === 'proton' ? 'Proton' : 'Wine' })}</p>
               <Button variant="primary" size="sm" icon="play" onClick={() => void attempt(() => api.invoke('library:runInstaller', { id: game.id }))}>
-                Run installer
-              </Button>
+                {t('Run installer')}</Button>
             </div>
           </motion.div>
         )}
         {game.status === 'installing' && (
           <motion.div className="hero__setup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} role="status">
             <span className="spinner" aria-hidden="true" />
-            <p>The installer is running. Follow its window; this updates when it closes.</p>
+            <p>{t('The installer is running. Follow its window; this updates when it closes.')}</p>
           </motion.div>
         )}
         {game.status === 'needs-executable' && (
@@ -603,9 +601,8 @@ function LibraryHero({ game }: { game: Game }) {
             <Icon name="alert" size={18} />
             <div className="hero__choose">
               <p>
-                <strong>Which file starts the game?</strong> Several candidates were found.
-              </p>
-              <ul className="exec-list" role="radiogroup" aria-label="Executable">
+                <strong>{t('Which file starts the game?')}</strong> {' '}{t('Several candidates were found.')}</p>
+              <ul className="exec-list" role="radiogroup" aria-label={t('Executable')}>
                 {game.executableCandidates.slice(0, 8).map((c) => (
                   <li key={c}>
                     <button role="radio" aria-checked={game.executable === c} className="exec-option" onClick={() => configure({ executable: c })}>
@@ -615,8 +612,7 @@ function LibraryHero({ game }: { game: Game }) {
                 ))}
               </ul>
               <Button variant="ghost" size="sm" icon="folder" onClick={() => void attempt(() => api.invoke('library:pickExecutable', { id: game.id }))}>
-                Browse…
-              </Button>
+                {t('Browse…')}</Button>
             </div>
           </motion.div>
         )}
@@ -624,18 +620,16 @@ function LibraryHero({ game }: { game: Game }) {
 
       <details className="hero__manage">
         <summary>
-          <Icon name="sliders" size={16} /> Launch options
-        </summary>
+          <Icon name="sliders" size={16} /> {' '}{t('Launch options')}</summary>
         <div className="manage-grid">
           {game.kind === 'windows' && (
             <div className="field">
               <span className="field__label" id={`runner-${game.id}`}>
-                Compatibility runner
-              </span>
+                {t('Compatibility runner')}</span>
               <div className="segmented" role="radiogroup" aria-labelledby={`runner-${game.id}`}>
                 {(['proton', 'wine'] as Runner[]).map((r) => (
                   <button key={r} role="radio" aria-checked={game.runner === r} className={game.runner === r ? 'is-on' : ''} onClick={() => configure({ runner: r })}>
-                    {r === 'proton' ? 'Proton (umu)' : 'Wine'}
+                    {r === 'proton' ? t('Proton (umu)') : t('Wine')}
                   </button>
                 ))}
               </div>
@@ -644,37 +638,34 @@ function LibraryHero({ game }: { game: Game }) {
           {game.status === 'installed' && game.executableCandidates.length > 1 && (
             <div className="field">
               <span className="field__label" id={`build-${game.id}`}>
-                Build
-              </span>
+                {t('Build')}</span>
               <div className="segmented segmented--wrap" role="radiogroup" aria-labelledby={`build-${game.id}`}>
                 {game.executableCandidates.slice(0, 6).map((c) => (
                   <button key={c} role="radio" aria-checked={game.executable === c} className={game.executable === c ? 'is-on' : ''} onClick={() => configure({ executable: c })} title={c}>
-                    {/\.exe$/i.test(c) ? 'Windows' : 'Linux'} · {c.split('/').pop()}
+                    {/\.exe$/i.test(c) ? t('Windows') : t('Linux')} · {c.split('/').pop()}
                   </button>
                 ))}
               </div>
             </div>
           )}
           <div className="field">
-            <span className="field__label">Executable</span>
+            <span className="field__label">{t('Executable')}</span>
             <div className="path-row">
               <span className="mono path-row__value" title={game.executable ?? ''}>
-                {game.executable ?? 'Not chosen'}
+                {game.executable ?? t('Not chosen')}
               </span>
               <Button variant="ghost" size="sm" onClick={() => void attempt(() => api.invoke('library:pickExecutable', { id: game.id }))}>
-                Change
-              </Button>
+                {t('Change')}</Button>
             </div>
           </div>
           <div className="field">
             <label className="field__label" htmlFor={`args-${game.id}`}>
-              Launch arguments
-            </label>
+              {t('Launch arguments')}</label>
             <input
               id={`args-${game.id}`}
               className="input mono"
               value={args}
-              placeholder="e.g. -windowed"
+              placeholder={t('e.g. -windowed')}
               onChange={(e) => setArgs(e.target.value)}
               onBlur={() => args !== argsRef.current && configure({ args })}
             />
@@ -683,34 +674,33 @@ function LibraryHero({ game }: { game: Game }) {
           <SavesPanel game={game} />
           {game.kind === 'windows' && game.managed && (
             <div className="field">
-              <span className="field__label">Game runtimes</span>
-              <span className="field__hint">Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.</span>
+              <span className="field__label">{t('Game runtimes')}</span>
+              <span className="field__hint">{t('Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.')}</span>
               <div className="launch-row">
-                <Button variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), 'The runtimes will be installed again before the next start.')}>Reinstall runtimes</Button>
+                <Button variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), t('The runtimes will be installed again before the next start.'))}>{t('Reinstall runtimes')}</Button>
               </div>
             </div>
           )}
           <div className="field">
-            <span className="field__label">Shortcuts</span>
+            <span className="field__label">{t('Shortcuts')}</span>
             <div className="launch-row">
-              <Button variant="ghost" size="sm" icon="grid" onClick={() => void attempt(() => api.invoke('library:shortcut', { id: game.id, where: 'menu' }), `${game.title} is in your applications menu.`)}>Add to applications menu</Button>
-              <Button variant="ghost" size="sm" icon="link" onClick={() => void attempt(() => api.invoke('library:shortcut', { id: game.id, where: 'desktop' }), `Shortcut for ${game.title} added to your desktop.`)}>Add to desktop</Button>
+              <Button variant="ghost" size="sm" icon="grid" onClick={() => void attempt(() => api.invoke('library:shortcut', { id: game.id, where: 'menu' }), t('{title} is in your applications menu.', { title: game.title }))}>{t('Add to applications menu')}</Button>
+              <Button variant="ghost" size="sm" icon="link" onClick={() => void attempt(() => api.invoke('library:shortcut', { id: game.id, where: 'desktop' }), t('Shortcut for {title} added to your desktop.', { title: game.title }))}>{t('Add to desktop')}</Button>
             </div>
           </div>
           {game.canRollback && game.update?.state !== 'updated' && (
             <div className="field">
-              <span className="field__label">Previous version</span>
+              <span className="field__label">{t('Previous version')}</span>
               <div className="path-row">
-                <span className="path-row__value">{game.previousVersion} is kept until you have played the current version.</span>
+                <span className="path-row__value">{t('{version} is kept until you have played the current version.', { version: game.previousVersion })}</span>
                 <Button variant="ghost" size="sm" icon="reload" disabled={game.running} onClick={() => void attempt(() => api.invoke('library:rollback', { id: game.id }))}>
-                  Roll back
-                </Button>
+                  {t('Roll back')}</Button>
               </div>
             </div>
           )}
           {game.prefixDir && (
             <div className="field">
-              <span className="field__label">Wine prefix</span>
+              <span className="field__label">{t('Wine prefix')}</span>
               <span className="mono path-row__value">{game.prefixDir}</span>
             </div>
           )}
@@ -719,35 +709,33 @@ function LibraryHero({ game }: { game: Game }) {
 
       <Dialog
         open={uninstallOpen}
-        title={`Uninstall ${game.title}?`}
+        title={t('Uninstall {title}?', { title: game.title })}
         onClose={() => setUninstallOpen(false)}
         actions={
           <>
             <Button variant="secondary" onClick={() => setUninstallOpen(false)}>
-              Keep it
-            </Button>
+              {t('Keep it')}</Button>
             <Button
               variant="danger"
               icon="trash"
               onClick={() => {
                 setUninstallOpen(false);
-                void attempt(() => api.invoke('library:uninstall', { id: game.id, removePrefix }), `${game.title} was removed.`);
+                void attempt(() => api.invoke('library:uninstall', { id: game.id, removePrefix }), t('{title} was removed.', { title: game.title }));
               }}
             >
-              Uninstall
-            </Button>
+              {t('Uninstall')}</Button>
           </>
         }
       >
         <p>
           {game.managed
-            ? 'The game folder managed by the launcher will be deleted. The downloaded archive stays in Downloads until you remove it.'
-            : 'This game was imported. It is removed from the Library only; its files stay where they are.'}
+            ? t('The game folder managed by the launcher will be deleted. The downloaded archive stays in Downloads until you remove it.')
+            : t('This game was imported. It is removed from the Library only; its files stay where they are.')}
         </p>
         {game.prefixDir && (
           <label className="check">
             <input type="checkbox" checked={removePrefix} onChange={(e) => setRemovePrefix(e.target.checked)} />
-            <span>Also delete its Wine prefix (saves and settings stored there are lost)</span>
+            <span>{t('Also delete its Wine prefix (saves and settings stored there are lost)')}</span>
           </label>
         )}
       </Dialog>

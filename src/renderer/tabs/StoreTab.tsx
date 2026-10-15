@@ -12,15 +12,16 @@ import { Button, EmptyState, Overlay } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import type { CatalogEntry, CatalogSort, DownloadItem, FacetValue, Platform } from '@shared/types';
 import { platformLabel } from '@shared/format';
+import { t, tk, locale } from '../i18n';
 
 const PLATFORM_FILTERS: Platform[] = ['linux', 'windows'];
 const PAGE = 120;
 
 const SORTS: Array<{ id: CatalogSort; label: string; icon: IconName; hint: string }> = [
-  { id: 'popular', label: 'Popular', icon: 'star', hint: 'Most downloaded and played first, from the sites’ own lists and counters' },
-  { id: 'trending', label: 'Trending', icon: 'flame', hint: 'Popular right now: the sites’ trending lists, then popular recent releases' },
-  { id: 'new', label: 'New', icon: 'clock', hint: 'Most recently found first' },
-  { id: 'title', label: 'A–Z', icon: 'sort', hint: 'Alphabetical' },
+  { id: 'popular', label: tk('Popular'), icon: 'star', hint: tk('Most downloaded and played first, from the sites’ own lists and counters') },
+  { id: 'trending', label: tk('Trending'), icon: 'flame', hint: tk('Popular right now: the sites’ trending lists, then popular recent releases') },
+  { id: 'new', label: tk('New'), icon: 'clock', hint: tk('Most recently found first') },
+  { id: 'title', label: tk('A–Z'), icon: 'sort', hint: tk('Alphabetical') },
 ];
 
 export function StoreTab() {
@@ -86,7 +87,7 @@ export function StoreTab() {
   const submitSearch = async () => {
     if (!search.trim()) return;
     const generation=++searchGeneration.current;
-    setSearching(true);setSearchMessage('Local AI is searching your websites…');
+    setSearching(true);setSearchMessage(t('Local AI is searching your websites…'));
     setStoreView({ category: '', tag: '', platforms: [] });
     try {
       const result=await api.invoke('store:search',{query:search.trim(),sourceIds:sourceFilter.length?sourceFilter:undefined});
@@ -274,7 +275,7 @@ export function StoreTab() {
     const latest = new Map<number, DownloadItem>();
     for (const d of downloads) if (d.catalogId !== null && d.state !== 'cancelled' && (!latest.get(d.catalogId) || d.id > latest.get(d.catalogId)!.id)) latest.set(d.catalogId, d);
     const out = new Map<number, string | null>();
-    for (const [id, d] of latest) out.set(id, d.state === 'completed' ? 'Downloaded' : d.state === 'active' ? `${d.totalBytes ? Math.round((d.receivedBytes / d.totalBytes) * 100) : 0}%` : d.state === 'failed' ? null : 'In queue');
+    for (const [id, d] of latest) out.set(id, d.state === 'completed' ? t('Downloaded') : d.state === 'active' ? `${d.totalBytes ? Math.round((d.receivedBytes / d.totalBytes) * 100) : 0}%` : d.state === 'failed' ? null : t('In queue'));
     return out;
   }, [downloads]);
   const rankFor = (e: CatalogEntry) => (sort === 'popular' && e.rankPopular ? { kind: 'popular' as const, n: e.rankPopular } : sort === 'trending' && e.rankTrending ? { kind: 'trending' as const, n: e.rankTrending } : null);
@@ -288,15 +289,15 @@ export function StoreTab() {
       <div className="page__scroll" ref={scrollRef} onScroll={(e) => { scrollTop.current = e.currentTarget.scrollTop; }}>
         <header className="page__header">
           <div className="page__titles">
-            <p className="eyebrow">Discovery</p>
-            <KineticTitle text="Store" />
+            <p className="eyebrow">{t('Discovery')}</p>
+            <KineticTitle text={t('Store')} />
             <p className="page__subtitle">
               {enabledSources.length === 0
-                ? 'Add websites to start discovering games.'
+                ? t('Add websites to start discovering games.')
                 : crawling.length
-                  ? `${crawling[0].detail ?? 'Reading websites'} · ${total} verified games`
-                  : `${total} game${total === 1 ? '' : 's'} from ${enabledSources.length} website${enabledSources.length === 1 ? '' : 's'}`}
-              {!policy.showNsfw && <span className="page__subtle"> · Adult content hidden</span>}
+                  ? t('{detail} · {n} verified games', { detail: crawling[0].detail ?? t('Reading websites'), n: total })
+                  : t(total === 1 ? '{n} game from {m} website(s)' : '{n} games from {m} website(s)', { n: total, m: enabledSources.length })}
+              {!policy.showNsfw && <span className="page__subtle"> {t('· Adult content hidden')}</span>}
             </p>
           </div>
           <div className="page__actions">
@@ -314,36 +315,35 @@ export function StoreTab() {
                 }
               }}
             >
-              Browser
-            </Button>
+              {t('Browser')}</Button>
           </div>
         </header>
 
         <div className="toolbar" role="search">
           <label className="search">
             <Icon name="search" size={17} />
-            <span className="sr-only">Search the Store</span>
-            <input ref={searchRef} type="search" maxLength={200} placeholder="Search saved games · Enter to ask AI  ( / )" value={search}
+            <span className="sr-only">{t('Search the Store')}</span>
+            <input ref={searchRef} type="search" maxLength={200} placeholder={t('Search saved games · Enter to ask AI  ( / )')} value={search}
               onFocus={()=>void api.invoke('store:searchFocus',{focused:true}).catch(()=>undefined)}
               onBlur={()=>void api.invoke('store:searchFocus',{focused:false}).catch(()=>undefined)}
               onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void submitSearch();}if(e.key==='Escape'){cancelSearch();searchRef.current?.blur();}}}
               onChange={e=>{cancelSearch();setSearch(e.target.value);setSearchMessage('');}} />
           </label>
-          <Button variant="secondary" icon="search" disabled={!search.trim()} onClick={()=>void submitSearch()}>{searching?'Search again':'AI search'}</Button>
-          {searching&&<Button variant="secondary" onClick={()=>{cancelSearch();setSearchMessage('Search cancelled');}}>Stop search</Button>}
+          <Button variant="secondary" icon="search" disabled={!search.trim()} onClick={()=>void submitSearch()}>{searching?t('Search again'):t('AI search')}</Button>
+          {searching&&<Button variant="secondary" onClick={()=>{cancelSearch();setSearchMessage(t('Search cancelled'));}}>{t('Stop search')}</Button>}
           <label className="store-filter">
-            <span>Category</span>
-            <select aria-label="Filter by category" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="">All categories</option>
+            <span>{t('Category')}</span>
+            <select aria-label={t('Filter by category')} value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="">{t('All categories')}</option>
               {category && !facets.categories.some((c) => c.name === category) && <option value={category}>{category}</option>}
               {facets.categories.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
             </select>
           </label>
           <TagPicker value={tag} tags={facets.tags} onChange={setTag} />
           {filtered && (
-            <button className="chip" onClick={() => { cancelSearch();setSearchMessage(''); setSearch(''); setDebounced(''); setStoreView({ category: '', tag: '', platforms: [], sources: [], scrollTop: 0 }); }}>Clear filters</button>
+            <button className="chip" onClick={() => { cancelSearch();setSearchMessage(''); setSearch(''); setDebounced(''); setStoreView({ category: '', tag: '', platforms: [], sources: [], scrollTop: 0 }); }}>{t('Clear filters')}</button>
           )}
-          <div className="chips" role="group" aria-label="Filter by platform">
+          <div className="chips" role="group" aria-label={t('Filter by platform')}>
             {PLATFORM_FILTERS.map((p) => {
               const on = platformFilter.includes(p);
               return (
@@ -354,7 +354,7 @@ export function StoreTab() {
             })}
           </div>
           {sources.length > 1 && (
-            <div className="chips" role="group" aria-label="Filter by website">
+            <div className="chips" role="group" aria-label={t('Filter by website')}>
               {sources.map((s) => {
                 const on = sourceFilter.includes(s.id);
                 return (
@@ -367,41 +367,40 @@ export function StoreTab() {
           )}
         </div>
 
-        <div className="sort-tabs" role="tablist" aria-label="Sort games">
+        <div className="sort-tabs" role="tablist" aria-label={t('Sort games')}>
           {SORTS.map((o) => (
-            <button key={o.id} role="tab" aria-selected={sort === o.id} title={o.hint} className={`sort-tab sort-tab--${o.id} ${sort === o.id ? 'is-on' : ''}`} onClick={() => setSort(o.id)}>
+            <button key={o.id} role="tab" aria-selected={sort === o.id} title={t(o.hint)} className={`sort-tab sort-tab--${o.id} ${sort === o.id ? 'is-on' : ''}`} onClick={() => setSort(o.id)}>
               <Icon name={o.icon} size={16} />
-              {o.label}
+              {t(o.label)}
             </button>
           ))}
           <button role="tab" aria-selected={wishOnly} className={`sort-tab sort-tab--wish ${wishOnly ? 'is-on' : ''}`} onClick={() => setStoreView({ wishlist: !wishOnly, scrollTop: 0 })}>
             <Icon name="heart" size={16} />
-            Wishlist{wishlist.length ? ` (${wishlist.length})` : ''}
+            {t('Wishlist')}{wishlist.length ? ` (${wishlist.length})` : ''}
           </button>
           {(sort === 'popular' || sort === 'trending') && loaded && facets.gathering > 0 && (
             <span className="sort-tabs__note">
-              Collecting popularity for {facets.gathering.toLocaleString()} more games from their Steam pages (players’ recommendations and release dates) — about {Math.max(1, Math.round((facets.gathering * 1.8) / 60))} min left. The order gets better as it runs; games without data come last.
-            </span>
+              {t('Collecting popularity for {n} more games from their Steam pages (players’ recommendations and release dates) — about {min} min left. The order gets better as it runs; games without data come last.', { n: facets.gathering.toLocaleString(locale()), min: Math.max(1, Math.round((facets.gathering * 1.8) / 60)) })}</span>
           )}
           {(sort === 'popular' || sort === 'trending') && loaded && facets.ranked === 0 && facets.gathering === 0 && (
-            <span className="sort-tabs__note">No popularity information was found for these games yet (no Popular/Trending lists on the websites, no counters, no Steam pages), so this shows the newest games first.</span>
+            <span className="sort-tabs__note">{t('No popularity information was found for these games yet (no Popular/Trending lists on the websites, no counters, no Steam pages), so this shows the newest games first.')}</span>
           )}
         </div>
 
         {searchMessage && <p className="store-search-status" role="status" aria-live="polite">{searchMessage}</p>}
-        {fuzzy && debounced && <p className="store-search-status" role="status">No title contains “{debounced}” — showing the closest matches.</p>}
+        {fuzzy && debounced && <p className="store-search-status" role="status">{t('No title contains “{query}” — showing the closest matches.', { query: debounced })}</p>}
         {wishOnly && (
           <div className="wish-panel">
-            <form className="wish-panel__add" onSubmit={(e) => { e.preventDefault(); const t = watchTitle.trim(); if (!t) return; void attempt(() => api.invoke('wishlist:add', { title: t }), `Watching for “${t}”. You’ll get a notification when a website lists it.`).then(() => setWatchTitle('')); }}>
-              <input className="input" placeholder="Watch for a game that isn’t here yet…" value={watchTitle} onChange={(e) => setWatchTitle(e.target.value)} maxLength={200} />
-              <Button variant="secondary" size="sm" icon="plus" type="submit" disabled={!watchTitle.trim()}>Notify me</Button>
+            <form className="wish-panel__add" onSubmit={(e) => { e.preventDefault(); const wanted = watchTitle.trim(); if (!wanted) return; void attempt(() => api.invoke('wishlist:add', { title: wanted }), t('Watching for “{title}”. You’ll get a notification when a website lists it.', { title: wanted })).then(() => setWatchTitle('')); }}>
+              <input className="input" placeholder={t('Watch for a game that isn’t here yet…')} value={watchTitle} onChange={(e) => setWatchTitle(e.target.value)} maxLength={200} />
+              <Button variant="secondary" size="sm" icon="plus" type="submit" disabled={!watchTitle.trim()}>{t('Notify me')}</Button>
             </form>
             {wishlist.filter((w) => w.catalogId === null).length > 0 && (
-              <ul className="wish-panel__list" aria-label="Waiting for">
+              <ul className="wish-panel__list" aria-label={t('Games you are watching')}>
                 {wishlist.filter((w) => w.catalogId === null).map((w) => (
                   <li key={w.id}>
-                    <Icon name="clock" size={14} /> {w.title} <span className="muted">— waiting for a website to list it</span>
-                    <button className="link-btn" onClick={() => void attempt(() => api.invoke('wishlist:remove', { id: w.id }))}>Remove</button>
+                    <Icon name="clock" size={14} /> {w.title} <span className="muted">{t('— waiting for a website to list it')}</span>
+                    <button className="link-btn" onClick={() => void attempt(() => api.invoke('wishlist:remove', { id: w.id }))}>{t('Remove')}</button>
                   </li>
                 ))}
               </ul>
@@ -414,16 +413,14 @@ export function StoreTab() {
               <div key={s.id} className={`notice notice--${s.status}`}>
                 <Icon name="alert" size={16} />
                 <span>
-                  <strong>{s.name}</strong> — {s.status === 'blocked' ? 'blocked' : s.status === 'unsupported' ? 'not supported' : 'error'}: {s.statusDetail}
+                  <strong>{s.name}</strong> — {s.status === 'blocked' ? t('blocked') : s.status === 'unsupported' ? t('not supported') : t('error')}: {s.statusDetail}
                 </span>
                 {s.status === 'blocked' && (
                   <button className="link-btn" onClick={() => void attempt(() => api.invoke('browser:open', { url: s.url }))}>
-                    Open in browser
-                  </button>
+                    {t('Open in browser')}</button>
                 )}
                 <button className="link-btn" onClick={() => void attempt(() => api.invoke('sources:recrawl', { id: s.id }))}>
-                  Retry
-                </button>
+                  {t('Retry')}</button>
               </div>
             ))}
           </div>
@@ -432,31 +429,29 @@ export function StoreTab() {
         {enabledSources.length === 0 ? (
           <EmptyState
             icon="globe"
-            title="Your orbit is empty"
+            title={t('Your orbit is empty')}
             action={
               <Button variant="primary" icon="plus" onClick={() => setTab('settings')}>
-                Add a website
-              </Button>
+                {t('Add a website')}</Button>
             }
           >
-            Add game websites in Settings. The local AI explores them while the Store is open, verifies game download links, checks artwork, and lists downloadable games here.
-          </EmptyState>
+            {t('Add game websites in Settings. The local AI explores them while the Store is open, verifies game download links, checks artwork, and lists downloadable games here.')}</EmptyState>
         ) : !loaded ? (
           <SkeletonGrid />
         ) : visible.length === 0 ? (
           crawling.length ? (
-            <SkeletonGrid label="Scanning websites for games…" />
+            <SkeletonGrid label={t('Scanning websites for games…')} />
           ) : (
-            <EmptyState icon="search" title={filtered ? 'No matches' : 'Nothing to show yet'}
-              action={debounced.trim() ? <Button variant="secondary" icon="heart" onClick={() => void attempt(() => api.invoke('wishlist:add', { title: debounced.trim() }), `Watching for “${debounced.trim()}”. You’ll get a notification when a website lists it.`)}>Notify me when “{debounced.trim()}” appears</Button> : undefined}>
+            <EmptyState icon="search" title={filtered ? t('No matches') : t('Nothing to show yet')}
+              action={debounced.trim() ? <Button variant="secondary" icon="heart" onClick={() => void attempt(() => api.invoke('wishlist:add', { title: debounced.trim() }), t('Watching for “{title}”. You’ll get a notification when a website lists it.', { title: debounced.trim() }))}>{t('Notify me when “{title}” appears', { title: debounced.trim() })}</Button> : undefined}>
               {filtered
-                ? 'Try a different search or clear the filters.'
-                : 'Games appear after the AI verifies a download route and checks their artwork. Articles without game downloads are excluded. Indexing runs while the Store is open.'}
+                ? t('Try a different search or clear the filters.')
+                : t('Games appear after the AI verifies a download route and checks their artwork. Articles without game downloads are excluded. Indexing runs while the Store is open.')}
             </EmptyState>
           )
         ) : (
           <>
-            <div className="grid" role="list" aria-label="Games" ref={gridRef}>
+            <div className="grid" role="list" aria-label={t('Games')} ref={gridRef}>
               {visible.map((e, i) => (
                 <div role="listitem" key={e.id} className="grid__cell">
                   <GameCard entry={e} index={i} onOpen={openDetail} onKeyNav={onKeyNav} downloadState={downloadStates.get(e.id) ?? null} rank={rankFor(e)} />
@@ -464,7 +459,7 @@ export function StoreTab() {
               ))}
             </div>
             <div ref={sentinelRef} className="load-more" aria-hidden={entries.length >= total}>
-              {entries.length < total && <span className="muted">Loading more · {visible.length} of {total}</span>}
+              {entries.length < total && <span className="muted">{t('Loading more · {n} of {total}', { n: visible.length, total })}</span>}
             </div>
             <Overlay>
               <AnimatePresence>{detail && <GameDetail key={detail.id} entry={detail} origin={origin.current} onClose={closeDetail} />}</AnimatePresence>
@@ -479,7 +474,7 @@ export function StoreTab() {
 
 function SkeletonGrid({ label }: { label?: string }) {
   return (
-    <div className="grid grid--skeleton" aria-busy="true" aria-label={label ?? 'Loading games'}>
+    <div className="grid grid--skeleton" aria-busy="true" aria-label={label ?? t('Loading games')}>
       {label && <p className="grid__scan-label">{label}</p>}
       {Array.from({ length: 10 }).map((_, i) => (
         <div key={i} className="skeleton-card" style={{ animationDelay: `${i * 80}ms` }}>
@@ -512,19 +507,19 @@ function TagPicker({ value, tags, onChange }: { value: string; tags: FacetValue[
   const pick = (t: string) => { onChange(t); setOpen(false); setQ(''); };
   return (
     <div className="store-filter tag-picker" ref={box}>
-      <span>Tag</span>
+      <span>{t('Tag')}</span>
       <button type="button" className={`tag-picker__button ${value ? 'is-on' : ''}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Icon name="tag" size={14} />
-        <span className="tag-picker__value">{value || 'All tags'}</span>
+        <span className="tag-picker__value">{value || t('All tags')}</span>
         <Icon name="down" size={13} />
       </button>
       {open && (
-        <div className="tag-picker__panel" role="dialog" aria-label="Choose a tag">
+        <div className="tag-picker__panel" role="dialog" aria-label={t('Choose a tag')}>
           <input
             ref={input}
             className="input tag-picker__search"
             type="search"
-            placeholder={`Search ${tags.length} tags…`}
+            placeholder={t('Search {n} tags…', { n: tags.length })}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
@@ -532,17 +527,17 @@ function TagPicker({ value, tags, onChange }: { value: string; tags: FacetValue[
               if (e.key === 'Enter' && shown[0]) pick(shown[0].name);
             }}
           />
-          <ul className="tag-picker__list" role="listbox" aria-label="Tags">
-            <li><button role="option" aria-selected={!value} className="tag-picker__option" onClick={() => pick('')}>All tags</button></li>
-            {shown.map((t) => (
-              <li key={t.name}>
-                <button role="option" aria-selected={value === t.name} className="tag-picker__option" onClick={() => pick(t.name)}>
-                  <span>{t.name}</span>
-                  <span className="tag-picker__count mono">{t.count}</span>
+          <ul className="tag-picker__list" role="listbox" aria-label={t('Tags')}>
+            <li><button role="option" aria-selected={!value} className="tag-picker__option" onClick={() => pick('')}>{t('All tags')}</button></li>
+            {shown.map((item) => (
+              <li key={item.name}>
+                <button role="option" aria-selected={value === item.name} className="tag-picker__option" onClick={() => pick(item.name)}>
+                  <span>{item.name}</span>
+                  <span className="tag-picker__count mono">{item.count}</span>
                 </button>
               </li>
             ))}
-            {!shown.length && <li className="muted tag-picker__empty">No tag matches “{q}”.</li>}
+            {!shown.length && <li className="muted tag-picker__empty">{t('No tag matches “{query}”.', { query: q })}</li>}
           </ul>
         </div>
       )}

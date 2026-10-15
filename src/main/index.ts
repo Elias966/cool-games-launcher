@@ -1,3 +1,4 @@
+import { onLanguage, setMainLanguage, tm } from './i18n';
 import { ForegroundWork } from './foreground';
 import { StoreSearch } from './store-search';
 import {MODEL_CATALOG} from '@shared/models';
@@ -111,6 +112,7 @@ async function main() {
 
   const db = openDb(paths.db);
   const settingsRepo = new SettingsRepo(db, defaultSettings({ games: paths.games, downloads: paths.downloads }));
+  setMainLanguage(settingsRepo.get().language);
   const consentRepo = new ConsentRepo(db);
   const sourcesRepo = new SourcesRepo(db);
   const catalogRepo = new CatalogRepo(db);
@@ -383,6 +385,7 @@ async function main() {
       if(patch.aiModelId!==undefined)throw Error('Use the model selector to switch verified local models.');
       const before = settingsRepo.get();
       const s = settingsRepo.update(patch);
+      setMainLanguage(s.language);
       const aiKeys: Array<keyof Settings> = ['aiThreads', 'aiContextSize', 'aiAcceleration', 'aiImageTokens', 'aiIdleUnloadMinutes', 'classifierThreads'];
       if (aiKeys.some((k) => before[k] !== s[k])) await initInference(s);
       if (before.sendDoNotTrack !== s.sendDoNotTrack) await initBrowser(s);
@@ -664,7 +667,7 @@ async function main() {
     const game = gameFromArgs(argv);
     if (game !== null) launchFromShortcut(game);
   });
-  const launchFromShortcut = (id: number) => void library.launch(id).catch((e) => toast('error', `Could not start the game: ${(e as Error).message}`));
+  const launchFromShortcut = (id: number) => void library.launch(id).catch((e) => toast('error', tm('Could not start the game: {detail}', { detail: (e as Error).message })));
   const startGame = gameFromArgs(process.argv);
   if (startGame !== null) setTimeout(() => launchFromShortcut(startGame), 1500);
 
@@ -673,7 +676,10 @@ async function main() {
     icon: appIcon(), window: () => mainWindow, couch: () => publish('app:couch', { on: true }),
     launch: launchFromShortcut, quit: () => app.quit(),
   });
-  if (tray.start()) library.onChanged((games) => tray.setGames(games));
+  if (tray.start()) {
+    library.onChanged((games) => tray.setGames(games));
+    onLanguage(() => tray.refresh());
+  }
   let trayHintShown = false;
   mainWindow.on('close', (e) => {
     if (appQuitting || !tray.active || !settingsRepo.get().closeToTray) return;
@@ -681,7 +687,7 @@ async function main() {
     mainWindow?.hide();
     if (!trayHintShown) {
       trayHintShown = true;
-      if (Notification.isSupported()) new Notification({ title: 'Still running in the tray', body: 'Downloads and game preparation continue. Quit from the tray icon, or turn this off in Settings.' }).show();
+      if (Notification.isSupported()) new Notification({ title: tm('Still running in the tray'), body: tm('Downloads and game preparation continue. Quit from the tray icon, or turn this off in Settings.') }).show();
     }
   });
 
@@ -764,7 +770,7 @@ async function main() {
   app.on('window-all-closed', () => app.quit());
 
   if (!vendorStatus().firefox) {
-    toast('warning', 'Some bundled components are missing. Run “npm run vendor” in the source tree to fetch them.');
+    toast('warning', tm('Some bundled components are missing. Run “npm run vendor” in the source tree to fetch them.'));
   }
 }
 

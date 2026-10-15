@@ -12,6 +12,7 @@ import type { CatalogRepo, DownloadRecord, DownloadsRepo, GameRecord, GamesRepo,
 import type { PageFetcher } from './page-fetcher';
 import type { HostRateLimiter } from './rate-limit';
 import { toast } from './bus';
+import { tm } from './i18n';
 
 /** The build a game page offers. */
 export function pageFingerprint(ex: PageExtract, candidates: Array<{ fileName: string | null; label: string; sizeText: string | null }>, listingTitle?: string | null): VersionFingerprint {
@@ -165,10 +166,10 @@ export class UpdateService {
     });
     this.deps.broadcast();
     if (this.deps.settings.get().gameUpdates === 'auto') {
-      toast('info', `Updating ${g.title}${verdict.to ? ` to ${verdict.to}` : ''}…`);
-      void Promise.resolve(this.deps.startUpdate(gameId)).catch((e) => toast('error', `Could not update ${g.title}: ${(e as Error).message}`));
+      toast('info', verdict.to ? tm('Updating {title} to {version}…', { title: g.title, version: verdict.to }) : tm('Updating {title}…', { title: g.title }));
+      void Promise.resolve(this.deps.startUpdate(gameId)).catch((e) => toast('error', tm('Could not update {title}: {detail}', { title: g.title, detail: (e as Error).message })));
     } else {
-      toast('info', `Update available for ${g.title}${verdict.from && verdict.to ? `: ${verdict.from} → ${verdict.to}` : ''}. Open the Library to update.`);
+      toast('info', verdict.from && verdict.to ? tm('Update available for {title}: {from} → {to}. Open the Library to update.', { title: g.title, from: verdict.from, to: verdict.to }) : tm('Update available for {title}. Open the Library to update.', { title: g.title }));
     }
   }
 

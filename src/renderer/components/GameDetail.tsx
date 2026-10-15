@@ -12,16 +12,17 @@ import { Icon } from './Icon';
 import { ProtonDbBadge } from './ProtonDb';
 import { formatBytes, formatSpeed, platformLabel } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
+import { t, tk } from '../i18n';
 
 const STATE_TEXT: Record<string, string> = {
-  queued: 'Queued',
-  resolving: 'Finding the download…',
-  'needs-user': 'Waiting for you in the browser',
-  'needs-resolution': 'Needs the Store to continue',
-  active: 'Downloading',
-  paused: 'Paused',
-  failed: 'Failed',
-  completed: 'Downloaded',
+  queued: tk('Queued'),
+  resolving: tk('Finding the download…'),
+  'needs-user': tk('Waiting for you in the browser'),
+  'needs-resolution': tk('Needs the Store to continue'),
+  active: tk('Downloading'),
+  paused: tk('Paused'),
+  failed: tk('Failed'),
+  completed: tk('Downloaded'),
 };
 
 /** Flies a copy of the card artwork from the grid into the detail scene. */
@@ -107,7 +108,7 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
             <span className="detail__art-glow" aria-hidden="true" />
           </div>
           {steam && (steam.trailers.length > 0 || steam.screenshots.length > 0) ? <SteamGallery steam={steam} /> : entry.screenshots.length > 0 && (
-            <div className="detail__shots" aria-label="Screenshots">
+            <div className="detail__shots" aria-label={t('Screenshots')}>
               {entry.screenshots.slice(0, 4).map((s, i) => (
                 <ScreenshotThumb key={s} url={s} index={i} />
               ))}
@@ -131,12 +132,12 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
           <h1 id="detail-title" className="detail__title">
             {entry.title}
           </h1>
-          {entry.author && <p className="detail__author">by {entry.author}</p>}
+          {entry.author && <p className="detail__author">{t('by {author}', { author: entry.author })}</p>}
 
           <div className="detail__cta">
             {game?.update?.state === 'available' ? (
               <Button variant="primary" size="lg" icon="downloads" onClick={() => void attempt(() => api.invoke('library:update', { id: game.id }))}>
-                Update{game.update.from && game.update.to ? ` ${game.update.from} → ${game.update.to}` : ''}
+                {t('Update')}{game.update.from && game.update.to ? ` ${game.update.from} → ${game.update.to}` : ''}
               </Button>
             ) : game ? (
               <Button
@@ -148,7 +149,7 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
                   setTab('library');
                 }}
               >
-                {game.update && ['downloading', 'preparing', 'waiting'].includes(game.update.state) ? 'Updating — open Library' : 'In your Library'}
+                {game.update && ['downloading', 'preparing', 'waiting'].includes(game.update.state) ? t('Updating — open Library') : t('In your Library')}
               </Button>
             ) : download && !['failed', 'cancelled'].includes(download.state) ? (
               <div className="detail__progress">
@@ -156,56 +157,54 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
                   <span className="mono">{progress !== null ? `${Math.round(progress * 100)}%` : ''}</span>
                 </ProgressRing>
                 <div>
-                  <p className="detail__progress-state">{download.installState === 'installing' ? 'Preparing your Library' : STATE_TEXT[download.state] ?? download.state}</p>
+                  <p className="detail__progress-state">{download.installState === 'installing' ? t('Preparing your Library') : t(STATE_TEXT[download.state] ?? download.state)}</p>
                   <p className="detail__progress-sub mono">
                     {download.state === 'active'
-                      ? `${formatBytes(download.receivedBytes)} of ${formatBytes(download.totalBytes)} · ${formatSpeed(download.speedBps)}`
-                      : download.installState === 'installing' ? download.installDetail ?? 'Extracting…' : download.userPrompt?.message ?? download.errorDetail ?? ''}
+                      ? t('{done} of {total} · {speed}', { done: formatBytes(download.receivedBytes), total: formatBytes(download.totalBytes), speed: formatSpeed(download.speedBps) })
+                      : download.installState === 'installing' ? download.installDetail ?? t('Extracting…') : download.userPrompt?.message ?? download.errorDetail ?? ''}
                   </p>
                 </div>
                 <Button variant="ghost" size="sm" icon="downloads" onClick={() => setTab('downloads')}>
-                  Downloads
-                </Button>
+                  {t('Downloads')}</Button>
               </div>
             ) : (
               <Button variant="primary" size="lg" icon="downloads" onClick={startDownload} disabled={busy}>
-                {download?.state === 'failed' ? 'Try download again' : 'Download & add to Library'}
+                {download?.state === 'failed' ? t('Try download again') : t('Download & add to Library')}
               </Button>
             )}
             <Button variant="ghost" size="md" icon="heart" aria-pressed={!!entry.wishlisted} className={entry.wishlisted ? 'is-wished' : ''}
-              onClick={() => void attempt(async () => { if (entry.wishlisted) await api.invoke('wishlist:remove', { catalogId: entry.id }); else await api.invoke('wishlist:add', { catalogId: entry.id }); }, entry.wishlisted ? 'Removed from your wishlist.' : 'On your wishlist — you’ll be notified when a new version appears.')}>
-              {entry.wishlisted ? 'On your wishlist' : 'Wishlist'}
+              onClick={() => void attempt(async () => { if (entry.wishlisted) await api.invoke('wishlist:remove', { catalogId: entry.id }); else await api.invoke('wishlist:add', { catalogId: entry.id }); }, entry.wishlisted ? t('Removed from your wishlist.') : t('On your wishlist — you’ll be notified when a new version appears.'))}>
+              {entry.wishlisted ? t('On your wishlist') : t('Wishlist')}
             </Button>
             {!entry.detailFetched && (
               <Button variant="ghost" size="md" icon="reload" onClick={() => void attempt(() => api.invoke('catalog:refreshDetail', { id: entry.id }))}>
-                Fetch details
-              </Button>
+                {t('Fetch details')}</Button>
             )}
           </div>
 
           <dl className="detail__facts">
             {steam?.reviews && (
               <div>
-                <dt>Steam reviews</dt>
+                <dt>{t('Steam reviews')}</dt>
                 <dd className={`detail__reviews detail__reviews--${steam.reviews.percent >= 80 ? 'good' : steam.reviews.percent >= 60 ? 'mixed' : 'bad'}`}>
-                  {steam.reviews.label || `${steam.reviews.percent}% positive`} · {steam.reviews.percent}% of {compact(steam.reviews.count)}
+                  {steam.reviews.label ? t(steam.reviews.label) : t('{p}% positive', { p: steam.reviews.percent })} · {t('{p}% of {n}', { p: steam.reviews.percent, n: compact(steam.reviews.count) })}
                 </dd>
               </div>
             )}
             {steam && entry.platforms.includes('windows') && !entry.platforms.includes('linux') && (
               <div>
-                <dt>On Linux (Proton)</dt>
+                <dt>{t('On Linux (Proton)')}</dt>
                 <dd><ProtonDbBadge appid={steam.appid} /></dd>
               </div>
             )}
             {steam?.released && (
               <div>
-                <dt>Released</dt>
+                <dt>{t('Released')}</dt>
                 <dd>{new Date(steam.released).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}</dd>
               </div>
             )}
             <div>
-              <dt>Platforms</dt>
+              <dt>{t('Platforms')}</dt>
               <dd>
                 {entry.platforms.length ? (
                   <span className="detail__platforms">
@@ -213,21 +212,21 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
                     {entry.platforms.map(platformLabel).join(' · ')}
                   </span>
                 ) : (
-                  'Not listed'
+                  t('Not listed')
                 )}
               </dd>
             </div>
             {entry.priceText && (
               <div>
-                <dt>Price</dt>
+                <dt>{t('Price')}</dt>
                 <dd>{entry.priceText}</dd>
               </div>
             )}
             <div>
-              <dt>Source</dt>
+              <dt>{t('Source')}</dt>
               <dd>
                 <button className="link-btn" onClick={() => void attempt(() => api.invoke('browser:open', { url: entry.pageUrl }))}>
-                  Open page in browser <Icon name="external" size={13} />
+                  {t('Open page in browser')}{' '}<Icon name="external" size={13} />
                 </button>
               </dd>
             </div>
@@ -236,30 +235,30 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
           {entry.description && !/\bfree download\b|pc game for free|pre-?installed/i.test(entry.description) ? (
             <>
               <p className="detail__desc">{entry.description}</p>
-              {entry.descriptionSource === 'steam' && <p className="detail__desc-source muted">Description from the game’s Steam store page.</p>}
+              {entry.descriptionSource === 'steam' && <p className="detail__desc-source muted">{t('Description from the game’s Steam store page.')}</p>}
             </>
           ) : (
-            <p className="detail__desc muted">The website only has an advertising blurb for this game. The launcher checks the game’s page and Steam for a real description; it appears here when found.</p>
+            <p className="detail__desc muted">{t('The website only has an advertising blurb for this game. The launcher checks the game’s page and Steam for a real description; it appears here when found.')}</p>
           )}
           {entry.popularity && (entry.popularity.downloads || entry.popularity.views || entry.popularity.ratings) ? (
             <p className="detail__popularity mono">
               {[
-                entry.popularity.downloads ? `${compact(entry.popularity.downloads)} downloads` : null,
-                entry.popularity.views ? `${compact(entry.popularity.views)} views` : null,
-                entry.popularity.rating ? `${entry.popularity.rating.toFixed(1)}★${entry.popularity.ratings ? ` (${compact(entry.popularity.ratings)})` : ''}` : entry.popularity.ratings ? `${compact(entry.popularity.ratings)} ratings` : null,
+                entry.popularity.downloads ? t('{n} downloads', { n: compact(entry.popularity.downloads) }) : null,
+                entry.popularity.views ? t('{n} views', { n: compact(entry.popularity.views) }) : null,
+                entry.popularity.rating ? `${entry.popularity.rating.toFixed(1)}★${entry.popularity.ratings ? ` (${compact(entry.popularity.ratings)})` : ''}` : entry.popularity.ratings ? t('{n} ratings', { n: compact(entry.popularity.ratings) }) : null,
               ].filter(Boolean).join(' · ')}
             </p>
           ) : null}
           {(entry.rankPopular || entry.rankTrending) ? (
             <p className="detail__popularity">
-              {entry.rankTrending ? <span className="card__rank card__rank--trending detail__rank"><Icon name="flame" size={12} />#{entry.rankTrending} trending</span> : null}
-              {entry.rankPopular ? <span className="card__rank detail__rank"><Icon name="star" size={12} />#{entry.rankPopular} popular</span> : null}
+              {entry.rankTrending ? <span className="card__rank card__rank--trending detail__rank"><Icon name="flame" size={12} />{t('#{n} trending', { n: entry.rankTrending })}</span> : null}
+              {entry.rankPopular ? <span className="card__rank detail__rank"><Icon name="star" size={12} />{t('#{n} popular', { n: entry.rankPopular })}</span> : null}
             </p>
           ) : null}
           {entry.tags.length > 0 && (
-            <ul className="detail__tags" aria-label="Tags">
-              {entry.tags.slice(0, 8).map((t) => (
-                <li key={t}>{t}</li>
+            <ul className="detail__tags" aria-label={t('Tags')}>
+              {entry.tags.slice(0, 8).map((tag) => (
+                <li key={tag}>{tag}</li>
               ))}
             </ul>
           )}
@@ -267,11 +266,10 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
           <SimilarGames id={entry.id} />
 
           <p className="detail__note">
-            The launcher finds the download, unpacks the game and adds it to your Library — you can use other tabs meanwhile. Start the game with Play when it is ready.
-          </p>
+            {t('The launcher finds the download, unpacks the game and adds it to your Library — you can use other tabs meanwhile. Start the game with Play when it is ready.')}</p>
         </motion.div>
 
-        <button ref={closeRef} className="detail__close" onClick={onClose} aria-label="Close game details">
+        <button ref={closeRef} className="detail__close" onClick={onClose} aria-label={t('Close game details')}>
           <Icon name="close" size={20} />
         </button>
       </motion.div>
@@ -302,8 +300,8 @@ function SimilarGames({ id }: { id: number }) {
   }, [id, revision]);
   if (!games.length) return null;
   return (
-    <section className="similar" aria-label="Similar games">
-      <h2 className="similar__title">Similar games</h2>
+    <section className="similar" aria-label={t('Similar games')}>
+      <h2 className="similar__title">{t('Similar games')}</h2>
       <div className="similar__row">
         {games.map((g) => (
           <button key={g.id} className="similar__item" onClick={() => setState({ detailId: g.id })}>
@@ -334,18 +332,18 @@ function SteamGallery({ steam }: { steam: SteamMedia }) {
     <div className="detail__media">
       {trailer && <TrailerPlayer key={trailer.hls ?? trailer.preview ?? trailer.name} trailer={trailer} />}
       {steam.screenshots.length > 0 && (
-        <div className="detail__shots detail__shots--steam" aria-label="Screenshots">
+        <div className="detail__shots detail__shots--steam" aria-label={t('Screenshots')}>
           {steam.screenshots.slice(0, 8).map((s, i) => (
-            <button key={s} className="detail__shot-btn" onClick={() => setShot(i)} aria-label={`Screenshot ${i + 1}`}>
+            <button key={s} className="detail__shot-btn" onClick={() => setShot(i)} aria-label={t('Screenshot {n}', { n: i + 1 })}>
               <img className="detail__shot" src={s.replace(/\.jpg(\?|$)/, '.600x338.jpg$1')} onError={(e) => { if (!e.currentTarget.src.endsWith(s)) e.currentTarget.src = s; }} alt="" loading="lazy" />
             </button>
           ))}
         </div>
       )}
       {shot !== null && (
-        <div className="shot-viewer" role="dialog" aria-label="Screenshot" onClick={() => setShot(null)}>
+        <div className="shot-viewer" role="dialog" aria-label={t('Screenshot')} onClick={() => setShot(null)}>
           <img src={steam.screenshots[shot]} alt="" />
-          <span className="shot-viewer__count">{shot + 1} / {steam.screenshots.length} · ← → to browse · Esc to close</span>
+          <span className="shot-viewer__count">{shot + 1} / {steam.screenshots.length} {t('· ← → to browse · Esc to close')}</span>
         </div>
       )}
     </div>
@@ -378,10 +376,10 @@ function TrailerPlayer({ trailer }: { trailer: SteamMedia['trailers'][number] })
     return <video ref={video} className="detail__trailer" controls poster={trailer.poster ?? undefined} aria-label={trailer.name} />;
   }
   return (
-    <button className="detail__trailer detail__trailer--preview" onClick={() => trailer.hls && setPlaying(true)} aria-label={`Play ${trailer.name}`} disabled={!trailer.hls}>
+    <button className="detail__trailer detail__trailer--preview" onClick={() => trailer.hls && setPlaying(true)} aria-label={t('Play {name}', { name: trailer.name })} disabled={!trailer.hls}>
       {trailer.preview ? <video src={trailer.preview} poster={trailer.poster ?? undefined} autoPlay muted loop playsInline /> : trailer.poster && <img src={trailer.poster} alt="" />}
       {trailer.hls && <span className="detail__trailer-play"><Icon name="play" size={30} /></span>}
-      <span className="detail__trailer-name">{failed ? 'The trailer could not be played' : trailer.name}</span>
+      <span className="detail__trailer-name">{failed ? t('The trailer could not be played') : trailer.name}</span>
     </button>
   );
 }

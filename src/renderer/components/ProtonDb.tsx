@@ -3,15 +3,16 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { attempt } from '../state';
 import type { ProtonDbSummary } from '@shared/types';
+import { t, tk } from '../i18n';
 
-const LABEL: Record<string, string> = { platinum: 'Platinum', gold: 'Gold', silver: 'Silver', bronze: 'Bronze', borked: 'Borked', native: 'Native', pending: 'Pending' };
+const LABEL: Record<string, string> = { platinum: tk('Platinum'), gold: tk('Gold'), silver: tk('Silver'), bronze: tk('Bronze'), borked: tk('Borked'), native: tk('Native'), pending: tk('Pending') };
 const HINT: Record<string, string> = {
-  platinum: 'Runs perfectly out of the box',
-  gold: 'Runs perfectly after small tweaks',
-  silver: 'Runs with minor issues',
-  bronze: 'Runs, but often crashes or has issues',
-  borked: 'Does not run or is unplayable',
-  native: 'Has a native Linux version',
+  platinum: tk('Runs perfectly out of the box'),
+  gold: tk('Runs perfectly after small tweaks'),
+  silver: tk('Runs with minor issues'),
+  bronze: tk('Runs, but often crashes or has issues'),
+  borked: tk('Does not run or is unplayable'),
+  native: tk('Has a native Linux version'),
 };
 
 export function ProtonDbBadge({ appid }: { appid: number }) {
@@ -24,11 +25,11 @@ export function ProtonDbBadge({ appid }: { appid: number }) {
   if (!summary) return null;
   const tier = summary.trendingTier ?? summary.tier;
   return (
-    <button className={`protondb protondb--${tier}`} title={`${HINT[tier] ?? ''} — ${summary.total} reports on ProtonDB. Open the reports.`}
+    <button className={`protondb protondb--${tier}`} title={t('{hint} — {n} reports on ProtonDB. Open the reports.', { hint: t(HINT[tier] ?? ''), n: summary.total })}
       onClick={() => void attempt(() => api.invoke('app:openExternal', { url: `https://www.protondb.com/app/${appid}` }))}>
-      <span className="protondb__label">ProtonDB</span>
-      <span className="protondb__tier">{LABEL[tier] ?? tier}</span>
-      <span className="protondb__count">{summary.total} reports</span>
+      <span className="protondb__label">{t('ProtonDB')}</span>
+      <span className="protondb__tier">{t(LABEL[tier] ?? tier)}</span>
+      <span className="protondb__count">{t('{n} reports', { n: summary.total })}</span>
     </button>
   );
 }

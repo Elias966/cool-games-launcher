@@ -1,9 +1,9 @@
 // Interface language. Texts are written in English and looked up in the
 // Arabic dictionary when Arabic is chosen (Settings → Appearance); the layout
 // then runs right to left. Text that comes from websites stays as it is.
-import { ar } from './i18n/ar';
+import { translate, type Language } from '@shared/i18n/translate';
 
-export type Language = 'en' | 'ar';
+export type { Language };
 let lang: Language = 'en';
 
 export function setLanguage(l: Language) {
@@ -17,13 +17,14 @@ export function language(): Language {
 }
 
 /** The text in the chosen language; `{name}` placeholders are filled from `vars`. */
-export function t(en: string, vars?: Record<string, string | number>): string {
-  let s = lang === 'ar' ? ar[en] ?? en : en;
-  if (vars) s = s.replace(/\{(\w+)\}/g, (_, k: string) => (vars[k] === undefined ? `{${k}}` : String(vars[k])));
-  return s;
+export function t(en: string, vars?: Record<string, string | number | null | undefined>): string {
+  return translate(lang, en, vars);
 }
 
-/** Numbers and dates in the chosen language's format. */
+/** Numbers and dates in the chosen language's format (Arabic keeps Western digits). */
 export function locale(): string {
-  return lang === 'ar' ? 'ar' : 'en';
+  return lang === 'ar' ? 'ar-u-nu-latn' : 'en';
 }
+
+/** Marks a text kept in a table as translatable; t() translates it where it is shown. */
+export const tk = (en: string) => en;

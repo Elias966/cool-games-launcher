@@ -4,6 +4,7 @@ import { NsfwBadge, PlatformIcons } from './ui';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { emitScene } from '../scene/events';
 import { Icon } from './Icon';
+import { t } from '../i18n';
 
 /** Deterministic gradient art for entries without artwork. */
 export function placeholderStyle(seed: string): CSSProperties {
@@ -98,7 +99,7 @@ export const GameCard = memo(
           }}
           onClick={(e) => onOpen(entry.id, e.currentTarget.getBoundingClientRect())}
           onKeyDown={(e) => onKeyNav(e, index)}
-          aria-label={`${entry.title}${entry.rating === 'adult' ? ', adult content' : ''}, from ${entry.sourceName}${rank ? `, number ${rank.n} ${rank.kind}` : ''}`}
+          aria-label={t(entry.rating === 'adult' ? '{title}, adult content, from {source}' : '{title}, from {source}', { title: entry.title, source: entry.sourceName }) + (rank ? ' · #' + rank.n : '')}
           data-card-index={index}
           data-card-id={entry.id}
         >
@@ -118,9 +119,9 @@ export const GameCard = memo(
           {entry.wishlisted && <span className="card__wish" aria-hidden="true"><Icon name="heart" size={13} /></span>}
           <div className="card__badges">
             {entry.rating === 'adult' && <NsfwBadge small />}
-            {entry.installedGameId && (entry.updateAvailable ? <span className="badge badge--info badge--sm">Update available</span> : <span className="badge badge--ok badge--sm">Installed</span>)}
+            {entry.installedGameId && (entry.updateAvailable ? <span className="badge badge--info badge--sm">{t('Update available')}</span> : <span className="badge badge--ok badge--sm">{t('Installed')}</span>)}
             {!entry.installedGameId && downloadState && <span className="badge badge--info badge--sm">{downloadState}</span>}
-            {!entry.installedGameId && !downloadState && entry.verifying && <span className="badge badge--verify badge--sm" title="The local AI found this game; its download is being verified">Verifying</span>}
+            {!entry.installedGameId && !downloadState && entry.verifying && <span className="badge badge--verify badge--sm" title={t('The local AI found this game; its download is being verified')}>{t('Verifying')}</span>}
           </div>
           <div className="card__meta">
             <h3 className="card__title">{entry.title}</h3>

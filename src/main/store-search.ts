@@ -11,6 +11,7 @@ import { SearchDecisionRejected, type LocalGameAgent } from './game-agent';
 import type { Discovery } from './discovery';
 import type { AiService } from './ai';
 import type { HostRateLimiter } from './rate-limit';
+import { tm } from './i18n';
 
 // Keep non-Latin titles searchable too; the catalog's legacy titleKey is ASCII.
 const searchTitle=(s:string)=>s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
@@ -58,7 +59,7 @@ export class StoreSearch {
     const errors: string[] = [];
     for (const source of enabled) {
       try {
-        ai.setStatus({phase:'navigating',detail:`Searching ${source.name} for “${query}”`,context:'discovery'});
+        ai.setStatus({phase:'navigating',detail:tm('Searching {name} for “{query}”',{name:source.name,query}),context:'discovery'});
         await limiter.wait(hostOf(source.url), source.rateLimitMs, token.signal);
         session.assertLive(token);
         await browser.navigate('discovery',source.url,token.signal);
