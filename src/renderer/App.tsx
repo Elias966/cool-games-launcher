@@ -23,6 +23,19 @@ class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean
   override render() { return this.state.failed ? null : this.props.children; }
 }
 
+/** Whether this GPU/driver offers WebGL 2 (headless or blocklisted GPUs do not). */
+function webglAvailable(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    const ok = !!c.getContext('webgl2'); // three.js needs WebGL 2
+    c.width = c.height = 0;
+    return ok;
+  } catch {
+    return false;
+  }
+}
+const WEBGL = webglAvailable();
+
 const ACTIVITY: Record<string, number> = { idle: 0, loading: 0.5, thinking: 1, navigating: 0.6, classifying: 0.4, paused: 0.2 };
 
 export function App() {
@@ -151,11 +164,13 @@ export function App() {
     <MotionConfig reducedMotion={reduced ? 'always' : 'never'}>
       <div className="app">
         <div className="atmosphere" aria-hidden="true" />
-        <SceneBoundary>
-          <Suspense fallback={null}>
-            <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible} />
-          </Suspense>
-        </SceneBoundary>
+        {WEBGL && (
+          <SceneBoundary>
+            <Suspense fallback={null}>
+              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible} />
+            </Suspense>
+          </SceneBoundary>
+        )}
         <div className="vignette" aria-hidden="true" />
         <div className="spotlight" aria-hidden="true" ref={spotlight} />
         <Fragment key={lang}>
