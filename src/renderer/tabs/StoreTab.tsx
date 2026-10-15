@@ -295,7 +295,7 @@ export function StoreTab() {
                 ? t('Add websites to start discovering games.')
                 : crawling.length
                   ? t('{detail} · {n} verified games', { detail: crawling[0].detail ?? t('Reading websites'), n: total })
-                  : t(total === 1 ? '{n} game from {m} website(s)' : '{n} games from {m} website(s)', { n: total, m: enabledSources.length })}
+                  : t(enabledSources.length === 1 ? (total === 1 ? '{n} game from 1 website' : '{n} games from 1 website') : total === 1 ? '{n} game from {m} websites' : '{n} games from {m} websites', { n: total, m: enabledSources.length })}
               {!policy.showNsfw && <span className="page__subtle"> {t('· Adult content hidden')}</span>}
             </p>
           </div>
