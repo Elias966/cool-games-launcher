@@ -647,6 +647,11 @@ function AboutSection() {
       <StatusCard icon="sparkle" tone="ok" title={`Cool Games Launcher ${info?.appVersion ?? ''}`} detail="Free software under the GNU General Public License, version 3 or later.">
         <Button size="sm" variant="secondary" icon="folder" onClick={() => void attempt(() => api.invoke('app:openFolder', { which: 'logs' }))}>Open log folder</Button>
       </StatusCard>
+      <Group title="Problems?">
+        <Row label="Create a diagnostics file" desc="Writes one text file to your Downloads folder with the launcher's state, recent downloads and their errors, and the end of its logs (your home folder is shortened to ~). Send it with a description of what went wrong.">
+          <Button size="sm" variant="secondary" icon="downloads" onClick={() => void attempt(async () => { const r = await api.invoke('app:diagnostics'); pushToast('success', `Saved ${r.path.split('/').pop()} in your Downloads folder.`); })}>Create file</Button>
+        </Row>
+      </Group>
       <Group title="Components">
         <ul className="st-components">
           {components.map(([key, name, license, note]) => (

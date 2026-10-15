@@ -34,6 +34,7 @@ import { GameInfoService } from './descriptions';
 import { WishlistService } from './wishlist';
 import { LauncherTray } from './tray';
 import { gameFromArgs } from './shortcuts';
+import { writeDiagnostics } from './diagnostics';
 import { UpdateService } from './updates';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
@@ -629,6 +630,11 @@ async function main() {
     'library:openSaves': ({ id }) => library.openSaves(id),
     'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
     'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
+    'app:diagnostics': () => {
+      const path = writeDiagnostics({ version: app.getVersion(), logsDir: paths.logs, ai: ai.getStatus(), settings: settingsRepo, sources: sourcesRepo, downloads: downloadsRepo, games: gamesRepo });
+      shell.showItemInFolder(path);
+      return { path };
+    },
     'library:keepArchive': ({ id }) => library.keepArchive(id),
   };
   registerIpc(handlers, trusted);

@@ -213,6 +213,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
         {d.state === 'queued' && <IconButton icon="pause" label="Pause" onClick={() => call(() => api.invoke('download:pause', { id: d.id }))} />}
         {d.state === 'paused' && <IconButton icon="resume" label="Resume" onClick={() => call(() => api.invoke('download:resume', { id: d.id }))} />}
         {d.state === 'failed' && <IconButton icon="retry" label="Retry" onClick={() => call(() => api.invoke('download:retry', { id: d.id }))} />}
+        {(d.state === 'failed' || d.installState === 'failed') && <IconButton icon="info" label="Create a diagnostics file for this problem" onClick={() => call(() => api.invoke('app:diagnostics'))} />}
         {d.state === 'needs-user' && (
           <Button variant="primary" size="sm" icon="browser" onClick={openStore}>
             Open browser

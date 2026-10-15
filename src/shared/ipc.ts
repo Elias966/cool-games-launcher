@@ -67,6 +67,7 @@ export const settingsPatch = z
     saveBackupsKeep: z.number().int().min(1).max(50),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
+    language: z.enum(['en', 'ar']),
     clearBrowserDataOnExit: z.boolean(),
     sendDoNotTrack: z.boolean(),
   })
@@ -201,6 +202,7 @@ export const requests = {
   'library:openSaves': z.object({ id }).strict(),
   'library:shortcut': z.object({ id, where: z.enum(['menu', 'desktop']) }).strict(),
   'library:resetRuntimes': z.object({ id }).strict(),
+  'app:diagnostics': z.undefined(),
   'library:keepArchive': z.object({ id }).strict(),
 } as const;
 
@@ -293,6 +295,7 @@ export interface Responses {
   'library:openSaves': void;
   'library:shortcut': { path: string };
   'library:resetRuntimes': void;
+  'app:diagnostics': { path: string };
   'library:keepArchive': void;
 }
 

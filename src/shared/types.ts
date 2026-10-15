@@ -351,6 +351,8 @@ export interface Settings {
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
   freeGpuWhilePlaying: boolean;
+  /** Interface language (Arabic lays the interface out right to left). */
+  language: 'en' | 'ar';
   clearBrowserDataOnExit: boolean;
   sendDoNotTrack: boolean;
 }

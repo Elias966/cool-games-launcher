@@ -77,6 +77,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     saveBackupsKeep: 5,
     closeToTray: true,
     freeGpuWhilePlaying: true,
+    language: 'en',
     clearBrowserDataOnExit: false,
     sendDoNotTrack: true,
   };
