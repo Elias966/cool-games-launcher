@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { KineticTitle } from '../components/KineticTitle';
 import { RECOMMENDED_MODEL_ID, type ModelList, type ModelOption } from '@shared/models';
-import type { ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
+import type { LauncherUpdate, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
 import { formatBytes } from '@shared/format';
 import { api } from '../api';
 import { attempt, pushToast, useApp } from '../state';
@@ -639,6 +639,63 @@ function PrivacySection({ settings }: { settings: Settings }) {
   );
 }
 
+function useLauncherUpdate() {
+  const [update, setUpdate] = useState<LauncherUpdate | null>(null);
+  useEffect(() => {
+    let live = true;
+    void api.invoke('launcher:updateStatus').then((u) => { if (live) setUpdate(u); }).catch(() => undefined);
+    const off = api.on('launcher:update', (u) => { if (live) setUpdate(u); });
+    return () => { live = false; off(); };
+  }, []);
+  return update;
+}
+
+function LauncherUpdates() {
+  const settings = useApp((s) => s.settings);
+  const u = useLauncherUpdate();
+  if (!u || !settings) return null;
+  const openPage = () => void attempt(() => api.invoke('app:openExternal', { url: u.pageUrl }));
+  const checked = u.checkedAt ? ` ${t('Checked {when}.', { when: new Date(u.checkedAt).toLocaleString(locale()) })}` : '';
+  let desc: ReactNode;
+  let action: ReactNode = null;
+  if (u.state === 'checking') {
+    desc = t('Checking GitHub for a new version…');
+  } else if (u.state === 'available') {
+    desc = u.canInstall ? t('Version {version} is available.', { version: u.latest }) : t('Version {version} is available. This copy cannot replace itself, so download it from the release page.', { version: u.latest });
+    action = (
+      <div className="st-inline">
+        <Button size="sm" variant="ghost" icon="external" onClick={openPage}>{t('What’s new')}</Button>
+        {u.canInstall && <Button size="sm" variant="primary" icon="downloads" onClick={() => void attempt(() => api.invoke('launcher:downloadUpdate'))}>{t('Download and install')}</Button>}
+      </div>
+    );
+  } else if (u.state === 'downloading') {
+    desc = u.size ? t('Downloading version {version} · {done} of {total}', { version: u.latest, done: formatBytes(u.received), total: formatBytes(u.size) }) : t('Downloading version {version} · {done}', { version: u.latest, done: formatBytes(u.received) });
+    action = <Button size="sm" variant="ghost" onClick={() => void attempt(() => api.invoke('launcher:cancelUpdate'))}>{t('Cancel')}</Button>;
+  } else if (u.state === 'ready') {
+    desc = t('Version {version} is downloaded and verified. Restarting takes a few seconds; downloads resume afterwards.', { version: u.latest });
+    action = <Button size="sm" variant="primary" icon="reload" onClick={() => void attempt(() => api.invoke('launcher:installUpdate'))}>{t('Restart now')}</Button>;
+  } else if (u.state === 'error') {
+    desc = t('Could not check for updates: {detail}', { detail: u.error });
+    action = <Button size="sm" variant="ghost" icon="reload" onClick={() => void attempt(() => api.invoke('launcher:checkUpdate'))}>{t('Try again')}</Button>;
+  } else {
+    desc = (u.state === 'up-to-date' ? t('You have the latest version ({version}).', { version: u.current }) : t('You have version {version}.', { version: u.current })) + checked;
+    action = <Button size="sm" variant="ghost" icon="reload" onClick={() => void attempt(() => api.invoke('launcher:checkUpdate'))}>{t('Check now')}</Button>;
+  }
+  return (
+    <Group title={t('Launcher updates')}>
+      <Row label={t('Cool Games Launcher')} desc={desc}>{action}</Row>
+      {u.state === 'downloading' && <div className="st-progress st-progress--inline"><span style={{ width: `${u.size ? Math.min(100, (u.received / u.size) * 100) : 0}%` }} /></div>}
+      {u.notes && (u.state === 'available' || u.state === 'ready') && <p className="st-release-notes">{u.notes.length > 700 ? `${u.notes.slice(0, 700)}…` : u.notes}</p>}
+      <Row label={t('Look for new versions automatically')} desc={t('Checks the project’s GitHub releases a few times a day. Nothing is downloaded until you choose to.')}>
+        <Switch checked={settings.checkLauncherUpdates} label={t('Look for new versions automatically')} onChange={(v) => void update({ checkLauncherUpdates: v })} />
+      </Row>
+      <Row label={t('Install from a file')} desc={u.canInstall ? t('Replace this launcher with an AppImage you downloaded yourself. Your games, settings and downloads stay.') : t('Available when the launcher runs from its AppImage.')}>
+        <Button size="sm" variant="ghost" icon="folder" disabled={!u.canInstall} onClick={() => void attempt(() => api.invoke('launcher:installFromFile'))}>{t('Choose AppImage…')}</Button>
+      </Row>
+    </Group>
+  );
+}
+
 function AboutSection() {
   const info = useApp((s) => s.info);
   const ready = info?.vendorReady ?? {};
@@ -656,6 +713,7 @@ function AboutSection() {
       <StatusCard icon="sparkle" tone="ok" title={`Cool Games Launcher ${info?.appVersion ?? ''}`} detail={t('Free software under the GNU General Public License, version 3 or later.')}>
         <Button size="sm" variant="secondary" icon="folder" onClick={() => void attempt(() => api.invoke('app:openFolder', { which: 'logs' }))}>{t('Open log folder')}</Button>
       </StatusCard>
+      <LauncherUpdates />
       <Group title={t('Problems?')}>
         <Row label={t('Create a diagnostics file')} desc={t('Writes one text file to your Downloads folder with the launcher\'s state, recent downloads and their errors, and the end of its logs (your home folder is shortened to ~). Send it with a description of what went wrong.')}>
           <Button size="sm" variant="secondary" icon="downloads" onClick={() => void attempt(async () => { const r = await api.invoke('app:diagnostics'); pushToast('success', t('Saved {file} in your Downloads folder.', { file: r.path.split('/').pop() })); })}>{t('Create file')}</Button>

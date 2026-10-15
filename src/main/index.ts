@@ -5,7 +5,7 @@ import {MODEL_CATALOG} from '@shared/models';
 import {ModelManager} from './models';
 import { LocalGameAgent } from './game-agent';
 // Composition root for the main process.
-import { app, BrowserWindow, dialog, ipcMain, shell, session as electronSession, type IpcMainInvokeEvent, Notification } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, shell, session as electronSession, type IpcMainInvokeEvent, Notification } from 'electron';
 import { join } from 'node:path';
 import { cpus, totalmem } from 'node:os';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
@@ -40,6 +40,7 @@ import { UpdateService } from './updates';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
+import { SelfUpdater } from './self-update';
 import { hostOf } from '@shared/urls';
 import type { ProtonDbSummary, Settings } from '@shared/types';
 
@@ -290,6 +291,25 @@ async function main() {
     changed: () => { publish('wishlist:changed', wishlists.list()); publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId: null }); },
   });
   const wishlists = wishlistService;
+
+  // The launcher's own updates, from the project's GitHub releases.
+  const selfUpdate = new SelfUpdater({
+    version: app.getVersion(),
+    appImage: process.env.APPIMAGE || null,
+    fetch: (url, init) => net.fetch(url, init),
+    publish: (st) => publish('launcher:update', st),
+    announce: (version) => {
+      toast('info', tm('Cool Games Launcher {version} is available. Install it from Settings → About.', { version }));
+      if (Notification.isSupported()) new Notification({ title: tm('Launcher update available'), body: tm('Version {version} is ready to download in Settings → About.', { version }) }).show();
+    },
+    restart: (appImage) => {
+      app.relaunch({ execPath: appImage, args: [] });
+      app.quit();
+    },
+  });
+  const checkLauncher = () => { if (settingsRepo.get().checkLauncherUpdates) void selfUpdate.check(); };
+  setTimeout(checkLauncher, 20_000).unref();
+  setInterval(checkLauncher, 6 * 3600_000).unref();
   const descriptions = new GameInfoService({
     catalog: catalogRepo, sources: sourcesRepo, cache: aiCache, fetcher, limiter,
     changed: (sourceId) => publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId }),
@@ -633,6 +653,17 @@ async function main() {
     'library:openSaves': ({ id }) => library.openSaves(id),
     'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
     'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
+    'launcher:updateStatus': () => selfUpdate.status(),
+    'launcher:checkUpdate': () => selfUpdate.check(true),
+    'launcher:downloadUpdate': () => selfUpdate.download(),
+    'launcher:cancelUpdate': () => selfUpdate.cancel(),
+    'launcher:installUpdate': () => selfUpdate.install(),
+    'launcher:installFromFile': async () => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose the new Cool Games Launcher AppImage'), properties: ['openFile'], filters: [{ name: 'AppImage', extensions: ['AppImage', 'appimage'] }] });
+      if (r.canceled || !r.filePaths[0]) return false;
+      selfUpdate.installFile(r.filePaths[0]);
+      return true;
+    },
     'app:diagnostics': () => {
       const path = writeDiagnostics({ version: app.getVersion(), logsDir: paths.logs, ai: ai.getStatus(), settings: settingsRepo, sources: sourcesRepo, downloads: downloadsRepo, games: gamesRepo });
       shell.showItemInFolder(path);

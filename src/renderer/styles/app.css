@@ -3266,3 +3266,6 @@ kbd {
 /* Paths, addresses and code read left to right inside right-to-left text. */
 :root[dir='rtl'] .mono, :root[dir='rtl'] input[type='url'], :root[dir='rtl'] .st-source__url { direction: ltr; unicode-bidi: isolate; }
 :root[dir='rtl'] .mono { text-align: end; }
+
+.st-progress--inline { margin: 0 0 6px; }
+.st-release-notes { margin: 0; padding: 10px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); color: var(--text-2); font-size: 0.85rem; white-space: pre-line; max-height: 180px; overflow: auto; }

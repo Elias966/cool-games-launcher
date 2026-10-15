@@ -351,6 +351,8 @@ export interface Settings {
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
   freeGpuWhilePlaying: boolean;
+  /** Look for new launcher versions on GitHub. */
+  checkLauncherUpdates: boolean;
   /** Interface language (Arabic lays the interface out right to left). */
   language: 'en' | 'ar';
   clearBrowserDataOnExit: boolean;
@@ -439,3 +441,18 @@ export interface ProtonReleaseList {
 }
 
 export interface StoreSearchResult { id: number | null; message: string; cancelled?: boolean }
+
+/** The launcher's own update, from the project's GitHub releases. */
+export interface LauncherUpdate {
+  current: string;
+  state: 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
+  latest: string | null;
+  notes: string | null;
+  pageUrl: string;
+  size: number | null;
+  received: number;
+  error: string | null;
+  checkedAt: string | null;
+  /** Running from an AppImage that this user may replace. */
+  canInstall: boolean;
+}

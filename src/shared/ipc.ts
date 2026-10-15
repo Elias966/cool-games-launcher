@@ -11,6 +11,7 @@ import type {
   CatalogFacets,
   SaveBackup,
   ProtonDbSummary,
+  LauncherUpdate,
   WishItem,
   CatalogPage,
   ConsentRecord,
@@ -67,6 +68,7 @@ export const settingsPatch = z
     saveBackupsKeep: z.number().int().min(1).max(50),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
+    checkLauncherUpdates: z.boolean(),
     language: z.enum(['en', 'ar']),
     clearBrowserDataOnExit: z.boolean(),
     sendDoNotTrack: z.boolean(),
@@ -133,7 +135,7 @@ export const requests = {
   'catalog:similar': z.object({ id }).strict(),
   'compat:protondb': z.object({ appid: z.number().int().positive().max(100_000_000) }).strict(),
   /** Opens ProtonDB / Steam store pages in the user's own browser (nothing else). */
-  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher)\//) }).strict(),
+  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher)(?:\/|$)/) }).strict(),
   'wishlist:list': z.undefined(),
   'wishlist:add': z.object({ catalogId: id.optional(), title: z.string().min(1).max(200).optional() }).strict(),
   'wishlist:remove': z.object({ id: id.optional(), catalogId: id.optional() }).strict(),
@@ -203,6 +205,12 @@ export const requests = {
   'library:shortcut': z.object({ id, where: z.enum(['menu', 'desktop']) }).strict(),
   'library:resetRuntimes': z.object({ id }).strict(),
   'app:diagnostics': z.undefined(),
+  'launcher:updateStatus': z.undefined(),
+  'launcher:checkUpdate': z.undefined(),
+  'launcher:downloadUpdate': z.undefined(),
+  'launcher:cancelUpdate': z.undefined(),
+  'launcher:installUpdate': z.undefined(),
+  'launcher:installFromFile': z.undefined(),
   'library:keepArchive': z.object({ id }).strict(),
 } as const;
 
@@ -296,6 +304,13 @@ export interface Responses {
   'library:shortcut': { path: string };
   'library:resetRuntimes': void;
   'app:diagnostics': { path: string };
+  'launcher:updateStatus': LauncherUpdate;
+  'launcher:checkUpdate': LauncherUpdate;
+  'launcher:downloadUpdate': LauncherUpdate;
+  'launcher:cancelUpdate': void;
+  'launcher:installUpdate': void;
+  /** False when no file was chosen. */
+  'launcher:installFromFile': boolean;
   'library:keepArchive': void;
 }
 
@@ -324,6 +339,7 @@ export interface Events {
   /** A notification was clicked: show this game. */
   'app:openGame': { catalogId: number };
   'wishlist:changed': WishItem[];
+  'launcher:update': LauncherUpdate;
 }
 
 export type EventName = keyof Events;
