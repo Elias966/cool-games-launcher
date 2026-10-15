@@ -8,7 +8,7 @@ real database, Firefox profile, models and library).
 
 ```bash
 npm run typecheck
-npm test          # Vitest: ~277 tests, ~15 s
+npm test          # Vitest: ~300 tests, ~15 s
 npm run build
 ```
 
@@ -20,7 +20,12 @@ The unit suites cover: page extraction and site recipes (`site-recipe`,
 `store-recovery`, `store-exit`), foreground priority and AI search
 (`foreground-search`), the Fara agent loop against Microsoft's harness format
 (`agent-team`, `game-agent`), downloads (`transfer`, `parallel-transfer`),
-extraction (`extract`, `prepare-game`, `exec-scan`), models, Proton and policy.
+extraction (`extract`, `prepare-game`, `exec-scan`), models, Proton and policy,
+play statistics
+(`play-stats`), launcher self-updates against a fake GitHub (`self-update`),
+append-only database migrations (`migrations`) and the Arabic dictionary
+(`i18n`: every text passed to `t()`, `tk()` or `tm()` needs an Arabic entry in
+`src/shared/i18n/ar.ts` with the same `{placeholders}`).
 Model decisions in these suites come from deterministic stubs
 (`tests/helpers/fixture-agent.ts`); they test plumbing, not model quality.
 
@@ -53,6 +58,21 @@ Pitfalls:
   next model silently loads mostly on the CPU.
 - Never type `pgrep -f`/`pkill -f` patterns inline in a shell an agent runs;
   the pattern matches that shell itself. Put them in a script file.
+
+## Launcher self-update, end to end
+
+`CGL_UPDATE_TEST_ORIGIN=http://127.0.0.1:<port>` points the updater at a local
+stand-in for the GitHub API (only `127.0.0.1` origins are accepted). Serve
+`/repos/Elias966/cool-games-launcher/releases/latest` with a release whose
+`tag_name` is newer than the build, an AppImage asset and `SHA256SUMS` on the
+same origin, then run a **copy** of the packaged AppImage from a scratch folder
+with `APPIMAGE` set by the AppImage runtime. Settings → About → Launcher updates
+should offer the version, download it, verify it, replace the copy and restart.
+Use a standalone `Xvfb` (not `xvfb-run`, which stops its X server when the
+first process exits and so kills the restarted launcher), and set
+`APPIMAGELAUNCHER_DISABLE=1` where AppImageLauncher is installed, or it asks
+whether to integrate the copy. After the restart no process of the old mount
+(`/tmp/.mount_…`) may be left.
 
 ## Real-site checks (manual, legitimate sources only)
 

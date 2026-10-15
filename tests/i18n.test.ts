@@ -15,8 +15,15 @@ function interfaceTexts(): Map<string, string> {
       const sf = ts.createSourceFile(p, readFileSync(p, 'utf8'), ts.ScriptTarget.Latest, true, name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
       const visit = (n: ts.Node) => {
         if (ts.isCallExpression(n) && ['t', 'tk', 'tm'].includes(n.expression.getText(sf))) {
-          const a = n.arguments[0];
-          if (a && (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a))) out.set(a.text, `${p}:${sf.getLineAndCharacterOfPosition(a.getStart(sf)).line + 1}`);
+          // Literal texts, also in both branches of a choice: t(n === 1 ? '1 game' : '{n} games').
+          const collect = (a: ts.Expression | undefined): void => {
+            if (!a) return;
+            if (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) { if (a.text) out.set(a.text, `${p}:${sf.getLineAndCharacterOfPosition(a.getStart(sf)).line + 1}`); }
+            else if (ts.isParenthesizedExpression(a)) collect(a.expression);
+            else if (ts.isConditionalExpression(a)) { collect(a.whenTrue); collect(a.whenFalse); }
+            else if (ts.isBinaryExpression(a) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(a.operatorToken.kind)) { collect(a.left); collect(a.right); }
+          };
+          collect(n.arguments[0]);
         }
         ts.forEachChild(n, visit);
       };

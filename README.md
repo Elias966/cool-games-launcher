@@ -13,6 +13,19 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.7
+
+- **Arabic interface**: Settings → Appearance → Language switches the whole launcher
+  (window, AI status, notifications, tray menu) to Arabic, laid out right to left.
+- **Updates itself** from this repository's GitHub releases: Settings → About checks for a
+  new version, downloads it, verifies it against the release's `SHA256SUMS` and restarts
+  into it. Nothing is downloaded until you choose to.
+- **Play statistics**: this week's play time per day in the Library, and per game.
+- **Gaming comes first**: the AI model leaves the GPU while a game runs; Windows games show
+  their ProtonDB rating and get umu's per-game fixes; bundled runtimes (Visual C++,
+  DirectX, OpenAL …) install silently before a game's first start; a diagnostics file for
+  problem reports (Settings → About).
+
 ## What's new in 0.2.0
 
 - **One faster, stronger local AI**: Fara1.5-9B (86.6 % WebVoyager) replaces the three
@@ -36,7 +49,7 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 | **Library** | Installed and imported games as floating cover panels, a large Play control, favourites, search, per-game runner (native, Wine, Proton via umu-launcher), launch arguments, executable choice, uninstall. |
 | **Store** | Catalog discovered from your websites, search, category/tag dropdowns, platform and website filters, cinematic game detail, Download, and a browser drawer showing the bundled Firefox. |
 | **Downloads** | Persistent queue with parallel connections, progress rings, live transfer map, speed/size/ETA, pause/resume/cancel, retries, re-ordering, link re-resolution and automatic extraction into the Library. |
-| **Settings** | Websites, content visibility (NSFW), folders, specialist-agent downloads and local-AI limits, Valve/GE/CachyOS Proton releases, automatic compatibility installation, Wine/umu paths, appearance (low effects, reduced motion), privacy and licences. |
+| **Settings** | Websites, content visibility (NSFW), folders, local-AI limits, Valve/GE/CachyOS Proton releases, automatic compatibility installation, Wine/umu paths, appearance (language, low effects, reduced motion), privacy, launcher updates and licences. |
 
 ### How discovery works
 
@@ -89,6 +102,7 @@ simultaneous downloads. Compatible hosts must support bounded byte ranges and a
 stable validator; other hosts use one connection. Firefox transfers retain their
 original requests, cookies, POST bodies and one-use tokens. Speed depends on the
 host and your connection. Saved ranges resume after pauses and restarts.
+
 
 ### Popular, Trending and descriptions
 
@@ -146,6 +160,9 @@ controller) is a full-screen view for the TV: rows of big artwork for the games
 you play, games on the way, Trending, Popular and your wishlist, driven by
 D-pad/stick (A play/open, Y wishlist, B back) or the keyboard. Outside couch
 mode a controller moves focus through the normal interface.
+
+The Library shows how long you played on each day of the last week, the most
+played game, and each game's time this week.
 
 ### Steam store data, wishlist and search
 
@@ -213,13 +230,26 @@ runtime remain bundled.
 
 ## Run
 
+Download the AppImage and `SHA256SUMS` from the
+[latest release](https://github.com/Elias966/cool-games-launcher/releases/latest), then:
+
 ```bash
-chmod +x Cool-Games-Launcher-0.1.6-x86_64.AppImage
+sha256sum -c SHA256SUMS
 ```
 
 ```bash
-./Cool-Games-Launcher-0.1.6-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.7-x86_64.AppImage
 ```
+
+```bash
+./Cool-Games-Launcher-0.2.7-x86_64.AppImage
+```
+
+The launcher updates itself from the same releases (Settings → About → Launcher
+updates): it downloads the new AppImage next to the running one, checks it
+against `SHA256SUMS` and replaces the file before restarting, so keep the
+AppImage in a folder you can write to. A newer AppImage can also be installed
+from a file there.
 
 The static AppImage runtime does not require FUSE 2. If mounting is unavailable, run it with `--appimage-extract-and-run`. On
 systems that restrict unprivileged user namespaces (Ubuntu 24.04+), the

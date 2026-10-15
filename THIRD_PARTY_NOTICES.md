@@ -75,6 +75,7 @@ Notes:
 | @exodus/bytes | 1.16.0 | MIT |
 | @fontsource-variable/inter | 5.3.0 | OFL-1.1 |
 | @fontsource-variable/jetbrains-mono | 5.3.0 | OFL-1.1 |
+| @fontsource-variable/noto-sans-arabic | 5.3.0 | OFL-1.1 |
 | @fontsource-variable/space-grotesk | 5.3.0 | OFL-1.1 |
 | @isaacs/fs-minipass | 4.0.1 | ISC |
 | @react-three/fiber | 9.8.1 | MIT |

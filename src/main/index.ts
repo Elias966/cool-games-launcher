@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { onLanguage, setMainLanguage, tm } from './i18n';
 import { ForegroundWork } from './foreground';
 import { StoreSearch } from './store-search';
@@ -53,6 +54,20 @@ registerMediaScheme();
 
 let mainWindow: BrowserWindow | null = null;
 let appQuitting = false;
+/** After a launcher update: the AppImage to start once this instance has exited. */
+let relaunchInto: string | null = null;
+
+/** Starts `appImage` as soon as this process is gone (the launcher ends itself with SIGKILL, so app.relaunch never runs). */
+function startAfterExit(appImage: string) {
+  const env = { ...process.env };
+  for (const k of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD']) delete env[k];
+  // Close every descriptor inherited from this process first: Chromium's helper
+  // processes stay alive while any end of their IPC channels is open.
+  const bash = ['/bin/bash', '/usr/bin/bash'].find((p) => existsSync(p));
+  const script = `${bash ? 'for f in /proc/$$/fd/*; do n=\${f##*/}; [ "$n" -gt 2 ] && eval "exec $n>&-" 2>/dev/null; done; ' : ''}while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2"`;
+  const child = spawn(bash ?? '/bin/sh', ['-c', script, 'cgl-restart', String(process.pid), appImage], { detached: true, stdio: 'ignore', env });
+  child.unref();
+}
 /** The launcher's icon file (packaged: resources/icons). */
 function appIcon(): string {
   return app.isPackaged ? join(process.resourcesPath, 'icons', '256x256.png') : join(app.getAppPath(), 'build', 'icons', '256x256.png');
@@ -303,7 +318,7 @@ async function main() {
       if (Notification.isSupported()) new Notification({ title: tm('Launcher update available'), body: tm('Version {version} is ready to download in Settings → About.', { version }) }).show();
     },
     restart: (appImage) => {
-      app.relaunch({ execPath: appImage, args: [] });
+      relaunchInto = appImage;
       app.quit();
     },
   });
@@ -758,7 +773,10 @@ async function main() {
   // Ends the process once all state is flushed. Chromium's own teardown (app.exit / process.exit)
   // intermittently deadlocks here after the utility processes stop, so the process ends itself;
   // its Chromium children exit with it.
-  const terminate = () => process.kill(process.pid, 'SIGKILL');
+  const terminate = () => {
+    if (relaunchInto) startAfterExit(relaunchInto);
+    process.kill(process.pid, 'SIGKILL');
+  };
 
   // Stops AI, browser and workers and flushes the database. Idempotent.
   let cleanup: Promise<void> | null = null;
