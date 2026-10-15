@@ -1,0 +1,751 @@
+import { ForegroundWork } from './foreground';
+import { StoreSearch } from './store-search';
+import {MODEL_CATALOG} from '@shared/models';
+import {ModelManager} from './models';
+import { LocalGameAgent } from './game-agent';
+// Composition root for the main process.
+import { app, BrowserWindow, dialog, ipcMain, shell, session as electronSession, type IpcMainInvokeEvent, Notification } from 'electron';
+import { join } from 'node:path';
+import { cpus, totalmem } from 'node:os';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { paths, ensureDirs, vendor, vendorStatus, modelPaths, workerPath } from './paths';
+import { openDb } from './db';
+import { AiCacheRepo, CatalogRepo, ConsentRepo, DownloadsRepo, GamesRepo, ImageClassRepo, SettingsRepo, SourcesRepo, defaultSettings, WishlistRepo } from './repos';
+import { WorkerHost } from './worker-host';
+import { StoreSession } from './store-session';
+import { PolicyService } from './policy-service';
+import { AiService } from './ai';
+import { ArtworkCache, ClassificationService } from './classification';
+import { HostRateLimiter } from './rate-limit';
+import { BrowserClient } from './browser-client';
+import { Discovery } from './discovery';
+import { PageFetcher } from './page-fetcher';
+import { startLogFile } from './logfile';
+import { reapOrphans } from './orphans';
+import { DownloadManager } from './downloads';
+import { Resolver } from './resolver';
+import { BrowserView } from './browser-view';
+import { ProtonReleases, RELEASE_REFRESH_MS } from './proton-releases';
+import { CompatManager } from './compat';
+import manifest from '../../scripts/vendor-manifest.json';
+import { Library, detectProton, detectWine, detectTools } from './library';
+import { GameInfoService } from './descriptions';
+import { WishlistService } from './wishlist';
+import { LauncherTray } from './tray';
+import { gameFromArgs } from './shortcuts';
+import { UpdateService } from './updates';
+import { handleMedia, registerMediaScheme } from './media';
+import { registerIpc, type Handlers } from './ipc';
+import { attach, publish, toast } from './bus';
+import { hostOf } from '@shared/urls';
+import type { Settings } from '@shared/types';
+
+app.setName('Cool Games Launcher');
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+registerMediaScheme();
+
+let mainWindow: BrowserWindow | null = null;
+let appQuitting = false;
+/** The launcher's icon file (packaged: resources/icons). */
+function appIcon(): string {
+  return app.isPackaged ? join(process.resourcesPath, 'icons', '256x256.png') : join(app.getAppPath(), 'build', 'icons', '256x256.png');
+}
+const rendererIndex = join(__dirname, '..', 'renderer', 'index.html');
+const rendererUrl = pathToFileURL(rendererIndex).toString();
+
+function createWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1480,
+    height: 920,
+    minWidth: 1080,
+    minHeight: 680,
+    frame: false,
+    show: false,
+    backgroundColor: '#0a0c11',
+    title: 'Cool Games Launcher',
+    icon: join(app.getAppPath(), 'build', 'icon.png'),
+    webPreferences: {
+      preload: join(__dirname, '..', 'preload', 'index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      spellcheck: false,
+      webviewTag: false,
+      // Interface sounds (synthesized locally) may play for background events.
+      autoplayPolicy: 'no-user-gesture-required',
+      backgroundThrottling: true,
+    },
+  });
+  win.once('ready-to-show', () => {
+    console.log('[cgl] window ready');
+    win.show();
+  });
+  void win.loadFile(rendererIndex);
+  return win;
+}
+
+function hardenWebContents() {
+  app.on('web-contents-created', (_e, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.on('will-navigate', (e, url) => {
+      if (url !== rendererUrl) e.preventDefault();
+    });
+    contents.on('will-attach-webview', (e) => e.preventDefault());
+  });
+}
+
+async function main() {
+  hardenWebContents();
+  await app.whenReady();
+  ensureDirs();
+  startLogFile(paths.logs);
+  reapOrphans({ runtimeDir: paths.runtime, browserProfile: paths.browserProfile });
+  electronSession.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  electronSession.defaultSession.setPermissionCheckHandler(() => false);
+
+  const db = openDb(paths.db);
+  const settingsRepo = new SettingsRepo(db, defaultSettings({ games: paths.games, downloads: paths.downloads }));
+  const consentRepo = new ConsentRepo(db);
+  const sourcesRepo = new SourcesRepo(db);
+  const catalogRepo = new CatalogRepo(db);
+  const downloadsRepo = new DownloadsRepo(db);
+  const gamesRepo = new GamesRepo(db);
+  const aiCache = new AiCacheRepo(db);
+  const imageClass = new ImageClassRepo(db);
+
+  const inferenceWorker = new WorkerHost('inference', workerPath('inference'), 'Cool Games Launcher AI');
+  const browserWorker = new WorkerHost('browser', workerPath('browser'), 'Cool Games Launcher Browser');
+  const downloadsWorker = new WorkerHost('downloads', workerPath('downloads'), 'Cool Games Launcher Downloads');
+  const installWorker = new WorkerHost('install', workerPath('install'), 'Cool Games Launcher Installer');
+  const fetcherWorkers = [1, 2, 3].map((n) => new WorkerHost('fetcher', workerPath('fetcher'), `Cool Games Launcher Indexer ${n}`));
+
+  const v = vendor();
+  const initInference = (s: Settings) =>
+    inferenceWorker.init('init', {
+      llamaDir: v.llamaDir,
+      modelPath: modelPaths(s.aiModelId).model,
+      mmprojPath: modelPaths(s.aiModelId).vision,
+      thinking: MODEL_CATALOG.find(m=>m.id===s.aiModelId)?.variant==='Thinking',
+      family: MODEL_CATALOG.find(m=>m.id===s.aiModelId)?.family,
+      defaultModelId:s.aiAgents.analysis,
+      models:Object.fromEntries(MODEL_CATALOG.map(m=>[m.id,{modelPath:modelPaths(m.id).model,mmprojPath:modelPaths(m.id).vision,thinking:m.variant==='Thinking',family:m.family}])),
+      classifierPath: v.classifier,
+      runtimeDir: paths.runtime,
+      threads: s.aiThreads,
+      // Three 1440×896 screenshots (~1260 tokens each) plus the 2k-token Fara prompt and history.
+      contextSize: Math.max(s.aiContextSize, 16384),
+      accel: s.aiAcceleration,
+      imageTokens: s.aiImageTokens,
+      classifierThreads: s.classifierThreads,
+      idleUnloadMinutes: s.aiIdleUnloadMinutes,
+    });
+  const initBrowser = (s: Settings) =>
+    browserWorker.init('init', {
+      firefoxPath: v.firefox,
+      geckodriverPath: v.geckodriver,
+      profileDir: paths.browserProfile,
+      ublockXpi: v.ublock,
+      stagingDir: paths.browserStaging,
+      doNotTrack: s.sendDoNotTrack,
+      width: 1440,
+      height: 1000,
+    });
+  const s0 = settingsRepo.get();
+  inferenceWorker.start();
+  browserWorker.start();
+  downloadsWorker.start();
+  installWorker.start();
+  for (const w of fetcherWorkers) w.start();
+  await Promise.all([initInference(s0), initBrowser(s0)]);
+
+  const session = new StoreSession();
+  const policy = new PolicyService(settingsRepo, consentRepo);
+  const ai = new AiService(inferenceWorker, session, aiCache,()=>settingsRepo.get().aiAgents);
+  const limiter = new HostRateLimiter();
+  const artwork = new ArtworkCache(paths.artwork, limiter);
+  const classification = new ClassificationService(ai, artwork, catalogRepo, imageClass);
+  const browser = new BrowserClient(browserWorker);
+  const browserView = new BrowserView(browser, ai, policy, catalogRepo, session);
+  const gameAgent = new LocalGameAgent(ai, browser, session);
+  const fetcher = new PageFetcher(fetcherWorkers, browser);
+  let updateService: UpdateService | null = null;
+  let wishlistService: WishlistService | null = null;
+  let libraryRef: Library | null = null;
+  const discovery = new Discovery({ agent: gameAgent, fetcher, sources: sourcesRepo, catalog: catalogRepo, settings: settingsRepo, session, ai, classification, browser, limiter, policy,
+    updates: { afterDetail: (id) => updateService?.afterDetail(id) },
+    wishlist: { afterDetail: (id) => wishlistService?.afterDetail(id) },
+    onVerificationRequired: (sourceId, message) => {
+      browserView.show('discovery');
+      publish('browser:attention', { downloadId: 0, sourceId, message });
+    },
+    isModelReady:()=>models.readyAgents(['analysis','browsing']),
+    onVerificationResolved: (sourceId) => publish('browser:verificationResolved', { sourceId }),
+  });
+  const foreground = new ForegroundWork(session, discovery);
+  const storeSearch = new StoreSearch({session,foreground,sources:sourcesRepo,catalog:catalogRepo,policy,browser,agent:gameAgent,discovery,ai,limiter,classification,isModelReady:()=>models.readyAgents(['analysis','browsing']),
+    showBrowser:message=>{browserView.show('discovery');publish('browser:attention',{downloadId:0,message});},
+  });
+  const downloads = new DownloadManager(downloadsWorker, downloadsRepo, catalogRepo, settingsRepo, policy, browser);
+  let storeRequestedActive = false;
+  let syncSession: () => void = () => undefined;
+  let shuttingDown = false;
+  const WAITING_FOR_AI = new Set(['resolving', 'needs-resolution', 'needs-user', 'queued', 'active']);
+  /** A game download still needs the AI: its link, its preparation, or an update swap. */
+  const aiWorkPending = () => downloadsRepo.list().some((d) => d.catalogId !== null && !d.modelAsset && !d.compatPackage &&
+    (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')));
+  let humanBrowserActive = false;
+  let humanContext: 'interactive' | 'discovery' = 'interactive';
+  const restoreAfterHuman = () => {
+    const wasActive = humanBrowserActive;
+    humanBrowserActive = false;
+    publish('browser:humanMode', { active: false });
+    if (wasActive && (storeRequestedActive || aiWorkPending())) {
+      if(humanContext==='interactive')foreground.hold('human-download',true);
+      session.enter();
+      browserView.show(humanContext);
+      discovery.poke();
+      if (humanContext === 'interactive') {resolver.continueAfterHuman();foreground.hold('human-download',false);}
+    }
+  };
+  browserWorker.on('event:humanMode', ({ active }: { active: boolean }) => {
+    if (active) publish('browser:humanMode', { active: true });
+    else restoreAfterHuman();
+  });
+  const resolver = new Resolver({
+    foreground,
+    agent: gameAgent,
+    session,
+    ai,
+    browser,
+    downloads,
+    downloadsRepo,
+    catalog: catalogRepo,
+    downloadWorker: downloadsWorker,
+    policy,
+    openDrawer: (reason) => {
+      browserView.show();
+      publish('browser:attention', { downloadId: 0, message: reason });
+    },
+    partsSettled: (groupId) => libraryRef?.partsSettled(groupId),
+  });
+  const models=new ModelManager({root:paths.models,repo:downloadsRepo,downloads,settings:settingsRepo,worker:installWorker,onSelected:async()=>{
+    const active=session.active;session.leave();await ai.unload();await initInference(settingsRepo.get());
+    if(active)session.enter();discovery.poke();
+  }});
+  // Load the model and compile its GPU pipelines as soon as the Store opens,
+  // so the first real AI decision does not pay the cold-start cost.
+  session.on('enter', () => {
+    if (storeRequestedActive && !ai.paused && models.readyAgents()) void inferenceWorker.call('warmup', { modelId: settingsRepo.get().aiAgents.analysis }).catch(() => undefined);
+  });
+  const compat = new CompatManager({ settings: settingsRepo, repo: downloadsRepo, downloads, worker: installWorker, dataDir: paths.data, pin: manifest.onDemand.find((p) => p.id === 'ge-proton')!, detectProton });
+  const protonReleases = new ProtonReleases(join(paths.data, 'compat', 'releases.json'));
+  void protonReleases.refresh();
+  const protonRefreshTimer = setInterval(() => { void protonReleases.refresh(); }, RELEASE_REFRESH_MS);
+  protonRefreshTimer.unref();
+  const library = new Library(installWorker, gamesRepo, downloadsRepo, downloads, catalogRepo, settingsRepo, policy, () => mainWindow, compat, {agent: gameAgent, session, foreground});
+  libraryRef = library;
+  // While a game runs: the model is unloaded, AI requests wait, and indexing pauses.
+  library.onPlaying((playing) => {
+    const free = playing && settingsRepo.get().freeGpuWhilePlaying;
+    foreground.hold('gaming', free);
+    void ai.pauseForGame(free);
+    if (free) console.log('[main] a game started: AI unloaded and paused until it closes');
+  });
+  library.setRecovery({ redownload: (ids) => { syncSession(); for (const id of ids) resolver.enqueue(id); }, cache: aiCache });
+  // Library updates download like any game; resolution continues while the Store is open.
+  library.setDownloadStarter((catalogId, title, sourceHost) => {
+    const d = downloads.create(catalogId, title, sourceHost);
+    if (d.state === 'resolving' || d.state === 'needs-resolution') resolver.enqueue(d.id);
+    return d;
+  });
+  updateService = new UpdateService({
+    games: gamesRepo, catalog: catalogRepo, sources: sourcesRepo, downloads: downloadsRepo, settings: settingsRepo, limiter, fetcher,
+    startUpdate: (id) => library.startUpdate(id), isRunning: (id) => library.isRunning(id), broadcast: () => library.broadcast(),
+  });
+  const updates = updateService;
+  // Desktop notification (and toast); clicking it shows the game.
+  const notify = (title: string, body: string, catalogId: number | null) => {
+    toast('info', `${title} — ${body}`);
+    if (!Notification.isSupported()) return;
+    const icon = appIcon();
+    const n = new Notification({ title, body, ...(existsSync(icon) ? { icon } : {}) });
+    n.on('click', () => {
+      mainWindow?.show();
+      mainWindow?.focus();
+      if (catalogId !== null) publish('app:openGame', { catalogId });
+    });
+    n.show();
+  };
+  const wishlistRepo = new WishlistRepo(db);
+  wishlistService = new WishlistService({
+    wishlist: wishlistRepo, catalog: catalogRepo, sources: sourcesRepo, policy, notify,
+    changed: () => { publish('wishlist:changed', wishlists.list()); publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId: null }); },
+  });
+  const wishlists = wishlistService;
+  const descriptions = new GameInfoService({
+    catalog: catalogRepo, sources: sourcesRepo, cache: aiCache, fetcher, limiter,
+    changed: (sourceId) => publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId }),
+  });
+  // Trending decays with age: refresh the sort scores at start and daily.
+  catalogRepo.rescoreWhere();
+  const rescoreTimer = setInterval(() => catalogRepo.rescoreWhere(), 24 * 3600_000);
+  rescoreTimer.unref();
+
+  policy.on('changed', ({ showNsfw, revision }: { showNsfw: boolean; revision: number }) => {
+    publish('policy:changed', { showNsfw, policyRevision: revision });
+    publish('settings:changed', settingsRepo.get());
+    if (!showNsfw) publish('catalog:hidden', { policyRevision: revision, ids: catalogRepo.hiddenIds(policy.policy()) });
+    publish('catalog:changed', { policyRevision: revision, sourceId: null });
+  });
+
+  handleMedia({ artworkDir: paths.artwork, catalog: catalogRepo, policy, browserView });
+  downloads.recover();
+  compat.recover();
+  models.recover();
+  // Move users off the slow three-model team as soon as the single model is verified.
+  if (models.upgradeLegacyTeam()) void initInference(settingsRepo.get());
+  library.recover();
+  updates.start();
+  descriptions.startBackfill();
+
+  // The AI keeps working on downloads (finding the file, unpacking, choosing
+  // the executable) wherever the user is in the app. Indexing and the GPU
+  // warm-up stay with the Store, so playing a game is not slowed by indexing.
+  syncSession = () => {
+    if (humanBrowserActive || shuttingDown) return;
+    foreground.hold('outside-store', !storeRequestedActive);
+    const want = storeRequestedActive || aiWorkPending();
+    if (want && !session.active) session.enter();
+    else if (!want && session.active) session.leave();
+    else if (session.active) resolver.resumePending();
+  };
+  downloads.on('listChanged', () => syncSession());
+  syncSession();
+
+  const partsOf = (id: number) => {
+    const d = downloadsRepo.get(id);
+    return d?.groupId ? downloadsRepo.group(d.groupId).map((p) => p.id) : [id];
+  };
+
+  const trusted = (e: IpcMainInvokeEvent) => !!mainWindow && e.sender === mainWindow.webContents && e.senderFrame?.url === rendererUrl;
+
+  const requireStore = () => {
+    if (!session.active) throw new Error('Open the Store to use the browser and AI');
+  };
+
+  const handlers: Handlers = {
+    'app:info': () => ({
+      appVersion: app.getVersion(),
+      cpuCount: cpus().length,
+      totalMemGb: Math.round(totalmem() / 1024 ** 3),
+      vulkanAvailable: existsSync('/usr/lib/x86_64-linux-gnu/libvulkan.so.1') || existsSync('/usr/lib64/libvulkan.so.1') || existsSync('/usr/lib/libvulkan.so.1'),
+      vendorReady: {...vendorStatus(),model:models.readyAgents(['analysis','browsing'])},
+      detectedProton: detectProton(),
+      detectedWine: detectWine(),
+      tools: (({ gamescope, mangohud, gamemode }) => ({ gamescope: !!gamescope, mangohud: !!mangohud, gamemode: !!gamemode }))(detectTools()),
+      dataDir: paths.data,
+      cacheDir: paths.cache,
+      configDir: paths.config,
+    }),
+    'compat:releases': async ({ refresh }) => ({ ...await protonReleases.refresh(refresh), installed: compat.installed() }),
+    'compat:installVersion': async ({ id }) => {
+      await protonReleases.refresh();
+      const release = protonReleases.find(id);
+      if (!release || release.unavailableReason || !release.url || !release.sha256 || !release.size) throw new Error(release?.unavailableReason ?? 'This version is not available. Refresh the release list.');
+      return compat.installPackage({ provider: release.provider, version: release.version, url: release.url, sha256: release.sha256, size: release.size, dir: `${release.provider}-${release.version}`.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 160) });
+    },
+    'compat:openRelease': async ({ id }) => {
+      const release = protonReleases.find(id);
+      if (!release) throw new Error('Release no longer available. Refresh the list.');
+      await shell.openExternal(release.pageUrl);
+    },
+    'compat:status': () => compat.status(),
+    'compat:installProton': () => compat.installProton(),
+    'models:list':()=>models.list(),
+    'models:download':({id})=>models.download(id),
+    'models:select':({id})=>models.select(id),
+    'models:assign':({role,id})=>models.assign(role,id),
+    'models:assignAll':({id})=>models.assignAll(id),
+    'app:openFolder': async ({ which }) => {
+      const s = settingsRepo.get();
+      const dir = { logs: paths.logs, data: paths.data, games: s.libraryDir, downloads: s.downloadsDir, cache: paths.cache }[which];
+      const err = await shell.openPath(dir);
+      if (err) throw new Error(err);
+    },
+    'settings:get': () => settingsRepo.get(),
+    'settings:update': async (patch) => {
+      if(patch.aiModelId!==undefined)throw Error('Use the model selector to switch verified local models.');
+      const before = settingsRepo.get();
+      const s = settingsRepo.update(patch);
+      const aiKeys: Array<keyof Settings> = ['aiThreads', 'aiContextSize', 'aiAcceleration', 'aiImageTokens', 'aiIdleUnloadMinutes', 'classifierThreads'];
+      if (aiKeys.some((k) => before[k] !== s[k])) await initInference(s);
+      if (before.sendDoNotTrack !== s.sendDoNotTrack) await initBrowser(s);
+      if (before.maxConcurrentDownloads !== s.maxConcurrentDownloads) downloads.pump();
+      publish('settings:changed', s);
+      return s;
+    },
+    'settings:pickDirectory': async ({ title }) => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title, properties: ['openDirectory', 'createDirectory'] });
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    },
+    'settings:clearCache': async ({ what }) => {
+      let freed = 0;
+      const sizeOfDir = (d: string) => (existsSync(d) ? readdirSync(d).reduce((n, f) => n + (statSync(join(d, f), { throwIfNoEntry: false })?.size ?? 0), 0) : 0);
+      if (what === 'artwork') {
+        freed = sizeOfDir(paths.artwork);
+        for (const f of readdirSync(paths.artwork)) rmSync(join(paths.artwork, f), { force: true });
+        imageClass.clear();
+        db.exec(`UPDATE catalog SET artwork_file = NULL, rating = 'unknown', classifier_version = NULL, classify_attempts = 0`);
+        db.exec(`UPDATE games SET artwork_file = NULL`);
+      } else if (what === 'ai') {
+        aiCache.clear();
+      } else if (what === 'browser') {
+        await browser.clearData();
+      } else if (what === 'catalog') {
+        catalogRepo.clearAll();
+        for (const s of sourcesRepo.list()) sourcesRepo.resetCrawl(s.id);
+      }
+      publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId: null });
+      publish('sources:changed', sourcesRepo.list());
+      return { freedBytes: freed };
+    },
+    'consent:get': () => {
+      const s = settingsRepo.get();
+      return { ...consentRepo.current(), showNsfw: s.showNsfw, policyRevision: s.policyRevision };
+    },
+    'consent:enableNsfw': ({ acceptedWarning }) => policy.enable(acceptedWarning),
+    'consent:disableNsfw': () => policy.disable(),
+    'sources:list': () => sourcesRepo.list(),
+    'sources:add': ({ url, name }) => {
+      if (sourcesRepo.list().some((s) => s.url === url)) throw new Error('This website is already in your sources');
+      const s = sourcesRepo.add(url, name);
+      publish('sources:changed', sourcesRepo.list());
+      discovery.poke();
+      return s;
+    },
+    'sources:update': ({ id, ...patch }) => {
+      const s = sourcesRepo.update(id, patch);
+      publish('sources:changed', sourcesRepo.list());
+      return s;
+    },
+    'sources:remove': ({ id }) => {
+      sourcesRepo.remove(id);
+      publish('sources:changed', sourcesRepo.list());
+      publish('catalog:changed', { policyRevision: policy.policy().revision, sourceId: id });
+    },
+    'sources:recrawl': async ({ id }) => {
+      if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }
+      browserView.releaseDiscovery();
+      sourcesRepo.setStatus(id, 'idle', 'Queued');
+      discovery.recrawl(id);
+      publish('sources:changed', sourcesRepo.list());
+    },
+    'sources:resume': async ({ id }) => {
+      if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }
+      requireStore();
+      storeSearch.releaseCheck();
+      discovery.resumeVerification(id);
+    },
+    'sources:skipCheck': async ({ id }) => {
+      if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }
+      storeSearch.releaseCheck();
+      discovery.skipVerification(id);
+    },
+    'store:searchFocus': ({ focused }) => { foreground.hold('search-input',focused); },
+    'store:searchCancel': () => { storeSearch.cancel(); },
+    'store:search': async ({ query,sourceIds }) => {
+      requireStore();
+      return storeSearch.search(query,sourceIds);
+    },
+    'store:setActive': ({ active }) => {
+      storeRequestedActive = active;
+      if (!active) storeSearch.cancel();
+      syncSession();
+      if (active) discovery.poke();
+      return ai.getStatus();
+    },
+    'catalog:facets': () => ({ ...catalogRepo.facets(policy.policy()), gathering: descriptions.pending(), policyRevision: policy.policy().revision }),
+    'catalog:list': (q) => {
+      const pol = policy.policy();
+      const r = catalogRepo.query(pol, q);
+      return { policyRevision: pol.revision, total: r.total, entries: r.entries, fuzzy: r.fuzzy };
+    },
+    'catalog:similar': ({ id }) => ({ policyRevision: policy.policy().revision, entries: catalogRepo.similar(id, policy.policy()) }),
+    'wishlist:list': () => wishlists.list(),
+    'wishlist:add': (p) => wishlists.add(p),
+    'wishlist:remove': (p) => wishlists.remove(p),
+    'catalog:get': ({ id }) => {
+      descriptions.prioritize(id);
+      const pol = policy.policy();
+      return { policyRevision: pol.revision, entry: catalogRepo.get(id, pol) };
+    },
+    'catalog:refreshDetail': async ({ id }) => {
+      requireStore();
+      if (!catalogRepo.get(id, policy.policy())) throw new Error('Not available');
+      await foreground.run(10, token=>discovery.fetchDetail(id, token, { refresh:true,foreground:true }));
+    },
+    'download:start': ({ catalogId }) => {
+      requireStore();
+      if(!models.readyAgents())throw Error('Download the AI model in Settings → Local AI before downloading games.');
+      const pol = policy.policy();
+      const entry = catalogRepo.get(catalogId, pol);
+      if (!entry) throw new Error('This game is not available');
+      storeSearch.cancel();
+      foreground.hold('search-input',false);
+      const d = downloads.create(catalogId, entry.title, hostOf(entry.pageUrl));
+      if(d.state==='needs-user'){browserView.show('interactive');publish('browser:attention',{downloadId:d.id,message:d.userPrompt?.message??'This download is waiting for your response.'});}
+      if (d.state === 'resolving' || d.state === 'needs-resolution') resolver.enqueue(d.id);
+      return downloads.items().find((x) => x.id === d.id)!;
+    },
+    'download:pause': ({ id }) => downloads.pause(id),
+    'download:resume': ({ id }) => downloads.resume(id),
+    // A split game is one download for the user: its parts go together.
+    'download:cancel': ({ id }) => { for (const p of partsOf(id)) { resolver.cancel(p); downloads.cancel(p); } },
+    'download:retry': ({ id }) => {
+      const d = downloadsRepo.get(id);
+      if (d?.state === 'needs-resolution' || (d?.state === 'failed' && !d.url)) {
+        downloadsRepo.update(id, { resolution: null, state: 'resolving', errorCode: null });
+        syncSession();
+        resolver.enqueue(id);
+      } else downloads.resume(id);
+    },
+    'download:remove': ({ id, deleteFile }) => { for (const p of partsOf(id)) { resolver.cancel(p); downloads.remove(p, deleteFile); } },
+    'download:move': ({ id, direction }) => {
+      downloadsRepo.move(id, direction);
+      downloads.broadcastList();
+      downloads.pump();
+    },
+    'download:list': () => downloads.items(),
+    'download:chooseFile': ({ id, url }) => resolver.chooseFile(id, url),
+    'download:continueResolution': async ({ id }) => {
+      if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }
+      syncSession();
+      resolver.continueAfterUser(id);
+    },
+    'download:resolveAgain': ({ id }) => {
+      downloadsRepo.update(id, { resolution: null, state: 'resolving', errorCode: null, errorDetail: null });
+      syncSession();
+      downloads.broadcastList();
+      storeSearch.cancel();foreground.hold(`download:${id}`,false);
+      resolver.enqueue(id);
+    },
+    'download:install': ({ id }) => {
+      // A manual retry after a failed preparation: the AI session follows the work.
+      const d = downloadsRepo.get(id);
+      if (d?.installState === 'installed' && d.gameId !== null) throw new Error('This game is already in your Library');
+      downloadsRepo.update(id, { installState: 'none', installDetail: 'Preparing…' });
+      syncSession();
+      return library.installFromDownload(id);
+    },
+    'download:reveal': ({ id }) => downloads.reveal(id),
+    'browser:open': ({ url }) => {
+      requireStore();
+      return browserView.openUrl(url);
+    },
+    'browser:show': () => {
+      if (humanBrowserActive) { publish('browser:humanMode', { active: true }); return; }
+      requireStore();
+      return browserView.showDefault(sourcesRepo.list().find((s) => s.enabled)?.url ?? null);
+    },
+    'browser:humanStart': async () => {
+      requireStore();
+      humanContext = browserView.activeContext;
+      humanBrowserActive = true;
+      // Cancels every Store automation before releasing the Firefox profile.
+      session.leave();
+      try {
+        await browser.beginHuman(humanContext);
+        publish('browser:humanMode', { active: true });
+      } catch (e) {
+        restoreAfterHuman();
+        throw e;
+      }
+    },
+    'browser:humanFinish': async () => {
+      await browser.endHuman();
+      restoreAfterHuman();
+    },
+    'browser:close': () => { storeSearch.releaseCheck(); browserView.close(null); },
+    'browser:click': ({ x, y, button }) => {
+      requireStore();
+      return browserView.click(x, y, button);
+    },
+    'browser:scroll': ({ x, y, dx, dy }) => {
+      requireStore();
+      return browserView.scroll(x, y, dx, dy);
+    },
+    'browser:type': ({ text }) => {
+      requireStore();
+      return browserView.type(text);
+    },
+    'browser:key': ({ key }) => {
+      requireStore();
+      return browserView.key(key);
+    },
+    'browser:navigate': ({ action }) => {
+      requireStore();
+      return browserView.history(action);
+    },
+    'library:list': () => library.list(),
+    'library:launch': ({ id }) => library.launch(id),
+    'library:stop': ({ id }) => library.stop(id),
+    'library:favorite': ({ id, favorite }) => library.setFavorite(id, favorite),
+    'library:uninstall': ({ id, removePrefix }) => library.uninstall(id, removePrefix),
+    'library:configure': ({ id, ...patch }) => library.configure(id, patch),
+    'library:import': () => library.importGame(),
+    'library:pickExecutable': ({ id }) => library.pickExecutable(id),
+    'library:runInstaller': ({ id }) => library.runInstaller(id),
+    'library:reveal': ({ id }) => library.reveal(id),
+    'library:update': ({ id }) => library.startUpdate(id),
+    'library:ignoreUpdate': ({ id }) => library.ignoreUpdate(id),
+    'library:rollback': ({ id }) => library.rollback(id),
+    'library:checkUpdates': () => ({ checking: updates.checkNow() }),
+    'library:deleteArchive': ({ id }) => library.deleteArchive(id),
+    'library:saves': ({ id }) => library.listSaves(id),
+    'library:backupSaves': ({ id }) => library.backupSaves(id, 'made by you'),
+    'library:restoreSaves': ({ id, stamp }) => library.restoreSaves(id, stamp),
+    'library:openSaves': ({ id }) => library.openSaves(id),
+    'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
+    'library:keepArchive': ({ id }) => library.keepArchive(id),
+  };
+  registerIpc(handlers, trusted);
+
+  mainWindow = createWindow();
+  attach(mainWindow.webContents);
+  if (process.env.CGL_DEBUG) {
+    mainWindow.webContents.on('console-message', (e) => console.log(`[renderer:${e.level}] ${e.message} (${e.sourceId}:${e.lineNumber})`));
+  }
+  const visibility = () => {
+    const visible = !!mainWindow && mainWindow.isVisible() && !mainWindow.isMinimized();
+    browserView.setWindowVisible(visible);
+    publish('app:visibility', { visible });
+  };
+  for (const ev of ['minimize', 'restore', 'hide', 'show'] as const) mainWindow.on(ev as 'show', visibility);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    session.leave();
+  });
+  // Starting the AppImage again (or a game shortcut) reuses this instance.
+  app.on('second-instance', (_e, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    const game = gameFromArgs(argv);
+    if (game !== null) launchFromShortcut(game);
+  });
+  const launchFromShortcut = (id: number) => void library.launch(id).catch((e) => toast('error', `Could not start the game: ${(e as Error).message}`));
+  const startGame = gameFromArgs(process.argv);
+  if (startGame !== null) setTimeout(() => launchFromShortcut(startGame), 1500);
+
+  // The tray keeps the launcher running when its window is closed.
+  const tray = new LauncherTray({
+    icon: appIcon(), window: () => mainWindow, couch: () => publish('app:couch', { on: true }),
+    launch: launchFromShortcut, quit: () => app.quit(),
+  });
+  if (tray.start()) library.onChanged((games) => tray.setGames(games));
+  let trayHintShown = false;
+  mainWindow.on('close', (e) => {
+    if (appQuitting || !tray.active || !settingsRepo.get().closeToTray) return;
+    e.preventDefault();
+    mainWindow?.hide();
+    if (!trayHintShown) {
+      trayHintShown = true;
+      if (Notification.isSupported()) new Notification({ title: 'Still running in the tray', body: 'Downloads and game preparation continue. Quit from the tray icon, or turn this off in Settings.' }).show();
+    }
+  });
+
+  // Window controls for the frameless window, through the same validated IPC surface.
+  ipcMain.on('cgl:window', (e, action: unknown) => {
+    if (!mainWindow || e.sender !== mainWindow.webContents) return;
+    if (action === 'minimize') mainWindow.minimize();
+    else if (action === 'maximize') (mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
+    else if (action === 'close') mainWindow.close();
+    else if (action === 'fullscreen-on') mainWindow.setFullScreen(true);
+    else if (action === 'fullscreen-off') mainWindow.setFullScreen(false);
+  });
+
+  // Development aid: with CGL_DEV_CAPTURE=<dir>, SIGUSR2 saves a window screenshot there,
+  // and SIGUSR1 runs <dir>/eval.js in the renderer (for scripted UI checks).
+  const captureDir = process.env.CGL_DEV_CAPTURE;
+  if (captureDir && !app.isPackaged) {
+    let n = 0;
+    const { writeFileSync, readFileSync } = await import('node:fs');
+    process.on('SIGUSR2', () => {
+      void mainWindow?.webContents.capturePage().then((img) => writeFileSync(join(captureDir, `shot-${++n}.png`), img.toPNG()));
+    });
+    process.on('SIGUSR1', () => {
+      try {
+        const code = readFileSync(join(captureDir, 'eval.js'), 'utf8');
+        void mainWindow?.webContents
+          .executeJavaScript(code)
+          .then((r) => writeFileSync(join(captureDir, 'eval.out'), JSON.stringify(r ?? null, null, 2)))
+          .catch((e) => writeFileSync(join(captureDir, 'eval.out'), `ERROR ${e}`));
+      } catch (e) {
+        console.error(e);
+      }
+    });
+  }
+
+  // Ends the process once all state is flushed. Chromium's own teardown (app.exit / process.exit)
+  // intermittently deadlocks here after the utility processes stop, so the process ends itself;
+  // its Chromium children exit with it.
+  const terminate = () => process.kill(process.pid, 'SIGKILL');
+
+  // Stops AI, browser and workers and flushes the database. Idempotent.
+  let cleanup: Promise<void> | null = null;
+  const shutdownServices = () =>
+    (cleanup ??= (async () => {
+      console.log('[main] shutting down');
+      shuttingDown = true;
+      storeRequestedActive = false;
+      clearInterval(protonRefreshTimer);
+      updates.stop();
+      descriptions.stop();
+      library.shutdown();
+      session.leave();
+      try {
+        const s = settingsRepo.get();
+        await Promise.race([
+          Promise.all([browser.shutdown(), ai.unload()]).then(async () => {
+            if (s.clearBrowserDataOnExit) await browser.clearData().catch(() => undefined);
+          }),
+          new Promise((r) => setTimeout(r, 4000)),
+        ]);
+        for (const w of [inferenceWorker, browserWorker, downloadsWorker, installWorker, ...fetcherWorkers]) w.stop();
+        db.close();
+        console.log('[main] services stopped');
+      } catch (err) {
+        console.error('[main] shutdown error', err);
+      }
+    })());
+
+  let quitting = false;
+  app.on('before-quit', (e) => {
+    appQuitting = true;
+    if (quitting) return;
+    quitting = true;
+    tray.destroy();
+    e.preventDefault();
+    void shutdownServices().finally(terminate);
+  });
+  // Session logout or `kill`: same cleanup, without entering Chromium's quit path.
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => void shutdownServices().finally(terminate));
+  app.on('window-all-closed', () => app.quit());
+
+  if (!vendorStatus().firefox) {
+    toast('warning', 'Some bundled components are missing. Run “npm run vendor” in the source tree to fetch them.');
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  dialog.showErrorBox('Cool Games Launcher failed to start', String(e?.stack ?? e));
+  app.exit(1);
+});

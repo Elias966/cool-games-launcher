@@ -1,0 +1,9 @@
+node_modules/
+vendor/
+out/
+dist/
+release/
+*.log
+.vite/
+coverage/
+work/

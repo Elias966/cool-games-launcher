@@ -1,0 +1,258 @@
+[
+ {
+  "id": "fara-1.5-9b",
+  "name": "Fara1.5-9B",
+  "parameters": 9,
+  "variant": "Thinking",
+  "family": "fara",
+  "quantization": "Q4_K_M",
+  "minRamGb": 12,
+  "pageUrl": "https://huggingface.co/microsoft/Fara1.5-9B",
+  "conversionUrl": "https://huggingface.co/bartowski/Fara1.5-9B-GGUF",
+  "revision": "153cb27ac91d4a2b9391ecf278542e610d040178",
+  "recommended": true,
+  "summary": "One model for every task. Microsoft's flagship small browser agent: 86.6% WebVoyager, 63.4% Online-Mind2Web. Fits an 8 GB GPU.",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/bartowski/Fara1.5-9B-GGUF/resolve/153cb27ac91d4a2b9391ecf278542e610d040178/Fara1.5-9B-Q4_K_M.gguf",
+    "sha256": "a02e7220337b87290bca7ef7225ba4afa7104efa05c0851de6c29ec9c5d04c7d",
+    "size": 5910783104
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/bartowski/Fara1.5-9B-GGUF/resolve/153cb27ac91d4a2b9391ecf278542e610d040178/mmproj-Fara1.5-9B-f16.gguf",
+    "sha256": "97b423c81719ffc367124a9739d6feb6f62d62f60869a6d385a701b963ce1906",
+    "size": 918166048
+   }
+  ]
+ },
+ {
+  "id": "fara-1.5-4b",
+  "name": "Fara1.5-4B",
+  "parameters": 4,
+  "variant": "Thinking",
+  "family": "fara",
+  "quantization": "Q8_0",
+  "minRamGb": 12,
+  "pageUrl": "https://huggingface.co/microsoft/Fara1.5-4B",
+  "conversionUrl": "https://huggingface.co/bartowski/Fara1.5-4B-GGUF",
+  "revision": "b97f335231e01efbbad37bb89b5310340fc10735",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/bartowski/Fara1.5-4B-GGUF/resolve/b97f335231e01efbbad37bb89b5310340fc10735/Fara1.5-4B-Q8_0.gguf",
+    "sha256": "943b76f8ff6893c465de5c841e5116941fe87c8863dbb759d386697faa723880",
+    "size": 4493954144
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/bartowski/Fara1.5-4B-GGUF/resolve/b97f335231e01efbbad37bb89b5310340fc10735/mmproj-Fara1.5-4B-f16.gguf",
+    "sha256": "373320845fb5539dd55a66d3faafcd8f123e83a7318334d557a04d604f5ef84d",
+    "size": 672423584
+   }
+  ]
+ },
+ {
+  "id": "holo-3.1-4b",
+  "name": "Holo3.1-4B",
+  "parameters": 4,
+  "variant": "Thinking",
+  "family": "holo",
+  "quantization": "Q4_K_M",
+  "minRamGb": 12,
+  "pageUrl": "https://huggingface.co/Hcompany/Holo-3.1-4B",
+  "conversionUrl": "https://huggingface.co/mradermacher/Holo-3.1-4B-GGUF",
+  "revision": "6d76eab0233f62783ddec95a7a2e2b057c6d7e66",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/Holo-3.1-4B-GGUF/resolve/6d76eab0233f62783ddec95a7a2e2b057c6d7e66/Holo-3.1-4B.Q4_K_M.gguf",
+    "sha256": "cfdd26e8e9ee34de0c052ea68fb5c61dd8f34986fa3e1b631e2bab6ab1b44ac9",
+    "size": 3066386464
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/Holo-3.1-4B-GGUF/resolve/6d76eab0233f62783ddec95a7a2e2b057c6d7e66/Holo-3.1-4B.mmproj-f16.gguf",
+    "sha256": "4eca6e6633c5384c4f6e220e1076fd6b96c53bc75baf421c553a8d8ba9649f5f",
+    "size": 672424256
+   }
+  ]
+ },
+ {
+  "id": "qwen-3.5-4b",
+  "name": "Qwen3.5-4B",
+  "parameters": 4,
+  "variant": "Thinking",
+  "family": "qwen",
+  "quantization": "Q4_K_M",
+  "minRamGb": 12,
+  "pageUrl": "https://huggingface.co/Qwen/Qwen3.5-4B",
+  "conversionUrl": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+  "revision": "e87f176479d0855a907a41277aca2f8ee7a09523",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf",
+    "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "size": 2740937888
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/mmproj-F16.gguf",
+    "sha256": "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864",
+    "size": 672423616
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-2b-instruct",
+  "name": "GUI-Owl-1.5-2B-Instruct",
+  "parameters": 2,
+  "variant": "Instruct",
+  "quantization": "Q4_K_M",
+  "minRamGb": 8,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-2B-Instruct",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-2B-Instruct-GGUF",
+  "revision": "a0592aa615540e507a918bc6281fdbfc1b441361",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-2B-Instruct-GGUF/resolve/a0592aa615540e507a918bc6281fdbfc1b441361/GUI-Owl-1.5-2B-Instruct.Q4_K_M.gguf",
+    "sha256": "5fd2c77781a14a91128928b5bd313252aab076b44682396af4bb2c99667f5ef5",
+    "size": 1107410432
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-2B-Instruct-GGUF/resolve/a0592aa615540e507a918bc6281fdbfc1b441361/GUI-Owl-1.5-2B-Instruct.mmproj-f16.gguf",
+    "sha256": "e3e3816edb92e62a51f8754b21f1369d8c0224f5488a878a4ef8284903bcf64a",
+    "size": 819394848
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-4b-instruct",
+  "name": "GUI-Owl-1.5-4B-Instruct",
+  "parameters": 4,
+  "variant": "Instruct",
+  "quantization": "Q4_K_M",
+  "minRamGb": 8,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-4B-Instruct",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-4B-Instruct-GGUF",
+  "revision": "f77e8a457158e773d9f3135ff0cac5811878d3b7",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-4B-Instruct-GGUF/resolve/f77e8a457158e773d9f3135ff0cac5811878d3b7/GUI-Owl-1.5-4B-Instruct.Q4_K_M.gguf",
+    "sha256": "8e1793b69bb4064671ab6529b43f5b943850f73a9244ad139c16e93a44709232",
+    "size": 2497282208
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-4B-Instruct-GGUF/resolve/f77e8a457158e773d9f3135ff0cac5811878d3b7/GUI-Owl-1.5-4B-Instruct.mmproj-f16.gguf",
+    "sha256": "eabdc0291d460f2e68874f51044030a7da8fe956c2a6b86abd69fd701227c105",
+    "size": 836180288
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-8b-instruct",
+  "name": "GUI-Owl-1.5-8B-Instruct",
+  "parameters": 8,
+  "variant": "Instruct",
+  "quantization": "Q4_K_M",
+  "minRamGb": 16,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-8B-Instruct",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Instruct-GGUF",
+  "revision": "01351d78b510be5bb41af59a3fab9b6a76b38218",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Instruct-GGUF/resolve/01351d78b510be5bb41af59a3fab9b6a76b38218/GUI-Owl-1.5-8B-Instruct.Q4_K_M.gguf",
+    "sha256": "d9ef45a136400b24b5a6d1c0da379422f25acc26b0724c68b1ec0c8ca6015c7d",
+    "size": 5027785376
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Instruct-GGUF/resolve/01351d78b510be5bb41af59a3fab9b6a76b38218/GUI-Owl-1.5-8B-Instruct.mmproj-f16.gguf",
+    "sha256": "88969da9a3c92b3ecd1f735af3d3d88afb6c240cd14067766c421c08b5d940b2",
+    "size": 1159029952
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-8b-think",
+  "name": "GUI-Owl-1.5-8B-Thinking",
+  "parameters": 8,
+  "variant": "Thinking",
+  "quantization": "Q4_K_M",
+  "minRamGb": 16,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-8B-Think",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Think-GGUF",
+  "revision": "b739067ffb63d5761b2a059c1e19ffe6ebec6dd4",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Think-GGUF/resolve/b739067ffb63d5761b2a059c1e19ffe6ebec6dd4/GUI-Owl-1.5-8B-Think.Q4_K_M.gguf",
+    "sha256": "8703df54863af8d68018e1dd7cb9f7a0e7db9bf8f5378b4be5d1ca88db512a50",
+    "size": 5027785408
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-8B-Think-GGUF/resolve/b739067ffb63d5761b2a059c1e19ffe6ebec6dd4/GUI-Owl-1.5-8B-Think.mmproj-f16.gguf",
+    "sha256": "dffe217127fa8b61d39df7d5e1985c37496119e617af781aa934786ffae4c33b",
+    "size": 1159029984
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-32b-instruct",
+  "name": "GUI-Owl-1.5-32B-Instruct",
+  "parameters": 32,
+  "variant": "Instruct",
+  "quantization": "Q4_K_M",
+  "minRamGb": 32,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-32B-Instruct",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Instruct-GGUF",
+  "revision": "0fa26590cb51daf8e46030abd4cd55404efc38bf",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Instruct-GGUF/resolve/0fa26590cb51daf8e46030abd4cd55404efc38bf/GUI-Owl-1.5-32B-Instruct.Q4_K_M.gguf",
+    "sha256": "8b44a24d4aed19c18df3231093733dac34c2b9347141f768f57ddadf76a08034",
+    "size": 19762150880
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Instruct-GGUF/resolve/0fa26590cb51daf8e46030abd4cd55404efc38bf/GUI-Owl-1.5-32B-Instruct.mmproj-f16.gguf",
+    "sha256": "7753199118fd02eb9e3ad65d214fd1b535b1869219a7aa2653872b7934b79c34",
+    "size": 1196795072
+   }
+  ]
+ },
+ {
+  "id": "gui-owl-1.5-32b-think",
+  "name": "GUI-Owl-1.5-32B-Thinking",
+  "parameters": 32,
+  "variant": "Thinking",
+  "quantization": "Q4_K_M",
+  "minRamGb": 32,
+  "pageUrl": "https://huggingface.co/mPLUG/GUI-Owl-1.5-32B-Think",
+  "conversionUrl": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Think-GGUF",
+  "revision": "b9baf1017f3ca6d74f2a69ac7be6a44edde60eb3",
+  "files": [
+   {
+    "role": "model",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Think-GGUF/resolve/b9baf1017f3ca6d74f2a69ac7be6a44edde60eb3/GUI-Owl-1.5-32B-Think.Q4_K_M.gguf",
+    "sha256": "2d31d43fdd5de973cab4eede37afa112e8adc19e19e87c8876ddc11b00bce75b",
+    "size": 19762150880
+   },
+   {
+    "role": "vision",
+    "url": "https://huggingface.co/mradermacher/GUI-Owl-1.5-32B-Think-GGUF/resolve/b9baf1017f3ca6d74f2a69ac7be6a44edde60eb3/GUI-Owl-1.5-32B-Think.mmproj-f16.gguf",
+    "sha256": "938560e5ff4e7ff0e09aaba835ecc26857c1f300c4618ac6df17d1c6ed491ff3",
+    "size": 1196795072
+   }
+  ]
+ }
+]

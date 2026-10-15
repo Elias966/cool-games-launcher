@@ -1,0 +1,64 @@
+appId: io.github.coolgameslauncher.CoolGamesLauncher
+productName: Cool Games Launcher
+copyright: Copyright © 2026 Cool Games Launcher contributors
+artifactName: Cool-Games-Launcher-${version}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  - '!out/**/*.map'
+  - '!out/*test*'
+  # Only the CPU onnxruntime binaries for Linux x64 are needed.
+  - '!node_modules/onnxruntime-node/bin/napi-v*/{darwin,win32}/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v*/linux/arm64/**'
+  - '!node_modules/onnxruntime-node/bin/napi-v*/linux/x64/libonnxruntime_providers_{cuda,tensorrt}.so'
+
+asar: true
+asarUnpack:
+  - node_modules/onnxruntime-node/**
+  - node_modules/wasm-vips/**
+
+extraResources:
+  - from: build/icons
+    to: icons
+  - from: vendor
+    to: vendor
+    filter:
+      - '**/*'
+      - '!.cache/**'
+      - '!state.json'
+      - '!tools/**'
+      # Language weights and vision projectors are managed in XDG data.
+      - '!**/*.gguf'
+  - from: resources/FARA-LICENSE
+    to: FARA-LICENSE
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+
+afterPack: scripts/after-pack.cjs
+
+linux:
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Game
+  icon: build/icons
+  executableName: cool-games-launcher
+  synopsis: Futuristic local-AI game launcher
+  description: Discover games on websites you add, download, install and play — with local AI, Firefox and uBlock Origin.
+  desktop:
+    entry:
+      Name: Cool Games Launcher
+      Comment: Discover, download and play games with a local AI
+      Categories: Game;
+      StartupWMClass: cool-games-launcher
+      Keywords: games;launcher;itch;wine;proton;
+
+publish: null

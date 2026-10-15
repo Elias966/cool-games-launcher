@@ -1,0 +1,86 @@
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+:root {
+  color-scheme: dark;
+
+  /* Graphite foundation */
+  --bg-0: #06080c;
+  --bg-1: #0b0e14;
+  --bg-2: #10141c;
+  --surface: rgba(17, 22, 31, 0.74);
+  --surface-strong: rgba(19, 24, 34, 0.9);
+  --surface-solid: #141924;
+  --surface-hi: #1a2030;
+  --surface-hover: #1f2638;
+  --line: rgba(150, 172, 214, 0.11);
+  --line-strong: rgba(150, 172, 214, 0.22);
+
+  /* Text — kept crisp, never glowing */
+  --text: #e9eef7;
+  --text-2: #aab4c8;
+  --text-3: #727d93;
+  --text-inverse: #071016;
+
+  /* Accents */
+  --cyan: #48e1ff;
+  --cyan-2: #1fb8d9;
+  --cyan-soft: rgba(72, 225, 255, 0.14);
+  --violet: #a084ff;
+  --violet-2: #7b5cf0;
+  --violet-soft: rgba(160, 132, 255, 0.14);
+  --accent-gradient: linear-gradient(115deg, #48e1ff 0%, #7aa8ff 45%, #a084ff 100%);
+
+  --ok: #3ee6a4;
+  --warn: #ffb547;
+  --danger: #ff5d73;
+  --nsfw: #ff4f8b;
+
+  /* Type */
+  --font-display: 'Space Grotesk Variable', 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2.25rem;
+  --fs-hero: clamp(2.6rem, 4.4vw, 4.6rem);
+
+  /* Shape & depth */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --shadow-depth: 0 28px 60px -24px rgba(0, 0, 0, 0.75), 0 10px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 18px 40px -18px rgba(0, 0, 0, 0.8);
+  --edge-glow: 0 0 0 1px rgba(72, 225, 255, 0.35), 0 0 24px -6px rgba(72, 225, 255, 0.45);
+  --blur: blur(18px) saturate(140%);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 140ms;
+  --dur: 260ms;
+  --dur-slow: 520ms;
+
+  --titlebar-h: 52px;
+  --dock-h: 76px;
+  --page-pad: clamp(20px, 3vw, 44px);
+}
+
+:root[data-effects='low'] {
+  --blur: none;
+  --surface: rgba(17, 22, 31, 0.94);
+  --shadow-depth: 0 12px 24px -12px rgba(0, 0, 0, 0.7);
+  --edge-glow: 0 0 0 1px rgba(72, 225, 255, 0.45);
+}
+
+:root[data-motion='reduced'] {
+  --dur-fast: 0ms;
+  --dur: 0ms;
+  --dur-slow: 0ms;
+}

@@ -1,0 +1,158 @@
+{
+  "$comment": "Pinned third-party components bundled into the AppImage. Every file is verified against its SHA-256 before use. Update versions and digests together.",
+  "components": [
+    {
+      "id": "firefox",
+      "name": "Mozilla Firefox ESR",
+      "version": "140.17.0esr",
+      "license": "MPL-2.0",
+      "url": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/140.17.0esr/linux-x86_64/en-US/firefox-140.17.0esr.tar.xz",
+      "sha256": "86d049070ad80b74d8e674793e22d28923b4a7a1da06b4d65402f91c67a10314",
+      "extract": "tar",
+      "dest": "firefox",
+      "stripComponents": 1
+    },
+    {
+      "id": "geckodriver",
+      "name": "geckodriver",
+      "version": "0.37.1",
+      "license": "MPL-2.0",
+      "url": "https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-linux64.tar.gz",
+      "sha256": "e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e",
+      "extract": "tar",
+      "dest": "geckodriver"
+    },
+    {
+      "id": "ublock",
+      "name": "uBlock Origin",
+      "version": "1.75.0",
+      "license": "GPL-3.0",
+      "url": "https://github.com/gorhill/uBlock/releases/download/1.75.0/uBlock0_1.75.0.firefox.signed.xpi",
+      "sha256": "5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287",
+      "dest": "extensions/uBlock0@raymondhill.net.xpi"
+    },
+    {
+      "id": "llama-cpu",
+      "name": "llama.cpp (CPU build)",
+      "version": "b11553",
+      "license": "MIT",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11553/llama-b11553-bin-ubuntu-x64.tar.gz",
+      "sha256": "1fd58faf9f3740dad350fdba21b1afd4a393f9140d9ed8d68c6279820a4d25e3",
+      "extract": "tar",
+      "dest": "llama/cpu",
+      "stripComponents": 1
+    },
+    {
+      "id": "llama-vulkan",
+      "name": "llama.cpp (Vulkan build)",
+      "version": "b11553",
+      "license": "MIT",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11553/llama-b11553-bin-ubuntu-vulkan-x64.tar.gz",
+      "sha256": "273828882608741a3ec065443176b5ed4922406744077d9da03821966cf7d496",
+      "extract": "tar",
+      "dest": "llama/vulkan",
+      "stripComponents": 1
+    },
+    {
+      "id": "nsfw-classifier",
+      "name": "vit-base-nsfw-detector (ONNX, fp16)",
+      "version": "8587de998f441aac03fdd57a85d2e4cb808c7d64",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/8587de998f441aac03fdd57a85d2e4cb808c7d64/onnx/model_fp16.onnx",
+      "sha256": "e9693884a06af5d9bef115f730e128deeb39c1850a3c43c21f3f49103d32a77f",
+      "dest": "models/nsfw-vit-fp16.onnx"
+    },
+    {
+      "id": "umu-launcher",
+      "name": "umu-launcher (zipapp)",
+      "version": "1.4.4",
+      "license": "GPL-3.0",
+      "url": "https://github.com/Open-Wine-Components/umu-launcher/releases/download/1.4.4/umu-launcher-1.4.4-zipapp.tar",
+      "sha256": "eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851",
+      "extract": "tar",
+      "dest": "umu"
+    },
+    {
+      "id": "libgomp",
+      "name": "GCC OpenMP runtime (libgomp)",
+      "version": "12.3.0-1ubuntu1~22.04.3",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12/libgomp1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "870c27299185a5dd4accad3b15bf82a7409fd7073cccaa8025875307da4d0ce2",
+      "extract": "deb",
+      "dest": "llama/runtime"
+    },
+    {
+      "id": "gcc-runtime-licenses",
+      "name": "GCC runtime license texts",
+      "version": "12.3.0-1ubuntu1~22.04.3",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-12/gcc-12-base_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "7f9253b7e0976f0526fc21346c73ee006e185a7b2f2f865048ea78a2af55bc8d",
+      "extract": "deb",
+      "dest": "llama/runtime-licenses"
+    },
+    {
+      "id": "7zip",
+      "name": "7-Zip standalone archive decoder",
+      "version": "26.04",
+      "license": "LGPL-2.1-or-later AND BSD-2-Clause AND BSD-3-Clause AND unRAR restriction",
+      "url": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-linux-x64.tar.xz",
+      "sha256": "fc0327ba27e89bd086cf426dff17d77de582953cdbbc10a6576540a06853ffcd",
+      "extract": "tar",
+      "dest": "7zip"
+    },
+    {
+      "id": "gui-owl-license",
+      "name": "GUI-Owl MIT license",
+      "version": "08e7da63cb06866306c3502569f4fd216baa2941",
+      "license": "MIT",
+      "url": "https://raw.githubusercontent.com/X-PLUG/MobileAgent/08e7da63cb06866306c3502569f4fd216baa2941/LICENSE",
+      "sha256": "961819a89dacd1f4f161e1d2ebf616b538bf095a2eecfa3ef40b7ccec633fac4",
+      "dest": "licenses/gui-owl-MIT.txt"
+    },
+    {
+      "id": "qwen-vl-license",
+      "name": "Qwen3-VL Apache license",
+      "version": "e8c6dfbe0472e567b1bedc7640f550e0e506429f",
+      "license": "Apache-2.0",
+      "url": "https://raw.githubusercontent.com/QwenLM/Qwen3-VL/e8c6dfbe0472e567b1bedc7640f550e0e506429f/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "dest": "licenses/qwen3-vl-Apache-2.0.txt"
+    },
+    {
+      "id": "qwen-thinking-template",
+      "name": "Qwen3-VL Thinking chat template",
+      "version": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+      "license": "Apache-2.0",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking/resolve/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/chat_template.json",
+      "sha256": "7dc0b863a3cf9320e063574e0adb1382a22a089f1eeb8bfbe33cc69c5c2cc1e5",
+      "dest": "templates/qwen3-vl-thinking.json"
+    }
+  ],
+  "onDemand": [
+    {
+      "id": "ge-proton",
+      "name": "GE-Proton",
+      "version": "GE-Proton11-7",
+      "license": "BSD-3-Clause (Proton) with bundled Wine (LGPL-2.1) and other components",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-7/GE-Proton11-7-x86_64.tar.gz",
+      "sha256": "c5448b76a230384e2d7bc6beb5ccb97bafb7e2c3b6c527cb03a1a546bbcb00a0",
+      "size": 563784602,
+      "dir": "GE-Proton11-7",
+      "$comment": "Downloaded by the app on first use (src/main/compat.ts) into ~/.local/share/cool-games-launcher/compat/."
+    }
+  ],
+  "buildTools": [
+    {
+      "id": "appimage-runtime",
+      "name": "AppImage type2 static runtime",
+      "version": "20251108",
+      "license": "MIT",
+      "url": "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64",
+      "sha256": "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d",
+      "dest": "tools/runtime-x86_64",
+      "$comment": "Statically linked; needs no libfuse2. Used by scripts/repack-appimage.mjs."
+    }
+  ]
+}
