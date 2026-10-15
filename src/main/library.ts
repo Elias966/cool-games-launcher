@@ -123,6 +123,7 @@ export function detectWine(): string | null {
 
 export class Library {
   private pendingLaunch = new Set<number>();
+  private installingRuntimes = new Set<number>();
   private runningIds = new Set<number>();
   private installing = new Set<number>();
   private preparationQueue: number[] = [];
@@ -287,7 +288,7 @@ export class Library {
       lastPlayedAt: g.lastPlayedAt,
       playtimeSeconds: g.playtimeSeconds,
       status: g.status,
-      running: this.runningIds.has(g.id),
+      running: this.runningIds.has(g.id) || this.installingRuntimes.has(g.id),
       executableCandidates: g.candidates,
       version: versionLabel(g.installedVersion),
       update: this.updateView(g),
@@ -835,6 +836,7 @@ export class Library {
       return;
     }
     if (runner === 'proton') this.compat.notifyRuntime();
+    if (g.kind === 'windows' && g.redistDone === null && g.managed && g.installDir) await this.installRuntimes(g, runner, env);
     await this.worker.call('launch', {
       gameId: id,
       executable: g.executable,
@@ -848,6 +850,39 @@ export class Library {
       // The Steam id lets umu apply this game's known fixes (protonfixes).
       umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
     });
+  }
+
+  /**
+   * Before a Windows game's first start: the runtimes it ships (Visual C++,
+   * DirectX, OpenAL, XNA, Unreal prerequisites) are installed silently into
+   * its prefix. A failing installer never blocks the game.
+   */
+  private async installRuntimes(g: GameRecord, runner: Runner, env: Awaited<ReturnType<Library['runnerEnv']>>) {
+    const found = await this.worker.call<Array<{ path: string; rel: string; label: string; args: string[] }>>('findRedists', { dir: g.installDir }).catch(() => []);
+    const done: string[] = [];
+    if (found.length) {
+      this.installingRuntimes.add(g.id);
+      this.broadcast();
+      toast('info', `First start of ${g.title}: installing ${[...new Set(found.map((r) => r.label))].join(', ')} into its Windows environment (once)…`);
+      for (const r of found) {
+        const result = await this.worker.call<{ code: number | null }>('runSetup', {
+          gameId: g.id, executable: r.path, args: r.args, runner, prefixDir: g.prefixDir ?? join(paths.prefixes, `game-${g.id}`), ...env,
+          logPath: join(paths.logs, `game-${g.id}-runtimes.log`), allowedRoot: this.allowedRoot(g), installer: true,
+          umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
+        }, AbortSignal.timeout(11 * 60_000)).catch(() => ({ code: null }));
+        console.log(`[library] ${g.title}: ${r.label} (${r.rel}) exited ${result.code}`);
+        done.push(r.rel);
+      }
+      this.installingRuntimes.delete(g.id);
+    }
+    this.games.update(g.id, { redistDone: done });
+    this.broadcast();
+  }
+
+  /** "Reinstall runtimes": they run again before the next start. */
+  resetRuntimes(id: number) {
+    this.games.update(id, { redistDone: null });
+    this.broadcast();
   }
 
   async stop(id: number) {

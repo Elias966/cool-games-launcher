@@ -1116,6 +1116,7 @@ interface GameRow {
   update_checked_at: string | null;
   archive_kept?: number;
   launch_json?: string | null;
+  redist_json?: string | null;
 }
 
 /** The build an update replaced, kept until the new one has been played. */
@@ -1141,6 +1142,8 @@ export interface GameRecord extends Omit<Game, 'running' | 'artwork' | 'executab
   archiveKept: boolean;
   launch: LaunchOptions;
   art: Game['art'];
+  /** Runtime installers already run in the game's prefix (relative paths), or null before the first start. */
+  redistDone: string[] | null;
 }
 
 export class GamesRepo {
@@ -1177,11 +1180,12 @@ export class GamesRepo {
       updateCheckedAt: r.update_checked_at,
       archiveKept: !!r.archive_kept,
       launch: { ...DEFAULT_LAUNCH, ...json<Partial<LaunchOptions>>(r.launch_json ?? null, {}) },
+      redistDone: json<string[] | null>(r.redist_json ?? null, null),
       art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)),
     };
   }
 
-  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art'> & { installedVersion?: InstalledVersion | null }): GameRecord {
+  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
     const r = this.st
       .get(
         `INSERT INTO games (catalog_id, download_id, title, kind, install_dir, executable, args, runner, prefix_dir, managed, artwork_file, source_host, status, candidates_json, installed_version_json, update_checked_at)
@@ -1220,7 +1224,7 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone'>>) {
     const cols: Record<string, string> = {
       title: 'title',
       executable: 'executable',
@@ -1240,8 +1244,9 @@ export class GamesRepo {
       downloadId: 'download_id',
       archiveKept: 'archive_kept',
       launch: 'launch_json',
+      redistDone: 'redist_json',
     };
-    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch']);
+    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone']);
     const sets: string[] = [];
     const vals: Array<string | number | null> = [];
     for (const [k, v] of Object.entries(patch)) {

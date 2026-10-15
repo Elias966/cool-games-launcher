@@ -200,6 +200,7 @@ export const requests = {
   'library:restoreSaves': z.object({ id, stamp: z.string().regex(/^[0-9TZ-]{10,40}$/) }).strict(),
   'library:openSaves': z.object({ id }).strict(),
   'library:shortcut': z.object({ id, where: z.enum(['menu', 'desktop']) }).strict(),
+  'library:resetRuntimes': z.object({ id }).strict(),
   'library:keepArchive': z.object({ id }).strict(),
 } as const;
 
@@ -291,6 +292,7 @@ export interface Responses {
   'library:restoreSaves': { files: number };
   'library:openSaves': void;
   'library:shortcut': { path: string };
+  'library:resetRuntimes': void;
   'library:keepArchive': void;
 }
 

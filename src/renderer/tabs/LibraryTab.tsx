@@ -681,6 +681,15 @@ function LibraryHero({ game }: { game: Game }) {
           </div>
           <LaunchOptionsPanel game={game} />
           <SavesPanel game={game} />
+          {game.kind === 'windows' && game.managed && (
+            <div className="field">
+              <span className="field__label">Game runtimes</span>
+              <span className="field__hint">Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.</span>
+              <div className="launch-row">
+                <Button variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), 'The runtimes will be installed again before the next start.')}>Reinstall runtimes</Button>
+              </div>
+            </div>
+          )}
           <div className="field">
             <span className="field__label">Shortcuts</span>
             <div className="launch-row">

@@ -1,7 +1,7 @@
 // SQLite persistence (node:sqlite, built into Electron's Node runtime).
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -189,6 +189,8 @@ const MIGRATIONS: string[] = [
      notified_at TEXT
    );
    CREATE INDEX wishlist_catalog ON wishlist(catalog_id);`,
+  // Runtime installers (Visual C++, DirectX …) already run in a game's prefix.
+  `ALTER TABLE games ADD COLUMN redist_json TEXT;`,
 ];
 
 export type Db = DatabaseSync;

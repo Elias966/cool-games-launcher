@@ -628,6 +628,7 @@ async function main() {
     'library:restoreSaves': ({ id, stamp }) => library.restoreSaves(id, stamp),
     'library:openSaves': ({ id }) => library.openSaves(id),
     'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
+    'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
     'library:keepArchive': ({ id }) => library.keepArchive(id),
   };
   registerIpc(handlers, trusted);
