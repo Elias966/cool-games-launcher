@@ -8,6 +8,7 @@ import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
 import type { DownloadItem, Game, LaunchOptions, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
+import { ProtonDbBadge } from '../components/ProtonDb';
 import { formatBytes, formatPlaytime, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 
@@ -547,6 +548,7 @@ function LibraryHero({ game }: { game: Game }) {
           <GameLogo game={game} />
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
+            {game.kind === 'windows' && game.art?.appid ? <ProtonDbBadge appid={game.art.appid} /> : null}
             <span>{formatPlaytime(game.playtimeSeconds)}</span>
             {game.lastPlayedAt && <span>Last played {new Date(game.lastPlayedAt).toLocaleDateString()}</span>}
           </p>

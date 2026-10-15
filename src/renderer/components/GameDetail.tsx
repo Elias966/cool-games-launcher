@@ -9,6 +9,7 @@ import type { CatalogEntry, SteamMedia } from '@shared/types';
 import { Artwork } from './GameCard';
 import { Button, NsfwBadge, PlatformIcons, ProgressRing } from './ui';
 import { Icon } from './Icon';
+import { ProtonDbBadge } from './ProtonDb';
 import { formatBytes, formatSpeed, platformLabel } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 
@@ -189,6 +190,12 @@ export function GameDetail({ entry, origin, onClose }: { entry: CatalogEntry; or
                 <dd className={`detail__reviews detail__reviews--${steam.reviews.percent >= 80 ? 'good' : steam.reviews.percent >= 60 ? 'mixed' : 'bad'}`}>
                   {steam.reviews.label || `${steam.reviews.percent}% positive`} · {steam.reviews.percent}% of {compact(steam.reviews.count)}
                 </dd>
+              </div>
+            )}
+            {steam && entry.platforms.includes('windows') && !entry.platforms.includes('linux') && (
+              <div>
+                <dt>On Linux (Proton)</dt>
+                <dd><ProtonDbBadge appid={steam.appid} /></dd>
               </div>
             )}
             {steam?.released && (

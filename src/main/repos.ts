@@ -1177,7 +1177,7 @@ export class GamesRepo {
       updateCheckedAt: r.update_checked_at,
       archiveKept: !!r.archive_kept,
       launch: { ...DEFAULT_LAUNCH, ...json<Partial<LaunchOptions>>(r.launch_json ?? null, {}) },
-      art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)),
+      art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)),
     };
   }
 

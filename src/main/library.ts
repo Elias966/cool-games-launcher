@@ -845,6 +845,8 @@ export class Library {
       logPath: join(paths.logs, `game-${id}.log`),
       allowedRoot: this.allowedRoot(g),
       extras: this.extras(g.launch),
+      // The Steam id lets umu apply this game's known fixes (protonfixes).
+      umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
     });
   }
 

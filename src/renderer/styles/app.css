@@ -2780,6 +2780,16 @@ input[type='range']:focus-visible {
 .couch__exit { position: absolute; top: 20px; right: 24px; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(8, 11, 17, 0.6); color: var(--text); }
 .couch__empty { color: var(--text-2); font-size: 1.1rem; }
 :root[data-motion='reduced'] .couch, :root[data-motion='reduced'] .couch__hero-art { animation: none; }
+.protondb { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; border: 1px solid currentColor; background: rgba(8, 11, 17, 0.6); }
+.protondb__label { opacity: 0.7; letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.62rem; }
+.protondb__tier { font-weight: 800; }
+.protondb__count { opacity: 0.7; }
+.protondb--platinum { color: #b4c7dc; }
+.protondb--gold { color: #cfb53b; }
+.protondb--silver { color: #c0c0c0; }
+.protondb--bronze { color: #cd7f32; }
+.protondb--borked { color: #ff5d73; }
+.protondb--native { color: #3ee6a4; }
 .sort-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 20px; }
 .sort-tab {
   display: inline-flex; align-items: center; gap: 7px;

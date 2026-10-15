@@ -239,7 +239,7 @@ export interface Game {
   archive: { bytes: number; files: number } | null;
   launch: LaunchOptions;
   /** Steam artwork for the Library (banner, logo, capsule), when the game is on Steam. */
-  art: { hero: string | null; logo: string | null; capsule: string | null } | null;
+  art: { hero: string | null; logo: string | null; capsule: string | null; appid: number } | null;
 }
 
 /** Per-game launch settings (Heroic-style). */
@@ -261,6 +261,15 @@ export interface LaunchOptions {
   wined3d: boolean;
   /** Extra environment variables, one KEY=VALUE per line. */
   env: string;
+}
+
+/** ProtonDB's community summary for a Steam game. */
+export interface ProtonDbSummary {
+  tier: string;
+  trendingTier: string | null;
+  bestReportedTier: string | null;
+  confidence: string | null;
+  total: number;
 }
 
 export interface SaveBackup {

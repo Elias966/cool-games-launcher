@@ -38,6 +38,8 @@ interface LaunchParams {
   /** Allowed root for the executable (install dir or, for imports, the import folder). */
   allowedRoot: string;
   installer?: boolean;
+  /** umu game id ("umu-<steam appid>"): umu applies that game's known Proton fixes. */
+  umuId?: string | null;
   /** Per-game launch options with the helper tools found on the system. */
   extras?: LaunchExtras;
 }
@@ -66,7 +68,7 @@ function buildCommand(p: LaunchParams): { cmd: string; args: string[]; env: Node
   // Proton outside Steam via umu-launcher.
   if (!p.umuPath || !existsSync(p.umuPath)) throw new Error('umu-launcher was not found. Set its path in Settings → Compatibility.');
   if (!p.protonPath) throw new Error('Choose a Proton installation in Settings → Compatibility first.');
-  env.GAMEID = env.GAMEID ?? 'umu-default';
+  env.GAMEID = p.umuId && /^umu-\d+$/.test(p.umuId) ? p.umuId : env.GAMEID ?? 'umu-default';
   env.PROTONPATH = p.protonPath;
   env.STORE = 'none';
   return { cmd: p.umuPath, args: isMsi ? ['msiexec', '/i', p.executable, ...p.args] : [p.executable, ...p.args], env };

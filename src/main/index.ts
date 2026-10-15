@@ -39,7 +39,7 @@ import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
 import { hostOf } from '@shared/urls';
-import type { Settings } from '@shared/types';
+import type { ProtonDbSummary, Settings } from '@shared/types';
 
 app.setName('Cool Games Launcher');
 if (!app.requestSingleInstanceLock()) {
@@ -474,6 +474,23 @@ async function main() {
       const pol = policy.policy();
       const r = catalogRepo.query(pol, q);
       return { policyRevision: pol.revision, total: r.total, entries: r.entries, fuzzy: r.fuzzy };
+    },
+    // ProtonDB's public summary for a Steam game, cached for three days.
+    'app:openExternal': async ({ url }) => { await shell.openExternal(url); },
+    'compat:protondb': async ({ appid }) => {
+      const key = `protondb:${appid}`;
+      const hit = aiCache.get<ProtonDbSummary | { missing: true }>(key, 72);
+      if (hit) return 'missing' in hit ? null : hit;
+      try {
+        const res = await fetch(`https://www.protondb.com/api/v1/reports/summaries/${appid}.json`, { signal: AbortSignal.timeout(15_000) });
+        if (res.status === 404) { aiCache.set(key, { missing: true }); return null; }
+        if (!res.ok) return null;
+        const j = (await res.json()) as { tier?: string; trendingTier?: string; bestReportedTier?: string; confidence?: string; total?: number };
+        if (!j.tier) return null;
+        const summary: ProtonDbSummary = { tier: j.tier, trendingTier: j.trendingTier ?? null, bestReportedTier: j.bestReportedTier ?? null, confidence: j.confidence ?? null, total: j.total ?? 0 };
+        aiCache.set(key, summary);
+        return summary;
+      } catch { return null; }
     },
     'catalog:similar': ({ id }) => ({ policyRevision: policy.policy().revision, entries: catalogRepo.similar(id, policy.policy()) }),
     'wishlist:list': () => wishlists.list(),

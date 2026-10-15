@@ -10,6 +10,7 @@ import type {
   CatalogEntry,
   CatalogFacets,
   SaveBackup,
+  ProtonDbSummary,
   WishItem,
   CatalogPage,
   ConsentRecord,
@@ -129,6 +130,9 @@ export const requests = {
     .strict(),
   'catalog:get': z.object({ id }).strict(),
   'catalog:similar': z.object({ id }).strict(),
+  'compat:protondb': z.object({ appid: z.number().int().positive().max(100_000_000) }).strict(),
+  /** Opens ProtonDB / Steam store pages in the user's own browser (nothing else). */
+  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher)\//) }).strict(),
   'wishlist:list': z.undefined(),
   'wishlist:add': z.object({ catalogId: id.optional(), title: z.string().min(1).max(200).optional() }).strict(),
   'wishlist:remove': z.object({ id: id.optional(), catalogId: id.optional() }).strict(),
@@ -237,6 +241,8 @@ export interface Responses {
   'catalog:facets': CatalogFacets;
   'catalog:list': CatalogPage;
   'catalog:similar': { policyRevision: number; entries: CatalogEntry[] };
+  'compat:protondb': ProtonDbSummary | null;
+  'app:openExternal': void;
   'wishlist:list': WishItem[];
   'wishlist:add': WishItem;
   'wishlist:remove': void;
