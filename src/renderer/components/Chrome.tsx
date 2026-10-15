@@ -5,6 +5,7 @@ import { setTab, useApp, setState } from '../state';
 import { Icon, type IconName } from './Icon';
 import type { TabId } from '@shared/types';
 import { useMotionPrefs } from '../hooks/useMotion';
+import { sound } from '../sound';
 import { t, tk } from '../i18n';
 
 export const TABS: Array<{ id: TabId; label: string; icon: IconName; key: string }> = [
@@ -40,6 +41,12 @@ export function AiStatusChip() {
   );
 }
 
+/** The close button plays its sound first, then closes once the sound has mostly played. */
+function closeWindow() {
+  const played = sound.play('quit', { pan: 0.6 });
+  setTimeout(() => api.windowControl('close'), played ? 750 : 0);
+}
+
 export function TitleBar() {
   return (
     <header className="titlebar">
@@ -67,7 +74,7 @@ export function TitleBar() {
         <button className="winbtn" onClick={() => api.windowControl('maximize')} aria-label={t('Maximize window')}>
           <Icon name="maximize" size={14} />
         </button>
-        <button className="winbtn winbtn--close" onClick={() => api.windowControl('close')} aria-label={t('Close window')}>
+        <button className="winbtn winbtn--close" onClick={closeWindow} aria-label={t('Close window')}>
           <Icon name="close" size={16} />
         </button>
       </div>

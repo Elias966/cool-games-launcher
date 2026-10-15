@@ -7,13 +7,13 @@
 
 import type { SoundGroup, SoundGroups } from '@shared/types';
 
-export type SoundName = 'hover' | 'click' | 'toggle' | 'tab' | 'open' | 'close' | 'download' | 'success' | 'error' | 'notify' | 'warp';
+export type SoundName = 'hover' | 'click' | 'toggle' | 'tab' | 'open' | 'close' | 'download' | 'success' | 'error' | 'notify' | 'warp' | 'quit';
 
 /** Which Settings switch controls each sound. */
 export const SOUND_GROUP: Record<SoundName, SoundGroup> = {
   hover: 'hover',
   click: 'click', toggle: 'click',
-  tab: 'navigation', warp: 'navigation', open: 'navigation', close: 'navigation',
+  tab: 'navigation', warp: 'navigation', open: 'navigation', close: 'navigation', quit: 'navigation',
   download: 'downloads', success: 'downloads',
   notify: 'alerts', error: 'alerts',
 };
@@ -115,14 +115,15 @@ class SoundEngine {
     }
   }
 
-  play(name: SoundName, opts: PlayOptions = {}) {
-    if (!opts.force && (!this.enabled || !this.groups[SOUND_GROUP[name]])) return;
+  /** Plays a sound; returns true when it was played. */
+  play(name: SoundName, opts: PlayOptions = {}): boolean {
+    if (!opts.force && (!this.enabled || !this.groups[SOUND_GROUP[name]])) return false;
     const now = performance.now();
     const gap = name === 'hover' ? 55 : 30;
-    if (now - (this.last.get(name) ?? 0) < gap) return;
+    if (now - (this.last.get(name) ?? 0) < gap) return false;
     this.last.set(name, now);
     const ctx = this.context();
-    if (!ctx || !this.master || !this.reverb || !this.delay) return;
+    if (!ctx || !this.master || !this.reverb || !this.delay) return false;
     if (opts.volume !== undefined) this.master.gain.value = opts.volume;
     const t = ctx.currentTime + 0.004;
     const out = this.master, verb = this.reverb, echo = this.delay;
@@ -291,7 +292,44 @@ class SoundEngine {
         }
         break;
       }
+      case 'quit': {
+        // Closing the launcher: a quick, wet raspberry in a big hall. A buzzy
+        // low tone drops in pitch while a flutter makes it sputter.
+        const dur = 0.62;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.Q.value = 6;
+        lp.frequency.setValueAtTime(900, t);
+        lp.frequency.exponentialRampToValueAtTime(320, t + dur);
+        const flutter = ctx.createGain();
+        flutter.gain.value = 0.55;
+        const lfo = ctx.createOscillator();
+        lfo.type = 'square';
+        lfo.frequency.setValueAtTime(34, t);
+        lfo.frequency.linearRampToValueAtTime(19, t + dur);
+        const lfoDepth = ctx.createGain();
+        lfoDepth.gain.value = 0.45;
+        lfo.connect(lfoDepth).connect(flutter.gain);
+        for (const [type, det] of [['sawtooth', -9], ['square', 11]] as const) {
+          const o = ctx.createOscillator();
+          o.type = type;
+          o.detune.value = det;
+          o.frequency.setValueAtTime(118, t);
+          o.frequency.linearRampToValueAtTime(96, t + 0.12);
+          o.frequency.setValueAtTime(104, t + 0.2);
+          o.frequency.exponentialRampToValueAtTime(62, t + dur);
+          o.connect(lp);
+          o.start(t);
+          o.stop(t + dur + 0.05);
+        }
+        lp.connect(flutter).connect(stage(0, 0.015, dur, 0.34, 0, 1.4));
+        lfo.start(t);
+        lfo.stop(t + dur + 0.05);
+        noise(260, 140, 0, dur * 0.8, 0.1, 2.2, { p: 0, attackFrac: 0.05, wet: 1.2 });
+        break;
+      }
     }
+    return true;
   }
 
   /** AI activity 0..1 opens the ambient pad's filter. */
