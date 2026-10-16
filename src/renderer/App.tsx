@@ -76,7 +76,8 @@ export function App() {
   const uiSounds = useApp((s) => s.settings?.uiSounds ?? true);
   const uiVolume = useApp((s) => s.settings?.uiVolume ?? 0.5);
   const uiSoundGroups = useApp((s) => s.settings?.uiSoundGroups);
-  useEffect(() => sound.configure(uiSounds, uiVolume, uiSoundGroups), [uiSounds, uiVolume, uiSoundGroups]);
+  const customSounds = useApp((s) => s.settings?.customSounds);
+  useEffect(() => sound.configure(uiSounds, uiVolume, uiSoundGroups, customSounds), [uiSounds, uiVolume, uiSoundGroups, customSounds]);
   // While a game runs, the 3D scene stops drawing.
   const gaming = useApp((s) => s.library.some((g) => g.running));
   useEffect(() => attachInterfaceSounds(), []);

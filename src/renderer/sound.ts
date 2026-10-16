@@ -1,11 +1,15 @@
 // Interface sound design, synthesized live with the Web Audio API; only the
-// window's close sound is a recorded clip (assets/sounds/close.mp3). Voices are FM synths, filtered noise and sub
+// window's close sound is a recorded clip (assets/sounds/close.mp3), and any
+// sound can be replaced by the user's own audio file (at most 5 seconds of it
+// plays, see sound-clip.ts). Voices are FM synths, filtered noise and sub
 // thumps routed through a compressor, a stereo convolution reverb and a
 // ping-pong delay. Hover/click sounds follow the cursor in the stereo field,
 // and hover pitches walk a pentatonic scale across the screen.
 
-import type { SoundGroup, SoundGroups } from '@shared/types';
+import type { CustomSound, CustomSoundFile, SoundGroup, SoundGroups } from '@shared/types';
+import { api } from './api';
 import closeClipUrl from './assets/sounds/close.mp3';
+import { CUT_FADE_SECONDS, clipWindow, type ClipWindow } from './sound-clip';
 
 export type SoundName = 'hover' | 'click' | 'toggle' | 'tab' | 'open' | 'close' | 'download' | 'success' | 'error' | 'notify' | 'warp' | 'quit';
 
@@ -18,6 +22,14 @@ export const SOUND_GROUP: Record<SoundName, SoundGroup> = {
   download: 'downloads', success: 'downloads',
   notify: 'alerts', error: 'alerts',
 };
+/** Which of the user's own files replaces each sound. */
+const CUSTOM_SLOT: Record<SoundName, CustomSound> = {
+  hover: 'hover', click: 'click', toggle: 'toggle', tab: 'warp', warp: 'warp', open: 'open', close: 'close',
+  download: 'download', success: 'success', notify: 'notify', error: 'error', quit: 'quit',
+};
+
+interface Clip extends ClipWindow { buffer: AudioBuffer }
+
 const ALL_GROUPS: SoundGroups = { hover: true, click: true, navigation: true, downloads: true, alerts: true, funny: true };
 
 interface PlayOptions {
@@ -41,16 +53,78 @@ class SoundEngine {
   private groups: SoundGroups = ALL_GROUPS;
   private last = new Map<SoundName, number>();
   /** The close sound, with its leading and trailing silence trimmed (seconds). */
-  private closeClip: { buffer: AudioBuffer; start: number; end: number } | null = null;
+  private closeClip: Clip | null = null;
   private closeClipLoading = false;
+  /** The user's own files, decoded; `clip` is null while loading or when the file cannot be decoded. */
+  private custom = new Map<CustomSound, { file: string; clip: Clip | null }>();
+  /** A recorded sound restarts instead of overlapping itself. */
+  private playing = new Map<CustomSound, AudioBufferSourceNode>();
   pointer = { x: 0.5, y: 0.5 };
 
-  configure(enabled: boolean, volume: number, groups: SoundGroups = ALL_GROUPS) {
+  configure(enabled: boolean, volume: number, groups: SoundGroups = ALL_GROUPS, custom: Partial<Record<CustomSound, CustomSoundFile>> = {}) {
     this.enabled = enabled;
     this.volume = volume;
     this.groups = { ...ALL_GROUPS, ...groups };
     if (this.master) this.master.gain.value = volume;
+    for (const key of [...this.custom.keys()]) if (!custom[key]) this.custom.delete(key);
+    for (const [key, f] of Object.entries(custom) as Array<[CustomSound, CustomSoundFile]>) {
+      if (this.custom.get(key)?.file !== f.file) void this.loadCustom(key, f.file);
+    }
     if (enabled) void this.loadCloseClip();
+  }
+
+  private async decode(bytes: ArrayBuffer): Promise<Clip | null> {
+    const ctx = this.context();
+    if (!ctx) return null;
+    try {
+      const buffer = await ctx.decodeAudioData(bytes);
+      return { buffer, ...clipWindow(buffer.getChannelData(0), buffer.sampleRate) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Loads the user's file for a sound; false when it cannot be played. */
+  async loadCustom(key: CustomSound, file: string): Promise<boolean> {
+    const entry: { file: string; clip: Clip | null } = { file, clip: null };
+    this.custom.set(key, entry);
+    let clip: Clip | null = null;
+    try {
+      const bytes = await api.invoke('sounds:read', { sound: key });
+      if (bytes) clip = await this.decode(bytes.slice().buffer);
+    } catch {
+      clip = null;
+    }
+    // A newer choice may have replaced this one meanwhile.
+    if (this.custom.get(key) === entry) entry.clip = clip;
+    return clip !== null;
+  }
+
+  /** Seconds the user's file for a sound plays, and whether it was cut at the limit. */
+  customLength(key: CustomSound): { seconds: number; cut: boolean } | null {
+    const clip = this.custom.get(key)?.clip;
+    return clip ? { seconds: clip.end - clip.start, cut: clip.cut } : null;
+  }
+
+  private playClip(key: CustomSound, clip: Clip, pan: number) {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime + 0.004;
+    try { this.playing.get(key)?.stop(); } catch { /* already ended */ }
+    const src = ctx.createBufferSource();
+    src.buffer = clip.buffer;
+    const dur = clip.end - clip.start;
+    const g = ctx.createGain();
+    if (clip.cut) {
+      g.gain.setValueAtTime(1, t + dur - CUT_FADE_SECONDS);
+      g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    }
+    const p = ctx.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    src.connect(g).connect(p).connect(this.master!);
+    // The duration argument is the hard stop: nothing plays past the clip's end.
+    src.start(t, clip.start, dur);
+    src.onended = () => { if (this.playing.get(key) === src) this.playing.delete(key); };
+    this.playing.set(key, src);
   }
 
   /** Decodes the close sound once, ahead of time, so it plays without delay. */
@@ -60,13 +134,7 @@ class SoundEngine {
     if (!ctx) return;
     this.closeClipLoading = true;
     try {
-      const buffer = await ctx.decodeAudioData(await (await fetch(closeClipUrl)).arrayBuffer());
-      const data = buffer.getChannelData(0);
-      const loud = (i: number) => Math.abs(data[i]) > 0.004;
-      let first = 0, last = data.length - 1;
-      while (first < last && !loud(first)) first++;
-      while (last > first && !loud(last)) last--;
-      this.closeClip = { buffer, start: Math.max(0, first / buffer.sampleRate - 0.005), end: Math.min(buffer.duration, last / buffer.sampleRate + 0.08) };
+      this.closeClip = await this.decode(await (await fetch(closeClipUrl)).arrayBuffer());
     } catch {
       // The synthesized fallback plays instead.
     } finally {
@@ -76,7 +144,8 @@ class SoundEngine {
 
   /** How long the close sound lasts, in milliseconds. */
   closeSoundMs(): number {
-    return this.closeClip ? Math.round((this.closeClip.end - this.closeClip.start) * 1000) : 750;
+    const clip = this.custom.get('quit')?.clip ?? this.closeClip;
+    return clip ? Math.round((clip.end - clip.start) * 1000) : 750;
   }
 
   private context(): AudioContext | null {
@@ -151,6 +220,12 @@ class SoundEngine {
     const t = ctx.currentTime + 0.004;
     const out = this.master, verb = this.reverb, echo = this.delay;
     const pan = opts.pan ?? (this.pointer.x * 2 - 1) * 0.75;
+    const own = this.custom.get(CUSTOM_SLOT[name])?.clip;
+    if (own) {
+      // Pointer sounds keep following the cursor; the rest play centred.
+      this.playClip(CUSTOM_SLOT[name], own, name === 'hover' || name === 'click' || name === 'toggle' ? pan : 0);
+      return true;
+    }
 
     /** A voice's output stage: gain envelope → panner → dry + sends. */
     const stage = (start: number, attack: number, dur: number, peak: number, p = pan, wet = 0.3, delaySend = 0) => {
@@ -317,10 +392,7 @@ class SoundEngine {
       }
       case 'quit': {
         if (this.closeClip) {
-          const src = ctx.createBufferSource();
-          src.buffer = this.closeClip.buffer;
-          src.connect(out);
-          src.start(t, this.closeClip.start, this.closeClip.end - this.closeClip.start);
+          this.playClip('quit', this.closeClip, 0);
           break;
         }
         // Fallback while the clip is not decoded: closing the launcher: a quick, wet raspberry in a big hall. A buzzy

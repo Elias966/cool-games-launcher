@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { KineticTitle } from '../components/KineticTitle';
 import { RECOMMENDED_MODEL_ID, type ModelList, type ModelOption } from '@shared/models';
-import type { LauncherUpdate, ProtonInstall, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
+import type { CustomSound, LauncherUpdate, ProtonInstall, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
 import { formatBytes } from '@shared/format';
 import { api } from '../api';
 import { attempt, pushToast, useApp } from '../state';
@@ -10,6 +10,7 @@ import { Button, Dialog, IconButton } from '../components/ui';
 import { ConsentDialog } from '../components/ConsentDialog';
 import { Icon, type IconName } from '../components/Icon';
 import { sound, type SoundName } from '../sound';
+import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
 
@@ -696,7 +697,7 @@ function SoundSection({ settings }: { settings: Settings }) {
   return (
     <>
       <Group>
-        <Row label={t('Interface sounds')} desc={t('Synthesized live on your computer; only the close sound is a recording.')}>
+        <Row label={t('Interface sounds')} desc={t('Synthesized live on your computer, except the close sound and any files of your own below.')}>
           <Switch checked={on} label={t('Interface sounds')} onChange={(v) => { void update({ uiSounds: v }); if (v) sound.play('success', { force: true }); }} />
         </Row>
         <Row label={t('Main volume')}>
@@ -713,7 +714,55 @@ function SoundSection({ settings }: { settings: Settings }) {
           </Row>
         ))}
       </Group>
+      <OwnSounds settings={settings} />
     </>
+  );
+}
+
+const OWN_SOUNDS: Array<{ id: CustomSound; label: string }> = [
+  { id: 'hover', label: tk('Hover') },
+  { id: 'click', label: tk('Click') },
+  { id: 'toggle', label: tk('Switch') },
+  { id: 'warp', label: tk('Tab change') },
+  { id: 'open', label: tk('Open game details') },
+  { id: 'close', label: tk('Close game details') },
+  { id: 'download', label: tk('Download started') },
+  { id: 'success', label: tk('Success') },
+  { id: 'notify', label: tk('Notification') },
+  { id: 'error', label: tk('Error') },
+  { id: 'quit', label: tk('Closing the window') },
+];
+
+/** Any sound can be an audio file of the user's own; at most MAX_CLIP_SECONDS of it plays. */
+function OwnSounds({ settings }: { settings: Settings }) {
+  const choose = async (id: CustomSound) => {
+    const s = await attempt(() => api.invoke('sounds:choose', { sound: id }));
+    const f = s?.customSounds[id];
+    if (!f) return;
+    if (!(await sound.loadCustom(id, f.file))) {
+      await attempt(() => api.invoke('sounds:reset', { sound: id }));
+      pushToast('error', t('“{name}” can’t be played. Choose an MP3, OGG, WAV or FLAC file.', { name: f.name }));
+      return;
+    }
+    sound.play(id, { force: true });
+    if (sound.customLength(id)?.cut) pushToast('success', t('Only the first {n} seconds of “{name}” play.', { n: MAX_CLIP_SECONDS, name: f.name }));
+  };
+  return (
+    <Group title={t('Your own sounds')}>
+      <Row label={t('Use your own audio files')} desc={t('Choose an MP3 (or OGG, WAV, FLAC, M4A) for any sound. Each plays for at most {n} seconds; longer files are cut.', { n: MAX_CLIP_SECONDS })} />
+      {OWN_SOUNDS.map((s) => {
+        const own = settings.customSounds?.[s.id];
+        return (
+          <Row key={s.id} label={t(s.label)} desc={own ? own.name : t('Built-in sound')}>
+            <div className="st-inline">
+              <IconButton icon="play" label={t('Preview {name}', { name: t(s.label) })} onClick={() => sound.play(s.id, { force: true })} />
+              {own && <IconButton icon="retry" label={t('Use the built-in sound')} onClick={() => void attempt(() => api.invoke('sounds:reset', { sound: s.id }))} />}
+              <Button size="sm" icon="folder" onClick={() => void choose(s.id)}>{own ? t('Change') : t('Choose file')}</Button>
+            </div>
+          </Row>
+        );
+      })}
+    </Group>
   );
 }
 

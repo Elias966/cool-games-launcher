@@ -1,34 +1,35 @@
-// Decorative 3D environment behind the interface: a living plasma core inside
-// energy rings, particle data streams, a volumetric nebula, a pulsing grid
-// floor and a hyperspace warp between tabs, finished with cinematic bloom.
+// Decorative 3D environment behind the interface: a holographic falling-blocks
+// game that plays itself, a volumetric nebula, a pulsing grid floor and a
+// hyperspace warp between tabs, finished with cinematic bloom.
 // Every animation runs in shaders from one time uniform, so the CPU cost per
 // frame is a handful of uniform writes. It never carries information that is
 // not also in the HTML interface.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, ChromaticAberration, EffectComposer, GodRays, Noise, Vignette } from '@react-three/postprocessing';
+import { Bloom, ChromaticAberration, EffectComposer, Noise, Vignette } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { TabId } from '@shared/types';
+import { BlockArena } from './BlockArena';
 import { onScene } from './events';
 
 export interface SceneProps {
   tab: TabId;
-  /** 0..1 — how busy the AI is (the core churns and brightens). */
+  /** 0..1 — how busy the AI is (the game speeds up and brightens). */
   activity: number;
-  /** 0..1 — download throughput (data streams speed up and thicken). */
+  /** 0..1 — download throughput (the game plays faster). */
   flow: number;
   animate: boolean;
   low: boolean;
   visible: boolean;
 }
 
-// The core sits in each tab's open screen area so it is seen, not hidden behind panels.
+// The game sits in each tab's open screen area so it is seen, not hidden behind panels.
 const CAMERA_TARGETS: Record<TabId, { pos: [number, number, number]; look: [number, number, number]; core: [number, number, number]; hue: number }> = {
-  store: { pos: [0, 1.4, 11], look: [0, 0.4, 0], core: [6.2, 2.6, -5], hue: 0 },
-  library: { pos: [-1.5, 2.2, 10], look: [0, 0.2, 0], core: [6.4, -2.2, -2], hue: 0.35 },
-  downloads: { pos: [1.2, 1.0, 9.5], look: [0, 0.3, 0], core: [5.6, -1.6, -3], hue: 0.65 },
-  settings: { pos: [0, 4.2, 13], look: [0, 0, 0], core: [8.6, 0.6, -3], hue: 0.9 },
+  store: { pos: [0, 1.4, 11], look: [0, 0.4, 0], core: [4.7, 4.6, -3.8], hue: 0 },
+  library: { pos: [-1.5, 2.2, 10], look: [0, 0.2, 0], core: [6.6, 0.3, -2.4], hue: 0.35 },
+  downloads: { pos: [1.2, 1.0, 9.5], look: [0, 0.3, 0], core: [5.9, 0.4, -4.6], hue: 0.65 },
+  settings: { pos: [0, 4.2, 13], look: [0, 0, 0], core: [6.9, 0.4, 0.2], hue: 0.9 },
 };
 
 /** Shared animated state: one place the frame loop writes, every shader reads. */
@@ -67,21 +68,6 @@ vec3 palette(float t,float hue){
   return k<0.5?mix(cyan,violet,k*2.0):mix(violet,mix(pink,cyan,0.35),(k-0.5)*2.0);
 }
 `;
-
-function makeGlowTexture(inner: string, outer: string) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d')!;
-  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grad.addColorStop(0, inner);
-  grad.addColorStop(0.35, outer);
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
 
 /** Volumetric-looking nebula on a large inward sphere, slowly evolving. */
 function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
@@ -215,186 +201,6 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
   );
 }
 
-/** Plasma core: noise-displaced energy shell, white-hot heart, and corona. */
-function Core({ pulse, low, onSun }: { pulse: React.RefObject<Pulse>; low: boolean; onSun?: (m: THREE.Mesh | null) => void }) {
-  const group = useRef<THREE.Group>(null);
-  const shell = useRef<THREE.ShaderMaterial>(null);
-  const cage = useRef<THREE.LineSegments>(null);
-  const corona = useRef<THREE.SpriteMaterial>(null);
-  const glow = useMemo(() => makeGlowTexture('rgba(170,230,255,1)', 'rgba(110,120,255,0.3)'), []);
-  const cageGeo = useMemo(() => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.75, 1)), []);
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime;
-    const p = pulse.current;
-    if (group.current) group.current.rotation.y = t * 0.08;
-    if (cage.current) { cage.current.rotation.x = t * 0.07; cage.current.rotation.z = -t * 0.05; }
-    if (shell.current) {
-      shell.current.uniforms.uTime.value = t;
-      shell.current.uniforms.uActivity.value = Math.min(1.6, p.activity + p.focus * 0.6);
-      shell.current.uniforms.uHue.value = p.hue;
-    }
-    if (corona.current) corona.current.opacity = Math.min(1, 0.38 + p.activity * 0.3 + p.focus * 0.25 + Math.sin(t * 1.7) * 0.04);
-  });
-  return (
-    <group ref={group}>
-      <mesh>
-        <icosahedronGeometry args={[1, low ? 24 : 64]} />
-        <shaderMaterial
-          ref={shell}
-          transparent
-          uniforms={{ uTime: { value: 0 }, uActivity: { value: 0 }, uHue: { value: 0 } }}
-          vertexShader={/* glsl */ `
-            uniform float uTime; uniform float uActivity;
-            varying vec3 vN; varying vec3 vV; varying float vDisp; varying vec3 vP;
-            ${NOISE}
-            void main(){
-              float speed=0.25+uActivity*0.9;
-              float d=snoise(position*1.8+vec3(uTime*speed))*0.5+snoise(position*4.0-vec3(uTime*speed*1.6))*0.18;
-              vDisp=d;
-              vec3 p=position*(1.0+d*(0.10+uActivity*0.14));
-              vP=p;
-              vN=normalize(normalMatrix*normal);
-              vec4 mv=modelViewMatrix*vec4(p,1.0);
-              vV=normalize(-mv.xyz);
-              gl_Position=projectionMatrix*mv;
-            }`}
-          fragmentShader={/* glsl */ `
-            uniform float uTime; uniform float uActivity; uniform float uHue;
-            varying vec3 vN; varying vec3 vV; varying float vDisp; varying vec3 vP;
-            ${NOISE}
-            void main(){
-              float fres=pow(1.0-max(dot(vN,vV),0.0),2.2);
-              float veins=pow(1.0-abs(snoise(vP*3.2+vec3(0.0,uTime*0.4,0.0))),6.0);
-              vec3 col=palette(vDisp*0.8+0.2,uHue);
-              vec3 c=vec3(0.02,0.03,0.06)+col*fres*(1.2+uActivity)+col*veins*(0.35+uActivity*0.9)+vec3(0.9,0.97,1.0)*pow(fres,5.0)*0.6;
-              gl_FragColor=vec4(c,0.97);
-            }`}
-        />
-      </mesh>
-      {/* White-hot heart visible through the shell's thin regions; also the god-ray source. */}
-      <mesh scale={0.42} ref={onSun}>
-        <sphereGeometry args={[1, 24, 24]} />
-        <meshBasicMaterial color="#e8fbff" transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      <lineSegments ref={cage} geometry={cageGeo}>
-        <lineBasicMaterial color="#48e1ff" transparent opacity={0.22} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </lineSegments>
-      <sprite scale={[8, 8, 1]}>
-        <spriteMaterial ref={corona} map={glow} transparent opacity={0.42} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </sprite>
-    </group>
-  );
-}
-
-const RINGS = [
-  { r: 2.6, tilt: [1.25, 0.2, 0], speed: 0.12, dashes: 24, width: 0.018 },
-  { r: 3.5, tilt: [1.05, -0.45, 0.3], speed: -0.08, dashes: 40, width: 0.014 },
-  { r: 4.6, tilt: [1.45, 0.6, -0.2], speed: 0.05, dashes: 64, width: 0.012 },
-  { r: 6.2, tilt: [1.35, -0.2, 0.15], speed: -0.03, dashes: 90, width: 0.01 },
-] as const;
-
-/** Energy rings: flowing dashes of light, faster with download throughput. */
-function Rings({ pulse, low }: { pulse: React.RefObject<Pulse>; low: boolean }) {
-  const groups = useRef<Array<THREE.Group | null>>([]);
-  const mats = useRef<Array<THREE.ShaderMaterial | null>>([]);
-  const phase = useRef(0);
-  useFrame(({ clock }, dt) => {
-    const p = pulse.current;
-    phase.current += dt * (0.35 + p.flow * 2.2);
-    RINGS.forEach((ring, i) => {
-      const g = groups.current[i];
-      if (g) g.rotation.z += ring.speed * dt * (1 + p.flow * 3);
-      const m = mats.current[i];
-      if (m) { m.uniforms.uPhase.value = phase.current * Math.sign(ring.speed); m.uniforms.uTime.value = clock.elapsedTime; m.uniforms.uHue.value = p.hue; m.uniforms.uFlow.value = p.flow; }
-    });
-  });
-  return (
-    <>
-      {RINGS.map((ring, i) => (
-        <group key={i} rotation={ring.tilt as unknown as THREE.Euler} ref={(el) => { groups.current[i] = el; }}>
-          <mesh>
-            <torusGeometry args={[ring.r, ring.width, 8, low ? 160 : 320]} />
-            <shaderMaterial
-              ref={(el) => { mats.current[i] = el; }}
-              transparent depthWrite={false} blending={THREE.AdditiveBlending}
-              uniforms={{ uPhase: { value: 0 }, uTime: { value: 0 }, uHue: { value: 0 }, uFlow: { value: 0 }, uDashes: { value: ring.dashes }, uIndex: { value: i } }}
-              vertexShader={/* glsl */ `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`}
-              fragmentShader={/* glsl */ `
-                uniform float uPhase; uniform float uTime; uniform float uHue; uniform float uFlow; uniform float uDashes; uniform float uIndex;
-                varying vec2 vUv;
-                ${NOISE}
-                void main(){
-                  float x=fract(vUv.x*uDashes-uPhase);
-                  float dash=smoothstep(0.0,0.15,x)*smoothstep(0.75,0.35,x);
-                  float base=0.18/(1.0+uIndex*0.6);
-                  vec3 col=palette(vUv.x+uIndex*0.17,uHue);
-                  float a=base+dash*(0.35+uFlow*0.65)/(1.0+uIndex*0.35);
-                  gl_FragColor=vec4(col*(1.0+dash*1.5),a);
-                }`}
-            />
-          </mesh>
-        </group>
-      ))}
-    </>
-  );
-}
-
-/** Thousands of particles spiralling through the rings; download flow drives their speed. */
-function DataStreams({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> }) {
-  const mat = useRef<THREE.ShaderMaterial>(null);
-  const geometry = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    const seed = new Float32Array(count * 4);
-    for (let i = 0; i < count; i++) seed.set([Math.random(), Math.random(), Math.random(), Math.floor(Math.random() * RINGS.length)], i * 4);
-    // Positions come entirely from the shader; this only sizes the draw call.
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-    g.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
-    return g;
-  }, [count]);
-  const travel = useRef(0);
-  useFrame(({ clock }, dt) => {
-    if (!mat.current) return;
-    travel.current += dt * (0.05 + pulse.current.flow * 0.5 + pulse.current.activity * 0.08);
-    mat.current.uniforms.uTravel.value = travel.current;
-    mat.current.uniforms.uTime.value = clock.elapsedTime;
-    mat.current.uniforms.uHue.value = pulse.current.hue;
-    mat.current.uniforms.uFlow.value = pulse.current.flow;
-  });
-  const radii = RINGS.map((r) => r.r);
-  const tilts = RINGS.map((r) => new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(...(r.tilt as unknown as [number, number, number]))));
-  return (
-    <points geometry={geometry} frustumCulled={false}>
-      <shaderMaterial
-        ref={mat}
-        transparent depthWrite={false} blending={THREE.AdditiveBlending}
-        uniforms={{ uTravel: { value: 0 }, uTime: { value: 0 }, uHue: { value: 0 }, uFlow: { value: 0 }, uRadii: { value: radii }, uTilt: { value: tilts } }}
-        vertexShader={/* glsl */ `
-          attribute vec4 seed; uniform float uTravel; uniform float uTime; uniform float uFlow; uniform float uRadii[4]; uniform mat4 uTilt[4];
-          varying float vA; varying float vT;
-          void main(){
-            int ring=int(seed.w);
-            float r=uRadii[0]; mat4 tilt=uTilt[0];
-            if(ring==1){r=uRadii[1];tilt=uTilt[1];} else if(ring==2){r=uRadii[2];tilt=uTilt[2];} else if(ring==3){r=uRadii[3];tilt=uTilt[3];}
-            float speed=(0.6+seed.x*0.8)*(ring==1||ring==3?-1.0:1.0);
-            float a=seed.y*6.2831+uTravel*speed*6.2831/(r*0.6);
-            // Particles hug their ring with a little lateral scatter and a slow wobble.
-            float spread=(seed.z-0.5)*0.35;
-            vec3 p=vec3(cos(a)*(r+spread),sin(a)*(r+spread),sin(a*3.0+seed.x*20.0+uTime*0.6)*0.08);
-            vec4 mv=modelViewMatrix*(tilt*vec4(p,1.0));
-            vT=fract(seed.x*7.0+a*0.05);
-            vA=(0.35+0.65*seed.z)*(0.45+uFlow*0.8);
-            gl_PointSize=(1.0+seed.z*2.4+uFlow*1.5)*(24.0/-mv.z);
-            gl_Position=projectionMatrix*mv;
-          }`}
-        fragmentShader={/* glsl */ `
-          uniform float uHue; varying float vA; varying float vT;
-          ${NOISE}
-          void main(){ float d=length(gl_PointCoord-0.5); gl_FragColor=vec4(palette(vT,uHue)*1.6,smoothstep(0.5,0.0,d)*vA); }`}
-      />
-    </points>
-  );
-}
-
 /** Grid floor with shockwave pulses rolling out from under the core. */
 function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: React.RefObject<THREE.Group | null> }) {
   const mat = useRef<THREE.ShaderMaterial>(null);
@@ -502,97 +308,6 @@ function Rig({ tab, animate, pulse }: { tab: TabId; animate: boolean; pulse: Rea
   return null;
 }
 
-
-/** Holographic HUD: tick-marked rings and orbiting arc segments around the core. */
-function Hud({ pulse }: { pulse: React.RefObject<Pulse> }) {
-  const mats = useRef<Array<THREE.ShaderMaterial | null>>([]);
-  const groups = useRef<Array<THREE.Group | null>>([]);
-  const rings = [
-    { inner: 2.05, outer: 2.18, ticks: 120, speed: 0.15, tilt: [Math.PI / 2.15, 0, 0.2] },
-    { inner: 2.9, outer: 2.96, ticks: 36, speed: -0.09, tilt: [Math.PI / 2.4, 0.4, -0.3] },
-    { inner: 5.3, outer: 5.42, ticks: 240, speed: 0.04, tilt: [Math.PI / 2.05, -0.15, 0.1] },
-  ];
-  useFrame(({ clock }, dt) => {
-    rings.forEach((r, i) => {
-      const g = groups.current[i];
-      if (g) g.rotation.z += r.speed * dt * (1 + pulse.current.activity * 2);
-      const m = mats.current[i];
-      if (m) { m.uniforms.uTime.value = clock.elapsedTime; m.uniforms.uHue.value = pulse.current.hue; m.uniforms.uBoost.value = pulse.current.activity + pulse.current.focus; }
-    });
-  });
-  return (
-    <>
-      {rings.map((r, i) => (
-        <group key={i} rotation={r.tilt as unknown as THREE.Euler} ref={(el) => { groups.current[i] = el; }}>
-          <mesh>
-            <ringGeometry args={[r.inner, r.outer, 256, 1]} />
-            <shaderMaterial
-              ref={(el) => { mats.current[i] = el; }}
-              transparent depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide}
-              uniforms={{ uTime: { value: 0 }, uHue: { value: 0 }, uBoost: { value: 0 }, uTicks: { value: r.ticks }, uIndex: { value: i } }}
-              vertexShader={/* glsl */ `varying vec2 vP; void main(){ vP=position.xy; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`}
-              fragmentShader={/* glsl */ `
-                uniform float uTime; uniform float uHue; uniform float uBoost; uniform float uTicks; uniform float uIndex;
-                varying vec2 vP;
-                ${NOISE}
-                void main(){
-                  float a=atan(vP.y,vP.x)/6.28318+0.5;
-                  float tick=step(0.82,fract(a*uTicks));
-                  float major=step(0.9,fract(a*uTicks/10.0));
-                  // Orbiting bright arc segments and a scanning sweep.
-                  float seg=step(0.72,fract(a*3.0+uTime*(0.05+uIndex*0.03)));
-                  float sweep=pow(fract(a-uTime*0.12),18.0);
-                  float alpha=(tick*0.18+major*0.35+seg*0.22+sweep*0.9)*(0.6+uBoost*0.5);
-                  gl_FragColor=vec4(palette(a+uIndex*0.2,uHue)*1.6,alpha*0.55);
-                }`}
-            />
-          </mesh>
-        </group>
-      ))}
-    </>
-  );
-}
-
-/** Crackling arcs from the core while the AI is busy (or a card is hovered). */
-function Lightning({ pulse }: { pulse: React.RefObject<Pulse> }) {
-  const ARCS = 7, SEGS = 14;
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ARCS * SEGS * 2 * 3), 3));
-    return g;
-  }, []);
-  const mat = useRef<THREE.LineBasicMaterial>(null);
-  const next = useRef(0);
-  useFrame(({ clock }) => {
-    const p = pulse.current;
-    const level = Math.min(1, p.activity * 0.9 + p.focus * 0.5);
-    if (mat.current) mat.current.opacity = level * (0.55 + Math.random() * 0.45);
-    if (level < 0.05 || clock.elapsedTime < next.current) return;
-    next.current = clock.elapsedTime + 0.06 + Math.random() * 0.08;
-    const pos = geo.attributes.position as THREE.BufferAttribute;
-    const v = new THREE.Vector3(), d = new THREE.Vector3(), side = new THREE.Vector3();
-    let k = 0;
-    for (let a = 0; a < ARCS; a++) {
-      d.randomDirection();
-      const len = 1.1 + Math.random() * (1.4 + level * 1.6);
-      side.randomDirection().cross(d).normalize();
-      let prev = d.clone().multiplyScalar(1.02);
-      for (let sgm = 1; sgm <= SEGS; sgm++) {
-        const f = sgm / SEGS;
-        v.copy(d).multiplyScalar(1.02 + f * len).addScaledVector(side, (Math.random() - 0.5) * 0.35 * Math.sin(f * Math.PI)).addScaledVector(new THREE.Vector3().randomDirection(), 0.06);
-        pos.setXYZ(k++, prev.x, prev.y, prev.z);
-        pos.setXYZ(k++, v.x, v.y, v.z);
-        prev = v.clone();
-      }
-    }
-    pos.needsUpdate = true;
-  });
-  return (
-    <lineSegments geometry={geo} frustumCulled={false}>
-      <lineBasicMaterial ref={mat} color="#bff4ff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
-    </lineSegments>
-  );
-}
 
 /** Shockwave shell, flat ring and particle burst fired by interface events. */
 function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
@@ -708,7 +423,7 @@ function Comets() {
   );
 }
 
-function Structure({ tab, low, animate, pulse, groupRef, onSun }: { tab: TabId; low: boolean; animate: boolean; pulse: React.RefObject<Pulse>; groupRef: React.RefObject<THREE.Group | null>; onSun?: (m: THREE.Mesh | null) => void }) {
+function Structure({ tab, low, animate, pulse, groupRef }: { tab: TabId; low: boolean; animate: boolean; pulse: React.RefObject<Pulse>; groupRef: React.RefObject<THREE.Group | null> }) {
   useFrame((_, dt) => {
     const target = CAMERA_TARGETS[tab].core;
     const g = groupRef.current;
@@ -720,11 +435,7 @@ function Structure({ tab, low, animate, pulse, groupRef, onSun }: { tab: TabId; 
   });
   return (
     <group ref={groupRef} position={CAMERA_TARGETS[tab].core}>
-      <Core pulse={pulse} low={low} onSun={onSun} />
-      <Rings pulse={pulse} low={low} />
-      {!low && <DataStreams count={2400} pulse={pulse} />}
-      {!low && <Hud pulse={pulse} />}
-      {!low && <Lightning pulse={pulse} />}
+      <BlockArena pulse={pulse} low={low} />
       <Shockwave pulse={pulse} />
     </group>
   );
@@ -749,11 +460,10 @@ function Invalidator({ deps }: { deps: unknown[] }) {
  * read as a white layer flickering whenever the tier changed. Tiers only change
  * the render resolution.
  */
-function Effects({ sun }: { sun: THREE.Mesh | null }) {
+function Effects() {
   const offset = useMemo(() => new THREE.Vector2(0.0006, 0.0009), []);
   return (
     <EffectComposer multisampling={0}>
-      {sun ? <GodRays sun={sun} samples={32} density={0.92} decay={0.92} weight={0.3} exposure={0.26} clampMax={0.8} blur /> : <></>}
       <Bloom mipmapBlur luminanceThreshold={0.18} luminanceSmoothing={0.3} intensity={1.15} radius={0.75} />
       <ChromaticAberration offset={offset} radialModulation modulationOffset={0.35} />
       <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.35} />
@@ -793,7 +503,6 @@ export function OrbitalScene(props: SceneProps) {
   const frameloop = !visible ? 'never' : animate ? 'always' : 'demand';
   const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0 });
   const structure = useRef<THREE.Group | null>(null);
-  const [sun, setSun] = useState<THREE.Mesh | null>(null);
   const [tier, setTier] = useState(2);
   return (
     <div className="scene" aria-hidden="true">
@@ -811,12 +520,12 @@ export function OrbitalScene(props: SceneProps) {
         <Stars count={low ? 700 : 2800} pulse={pulse} />
         {!low && <GridFloor pulse={pulse} center={structure} />}
         {!low && <Comets />}
-        <Structure tab={tab} low={low} animate={animate} pulse={pulse} groupRef={structure} onSun={setSun} />
+        <Structure tab={tab} low={low} animate={animate} pulse={pulse} groupRef={structure} />
         <Driver tab={tab} activity={activity} flow={flow} animate={animate} pulse={pulse} />
         <Rig tab={tab} animate={animate} pulse={pulse} />
         <Invalidator deps={[tab, low, visible]} />
         {!low && animate && <AdaptiveQuality tier={tier} onTier={setTier} />}
-        {!low && <Effects sun={sun} />}
+        {!low && <Effects />}
       </Canvas>
     </div>
   );

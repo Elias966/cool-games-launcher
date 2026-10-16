@@ -310,6 +310,12 @@ export type AccelPreference = 'auto' | 'vulkan' | 'cpu';
 export type SoundGroup = 'hover' | 'click' | 'navigation' | 'downloads' | 'alerts' | 'funny';
 export type SoundGroups = Record<SoundGroup, boolean>;
 
+/** Interface sounds that can be replaced with the user's own audio file. */
+export const CUSTOM_SOUNDS = ['hover', 'click', 'toggle', 'warp', 'open', 'close', 'download', 'success', 'notify', 'error', 'quit'] as const;
+export type CustomSound = (typeof CUSTOM_SOUNDS)[number];
+/** The copy kept in the launcher's data folder, and the name of the file it came from. */
+export interface CustomSoundFile { file: string; name: string }
+
 export interface Settings {
   showNsfw: boolean;
   policyRevision: number;
@@ -338,6 +344,8 @@ export interface Settings {
   uiVolume: number;
   /** Individual sound groups (all on by default). */
   uiSoundGroups: SoundGroups;
+  /** The user's own audio files for individual sounds (set through Settings → Sound only). */
+  customSounds: Partial<Record<CustomSound, CustomSoundFile>>;
   crawlRefreshHours: number;
   /** Installed games: tell me about updates, or update them automatically. */
   gameUpdates: 'notify' | 'auto';

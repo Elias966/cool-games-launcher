@@ -2,6 +2,7 @@ import type {ModelList} from './models';
 // IPC contract between renderer and main. Every request payload is validated
 // in main against these schemas; anything that does not parse is rejected.
 import { z } from 'zod';
+import { CUSTOM_SOUNDS } from './types';
 import type {
   AiStatus,
   StoreSearchResult,
@@ -98,6 +99,10 @@ export const requests = {
   'settings:update': settingsPatch,
   'settings:pickDirectory': z.object({ title: z.string().max(200) }).strict(),
   'settings:clearCache': z.object({ what: z.enum(['artwork', 'ai', 'browser', 'catalog']) }).strict(),
+  /** Opens a file picker and uses the chosen audio file for that sound. */
+  'sounds:choose': z.object({ sound: z.enum(CUSTOM_SOUNDS) }).strict(),
+  'sounds:reset': z.object({ sound: z.enum(CUSTOM_SOUNDS) }).strict(),
+  'sounds:read': z.object({ sound: z.enum(CUSTOM_SOUNDS) }).strict(),
   'consent:get': z.undefined(),
   /** Enabling requires the explicit acceptance flag that only the consent dialog sends. */
   'consent:enableNsfw': z.object({ acceptedWarning: z.literal(true) }).strict(),
@@ -249,6 +254,11 @@ export interface Responses {
   'settings:update': Settings;
   'settings:pickDirectory': string | null;
   'settings:clearCache': { freedBytes: number };
+  /** Null when no file was chosen. */
+  'sounds:choose': Settings | null;
+  'sounds:reset': Settings;
+  /** The file's bytes, or null when the sound has no file of its own. */
+  'sounds:read': Uint8Array | null;
   'consent:get': ConsentRecord & { showNsfw: boolean; policyRevision: number };
   'consent:enableNsfw': Settings;
   'consent:disableNsfw': Settings;

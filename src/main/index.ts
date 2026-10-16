@@ -38,6 +38,7 @@ import { LauncherTray } from './tray';
 import { gameFromArgs } from './shortcuts';
 import { writeDiagnostics } from './diagnostics';
 import { UpdateService } from './updates';
+import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
@@ -132,6 +133,7 @@ async function main() {
 
   const db = openDb(paths.db);
   const settingsRepo = new SettingsRepo(db, defaultSettings({ games: paths.games, downloads: paths.downloads }));
+  const customSounds = new CustomSounds(join(paths.data, 'sounds'), settingsRepo);
   setMainLanguage(settingsRepo.get().language);
   const consentRepo = new ConsentRepo(db);
   const sourcesRepo = new SourcesRepo(db);
@@ -465,6 +467,19 @@ async function main() {
       publish('settings:changed', s);
       return s;
     },
+    'sounds:choose': async ({ sound }) => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose a sound file'), properties: ['openFile'], filters: [{ name: tm('Audio files'), extensions: SOUND_EXTENSIONS }] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      const s = customSounds.adopt(sound, r.filePaths[0]);
+      publish('settings:changed', s);
+      return s;
+    },
+    'sounds:reset': ({ sound }) => {
+      const s = customSounds.reset(sound);
+      publish('settings:changed', s);
+      return s;
+    },
+    'sounds:read': ({ sound }) => customSounds.read(sound),
     'settings:pickDirectory': async ({ title }) => {
       const r = await dialog.showOpenDialog(mainWindow!, { title, properties: ['openDirectory', 'createDirectory'] });
       return r.canceled ? null : (r.filePaths[0] ?? null);

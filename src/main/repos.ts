@@ -68,6 +68,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     uiSounds: true,
     uiVolume: 0.5,
     uiSoundGroups: { hover: true, click: true, navigation: true, downloads: true, alerts: true, funny: true },
+    customSounds: {},
     crawlRefreshHours: 3,
     gameUpdates: 'notify',
     afterInstall: 'ask',
