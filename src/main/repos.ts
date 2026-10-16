@@ -114,8 +114,9 @@ export class SettingsRepo {
 
   policy(): VisibilityPolicy {
     const s = this.get();
-    // Adult games are always hidden.
-    return { showNsfw: false, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers, coverThreshold: COVER_THRESHOLD[s.coverStrictness] ?? COVER_THRESHOLD.strict };
+    // One switch: "hide games with a woman on the cover" also hides adult games
+    // (their covers show women too). Off, the Store shows everything.
+    return { showNsfw: !s.hideWomenCovers, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers, coverThreshold: COVER_THRESHOLD[s.coverStrictness] ?? COVER_THRESHOLD.strict };
   }
 
   /** Turns the cover filter on or off and bumps the policy revision. */

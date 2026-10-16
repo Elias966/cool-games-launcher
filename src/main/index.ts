@@ -506,14 +506,14 @@ async function main() {
       return { freedBytes: freed };
     },
     'consent:get': () => {
-      const s = settingsRepo.get();
-      return { ...consentRepo.current(), showNsfw: s.showNsfw, policyRevision: s.policyRevision };
+      const p = settingsRepo.policy();
+      return { ...consentRepo.current(), showNsfw: p.showNsfw, policyRevision: p.revision };
     },
     'content:setHideWomenCovers': ({ on }) => policy.setHideWomenCovers(on),
     'content:setCoverStrictness': ({ strictness }) => {
       settingsRepo.setCoverStrictness(strictness);
       const s = settingsRepo.get();
-      policy.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
+      policy.emit('changed', { showNsfw: policy.policy().showNsfw, revision: s.policyRevision });
       return s;
     },
     'content:coverStatus': () => ({ ...catalogRepo.coverCounts(settingsRepo.policy().coverThreshold), enabled: settingsRepo.get().hideWomenCovers, model: coverModel.status() }),

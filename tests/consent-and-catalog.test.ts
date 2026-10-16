@@ -32,31 +32,38 @@ afterEach(() => {
 });
 
 describe('adult content', () => {
-  it('is hidden on a fresh installation', () => {
-    const { policy, consent } = services(db);
+  it('is shown on a fresh installation, until the hide switch is turned on', () => {
+    const { policy } = services(db);
+    expect(policy.policy().showNsfw).toBe(true);
+    const r0 = policy.policy().revision;
+    policy.setHideWomenCovers(true);
     expect(policy.policy().showNsfw).toBe(false);
-    expect(consent.current().accepted).toBe(false);
+    expect(policy.policy().hideWomenCovers).toBe(true);
+    expect(policy.policy().revision).toBe(r0 + 1);
+    policy.setHideWomenCovers(false);
+    expect(policy.policy().showNsfw).toBe(true);
   });
 
-  it('is hidden again, and the old consent forgotten, where an earlier version showed it', () => {
+  it('tells listeners the new visibility when the switch changes', () => {
+    const { policy } = services(db);
+    const seen: boolean[] = [];
+    policy.on('changed', (e: { showNsfw: boolean }) => seen.push(e.showNsfw));
+    policy.setHideWomenCovers(true);
+    policy.setHideWomenCovers(false);
+    expect(seen).toEqual([false, true]);
+  });
+
+  it('forgets the old separate NSFW switch and its consent on start', () => {
     const { settings, consent } = services(db);
     consent.accept('earlier-warning');
     settings.update({ showNsfw: true });
-    const before = settings.get().policyRevision;
     db.close();
     db = openDb(join(dir, 'launcher.db'));
     const again = services(db);
-    expect(again.policy.policy().showNsfw).toBe(false);
     expect(again.settings.get().showNsfw).toBe(false);
     expect(again.consent.current().accepted).toBe(false);
-    // A new revision makes every cached Store list hide adult games right away.
-    expect(again.policy.policy().revision).toBe(before + 1);
-  });
-
-  it('stays hidden even if the stored setting says otherwise', () => {
-    const { settings, policy } = services(db);
-    settings.update({ showNsfw: true });
-    expect(policy.policy().showNsfw).toBe(false);
+    // Visibility follows the hide switch only.
+    expect(again.policy.policy().showNsfw).toBe(true);
   });
 });
 
@@ -75,29 +82,36 @@ describe('catalog gating', () => {
     s.catalog.setRating(adult, 'adult', 0.9, ['image:0.90'], 'v1');
     s.catalog.setArtwork(safe, 'a'.repeat(40) + '.png');
     s.catalog.setArtwork(adult, 'b'.repeat(40) + '.png');
+    // The cover filter has checked the safe game's cover: no woman on it.
+    s.catalog.setCoverScore(safe, 0.01);
     return { safe, adult, unknown };
   }
 
-  it('returns only safe entries while NSFW is off', () => {
+  it('returns only safe entries while adult games are hidden', () => {
     const s = services(db);
     const ids = seed(s);
+    s.policy.setHideWomenCovers(true);
     const page = s.catalog.query(s.policy.policy(), {});
     expect(page.entries.map((e) => e.id)).toEqual([ids.safe]);
     expect(s.catalog.get(ids.adult, s.policy.policy())).toBeNull();
   });
 
-  it('never shows adult or unclassified entries, or adult artwork', () => {
+  it('hides adult entries and artwork with the switch on, and never shows unclassified ones', () => {
     const s = services(db);
     const ids = seed(s);
+    expect(s.catalog.artworkVisible('b'.repeat(40) + '.png', s.policy.policy())).toBe(true);
+    expect(s.catalog.get(ids.adult, s.policy.policy())?.id).toBe(ids.adult);
+    s.policy.setHideWomenCovers(true);
     expect(s.catalog.get(ids.unknown, s.policy.policy())).toBeNull();
     expect(s.catalog.artworkVisible('b'.repeat(40) + '.png', s.policy.policy())).toBe(false);
     expect(s.catalog.artworkVisible('a'.repeat(40) + '.png', s.policy.policy())).toBe(true);
     expect(s.catalog.hiddenIds(s.policy.policy()).length).toBe(2);
   });
 
-  it('gates screenshots on their own score', () => {
+  it('gates screenshots on their own score while adult games are hidden', () => {
     const s = services(db);
     const ids = seed(s);
+    s.policy.setHideWomenCovers(true);
     s.catalog.setScreenshotFiles(ids.safe, [
       { file: 'c'.repeat(40) + '.png', score: 0.05 },
       { file: 'd'.repeat(40) + '.png', score: 0.95 },

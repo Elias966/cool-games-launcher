@@ -1,7 +1,7 @@
-// Visibility policy. Adult (NSFW) games are always hidden: there is no switch
-// to show them. A launcher that had them shown (versions before 0.2.12) hides
-// them again on start and forgets the old consent. Every change bumps the
-// policy revision.
+// Visibility policy. One switch decides it: hiding games with a woman on the
+// cover also hides adult (NSFW) games; with it off the Store shows everything.
+// The separate NSFW switch and its consent record from versions before 0.2.12
+// are cleared on start. Every change bumps the policy revision.
 import { EventEmitter } from 'node:events';
 import type { VisibilityPolicy } from '@shared/policy';
 import type { ConsentRepo, SettingsRepo } from './repos';
@@ -24,7 +24,7 @@ export class PolicyService extends EventEmitter {
   /** Hides or shows Store games whose cover's main subject is a woman. */
   setHideWomenCovers(on: boolean): Settings {
     const s = this.settings.setHideWomenCovers(on);
-    this.emit('changed', { showNsfw: false, revision: s.policyRevision });
+    this.emit('changed', { showNsfw: this.policy().showNsfw, revision: s.policyRevision });
     return s;
   }
 }

@@ -13,6 +13,12 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.13
+
+- **One content switch**: Settings → Content → *Hide games with a woman on the cover*.
+  Off (the default) shows every game; on hides games with a woman on the cover, and
+  adult games with them.
+
 ## What's new in 0.2.12
 
 - **Smaller updates**: an update now downloads only the parts of the AppImage that changed
@@ -21,7 +27,7 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
   still downloads the whole file.
 - **Store**: an easy-to-grab scrollbar, a button back to the top, and the list no longer
   re-sorts under you while you scroll (new games appear once you are back at the top).
-- **Adult content is always hidden**: the switch to show it is gone; the cover filter stays.
+- **One content switch** instead of two (see 0.2.13).
 - **Fixes**: the 3D background no longer flashes white noise when the window comes back,
   and the block game's edges no longer shimmer while it moves.
 
@@ -231,9 +237,11 @@ for a minute, and **Roll back** returns to it with your newer saves.
 
 ### Adult content
 
-Adult (NSFW) games are always hidden; there is no setting to show them. A local
-classifier checks every game before it appears, and unclassified games stay hidden.
-Settings → Content can also hide games with a woman on the cover. See
+One switch in Settings → Content, **Hide games with a woman on the cover**, decides
+what the Store hides. It is off by default, and the Store then shows
+every game. Turned on, adult (NSFW) games are hidden and a small image model checks
+every cover and hides games with a woman or girl on it. A local classifier checks every
+game before it appears, and unclassified games stay hidden either way. See
 [docs/CLASSIFIER.md](docs/CLASSIFIER.md) for measured accuracy and limitations.
 
 ## Requirements
@@ -272,11 +280,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.12-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.13-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.12-x86_64.AppImage
+./Cool-Games-Launcher-0.2.13-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

@@ -149,7 +149,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
     compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
-    content: `${t('Adult content hidden')}${settings.hideWomenCovers ? ` · ${t('cover filter on')}` : ''}`,
+    content: settings.hideWomenCovers ? t('Women covers hidden') : t('Everything shown'),
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
     sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
@@ -625,7 +625,7 @@ function CoverFilterRow({ settings }: { settings: Settings }) {
   return (
     <>
       <Row label={t('Hide games with a woman on the cover')} desc={<>
-        {t('An image model on your computer looks at every game cover and hides the game when it shows a woman or girl, including drawn and anime characters, even when the cover is not explicit. Thousands of covers take a few minutes; new games are checked as they are found. The model (176 MB) downloads once, the first time you turn this on.')}
+        {t('Off: the Store shows every game. On: an image model on your computer looks at every game cover and hides the game when it shows a woman or girl, including drawn and anime characters, even when the cover is not explicit. Thousands of covers take a few minutes; new games are checked as they are found. The model (176 MB) downloads once, the first time you turn this on.')}
         {progress && <span className="st-cover-progress">{progress}</span>}
       </>}>
         <Switch checked={on} label={t('Hide games with a woman on the cover')} onChange={(v) => void attempt(() => api.invoke('content:setHideWomenCovers', { on: v }))} />
@@ -648,7 +648,6 @@ function ContentSection({ settings }: { settings: Settings }) {
         <CoverFilterRow settings={settings} />
       </Group>
       <ul className="st-facts">
-        <li>{t('Adult (NSFW) games are always hidden, and browser previews of adult pages are masked.')}</li>
         <li>{t('Every game’s artwork and text is checked by a local classifier (on your GPU) before it appears. Unchecked games stay hidden.')}</li>
         <li>{t('Automatic classification is good but not perfect.')}</li>
       </ul>
