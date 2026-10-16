@@ -13,6 +13,15 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.11
+
+- **A game in the background**: the 3D scene's centrepiece is now a holographic
+  falling-blocks game that plays itself, with neon glass blocks, a landing ghost, the next
+  piece, slam trails, and line clears that flash and burst into sparks. It plays faster
+  while the AI works or something downloads.
+- **Your own sounds**: Settings → Sound → Your own sounds lets any interface sound be an
+  MP3 (or OGG, WAV, FLAC, M4A) of yours. At most 5 seconds of a file plays.
+
 ## What's new in 0.2.9
 
 - **Several Proton versions**: Settings → Windows games lists every installed Proton
@@ -253,11 +262,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.10-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.11-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.10-x86_64.AppImage
+./Cool-Games-Launcher-0.2.11-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher
