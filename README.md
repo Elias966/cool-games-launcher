@@ -253,11 +253,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.9-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.10-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.9-x86_64.AppImage
+./Cool-Games-Launcher-0.2.10-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher
