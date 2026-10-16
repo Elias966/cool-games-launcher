@@ -13,6 +13,21 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.9
+
+- **Several Proton versions**: Settings → Windows games lists every installed Proton
+  (GE-Proton, CachyOS, Steam's, folders you add), lets you pick the default and remove
+  the ones the launcher installed; each game can use its own version (Launch options).
+- **Cover filter**: Settings → Content can hide games with a woman on the cover. A small
+  image model (CLIP, downloaded once, 176 MB) checks every cover on your GPU — thousands
+  of covers in a few minutes — with a Strict or Balanced setting.
+- **Clear download history** in one go (Completed and Failed in Downloads).
+- **Quieter while playing**: the AI model and image classifier leave the GPU before a game
+  starts, and the 3D scene stops drawing; the ambient soundscape is gone.
+- **Funny sounds**: a sound on the close button, with a switch in Settings → Sound.
+- **Fixes**: the 3D background no longer flashes on hover and page changes; the AI could
+  be shown the previous image when two image questions came in a row.
+
 ## What's new in 0.2.7
 
 - **Arabic interface**: Settings → Appearance → Language switches the whole launcher
@@ -238,11 +253,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.8-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.9-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.8-x86_64.AppImage
+./Cool-Games-Launcher-0.2.9-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher
