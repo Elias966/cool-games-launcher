@@ -448,7 +448,8 @@ function Driver({ tab, activity, flow, animate, pulse }: { tab: TabId; activity:
   useEffect(() => onScene((e) => {
     const p = pulse.current;
     if (e === 'shockwave' || e === 'burst') { p.shockAt = clock.elapsedTime; p.shake = Math.max(p.shake, e === 'burst' ? 1 : 0.6); }
-    if (e === 'focus') p.focus = Math.min(1.5, p.focus + 0.6);
+    // A gentle glow per hovered card; sweeping across many cards must not wash the scene out.
+    if (e === 'focus') p.focus = Math.min(0.45, p.focus + 0.15);
   }), [clock]);
   useFrame(({ clock }, dt) => {
     const p = pulse.current;
@@ -792,7 +793,9 @@ export function OrbitalScene(props: SceneProps) {
       <Canvas
         frameloop={frameloop}
         dpr={low ? 1 : DPR_TIERS[tier]}
-        gl={{ antialias: !low, alpha: false, powerPreference: low ? 'low-power' : 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
+        // preserveDrawingBuffer: the compositor can always show the last frame, so
+        // layer changes elsewhere on the page (card hover, page transitions) do not flash.
+        gl={{ antialias: !low, alpha: false, preserveDrawingBuffer: true, powerPreference: low ? 'low-power' : 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
         camera={{ fov: 46, near: 0.1, far: 160, position: CAMERA_TARGETS[tab].pos }}
       >
         <color attach="background" args={['#05070c']} />

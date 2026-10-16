@@ -23,7 +23,13 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* The scene's own colour underneath, and a compositing layer of its own:
+     hover effects and page transitions must never make it flash. */
+  background: #05070c;
+  transform: translateZ(0);
+  contain: strict;
 }
+.scene canvas { background: #05070c; }
 
 .vignette {
   position: absolute;
