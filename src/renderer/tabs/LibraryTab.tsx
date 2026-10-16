@@ -75,6 +75,11 @@ export function LibraryTab() {
     return () => io.disconnect();
   }, [games.length > 0 || pending.length > 0]);
   const toTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  /** Scrolled down, a clicked game opens in a pop-up instead of the panel at the top. */
+  const [popup, setPopup] = useState<{ gameId?: number; owned?: string } | null>(null);
+  const popupGame = popup?.gameId !== undefined ? games.find((g) => g.id === popup.gameId) ?? null : null;
+  const allOwned = useApp((s) => s.stores.owned);
+  const popupOwned = popup?.owned ? allOwned.find((o) => `${o.store}:${o.id}` === popup.owned && o.gameId === null) ?? null : null;
 
   const shown = useMemo(
     () =>
@@ -183,10 +188,10 @@ export function LibraryTab() {
                   <PendingCover key={`dl-${d.id}`} d={d} parts={partsOf(d)} index={i} selected={selectedPending?.id === d.id} onSelect={() => setPendingId(d.id)} />
                 ))}
                 {shown.map((g, i) => (
-                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setOwnedKey(null); setSelectedId(g.id); }} />
+                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setOwnedKey(null); setSelectedId(g.id); if (heroHidden) setPopup({ gameId: g.id }); }} />
                 ))}
                 {shownOwned.map((o, i) => (
-                  <OwnedCover key={`own-${o.store}-${o.id}`} o={o} index={i + shown.length + shownPending.length} selected={selectedOwned === o || (!!selectedOwned && selectedOwned.store === o.store && selectedOwned.id === o.id)} onSelect={() => { setPendingId(null); setOwnedKey(`${o.store}:${o.id}`); }} />
+                  <OwnedCover key={`own-${o.store}-${o.id}`} o={o} index={i + shown.length + shownPending.length} selected={selectedOwned === o || (!!selectedOwned && selectedOwned.store === o.store && selectedOwned.id === o.id)} onSelect={() => { setPendingId(null); setOwnedKey(`${o.store}:${o.id}`); if (heroHidden) setPopup({ owned: `${o.store}:${o.id}` }); }} />
                 ))}
                 {shown.length === 0 && shownPending.length === 0 && shownOwned.length === 0 && <p className="muted">{t('No games match.')}</p>}
               </div>
@@ -195,7 +200,17 @@ export function LibraryTab() {
         )}
       </div>
       <AnimatePresence>
-        {heroHidden && selected && !selectedPending && (
+        {(popupGame || popupOwned) && (
+          <motion.div key="popup" className="library-popup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={(e) => { if (e.target === e.currentTarget) setPopup(null); }}>
+            <div className="library-popup__card" role="dialog" aria-modal="true">
+              <button type="button" className="library-popup__close" aria-label={t('Close')} onClick={() => setPopup(null)}><Icon name="close" size={18} /></button>
+              {popupGame ? <LibraryHero key={popupGame.id} game={popupGame} /> : popupOwned && <OwnedHero key={`own-${popupOwned.store}-${popupOwned.id}`} o={popupOwned} />}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {heroHidden && selected && !selectedPending && !popup && (
           <motion.div key="float" className="library-float" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
             <FloatingGame game={selected} onDetails={toTop} />
           </motion.div>
@@ -607,6 +622,8 @@ function LibraryHero({ game }: { game: Game }) {
   const [imagesOpen, setImagesOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const storeJob = useApp((s) => (game.store ? s.stores.jobs.find((j) => j.store === game.store && j.id === game.storeId) : undefined));
+  // A game from disk that the person also owns on GOG or Epic: offer to merge it.
+  const storeTwin = useApp((s) => (game.store ? undefined : s.stores.owned.find((o) => o.gameId === null && o.title.toLowerCase().replace(/[^a-z0-9]+/g, '') === game.title.toLowerCase().replace(/[^a-z0-9]+/g, ''))));
   const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
   const argsRef = useRef(game.args);
   useEffect(() => {
@@ -638,6 +655,13 @@ function LibraryHero({ game }: { game: Game }) {
             {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
           </p>
+          {storeTwin && (
+            <div className="hero__store-update">
+              <span>{t('You own this game on {store}.', { store: STORE_LABEL[storeTwin.store] })}</span>
+              <Button size="sm" variant="primary" onClick={() => void attempt(() => api.invoke('stores:linkGame', { store: storeTwin.store, id: storeTwin.id, gameId: game.id }), t('{title} is linked to {store}; updates come from there.', { title: game.title, store: STORE_LABEL[storeTwin.store] }))}>{t('Merge them')}</Button>
+              <Button size="sm" variant="ghost" icon="trash" onClick={() => void attempt(() => api.invoke('library:uninstall', { id: game.id, removePrefix: false }))}>{t('Remove the copy from the Library')}</Button>
+            </div>
+          )}
           {game.store && (storeJob || game.storeUpdate) && (
             <div className="hero__store-update">
               {storeJob

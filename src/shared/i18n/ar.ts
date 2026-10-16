@@ -839,6 +839,7 @@ export const ar: Record<string, string> = {
   "You have the latest version ({version}).": "لديك أحدث إصدار ({version}).",
   "You have version {version}.": "لديك الإصدار {version}.",
   "You log in on GOG's or Epic's own page in a separate window; the launcher never sees your password.": "تسجّل الدخول في صفحة GOG أو Epic نفسها في نافذة منفصلة؛ ولا يرى المشغّل كلمة مرورك أبدًا.",
+  "You own this game on {store}.": "تملك هذه اللعبة على {store}.",
   "Your game store accounts": "حسابات متاجر ألعابك",
   "Your orbit is empty": "مدارك فارغ",
   "Your own sounds": "أصواتك الخاصة",
