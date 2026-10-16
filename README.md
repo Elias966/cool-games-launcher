@@ -13,6 +13,19 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.18
+
+- **GOG and Epic Games**: Settings → GOG & Epic connects your accounts (you log in on the
+  store's own page). The games you bought appear in the Library under a grey veil with an
+  Install button; installed ones lose the veil. Every game carries its source: Local, GOG
+  or Epic, with filters for each.
+- **Updates from the stores**: installed GOG and Epic games show an Update button when the
+  store has a newer build.
+- **Already installed elsewhere?** “I already have it installed” links a copy on disk (from
+  Heroic, GOG Galaxy or the Epic launcher) so it updates from its store, like Heroic's import.
+- Uses the stores' own tools as Heroic does: gogdl for GOG and legendary for Epic (GPL-3.0).
+  Games run through Proton; Epic games get their login tokens from legendary at each start.
+
 ## What's new in 0.2.17
 
 - **Reopens where you left off**: after closing the launcher completely it opens on the
@@ -321,11 +334,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.17-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.18-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.17-x86_64.AppImage
+./Cool-Games-Launcher-0.2.18-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

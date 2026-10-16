@@ -6,6 +6,7 @@ import { CUSTOM_SOUNDS } from './types';
 import type {
   AiStatus,
   ImageOptions,
+  StoresState,
   StoreSearchResult,
   ProtonReleaseList,
   BrowserSnapshot,
@@ -207,6 +208,16 @@ export const requests = {
   'library:chooseCover': z.object({ id, appid: z.number().int().positive(), name: z.string().min(1).max(200) }).strict(),
   /** The cover and background images a Library game can be switched to. */
   'library:imageOptions': z.object({ id }).strict(),
+  /** GOG and Epic accounts and the games they own. */
+  'stores:state': z.undefined(),
+  'stores:refresh': z.undefined(),
+  'stores:login': z.object({ store: z.enum(['gog', 'epic']) }).strict(),
+  'stores:logout': z.object({ store: z.enum(['gog', 'epic']) }).strict(),
+  'stores:install': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  'stores:cancel': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  /** Link a copy already on disk (a folder picker opens). */
+  'stores:adopt': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  'stores:update': z.object({ id }).strict(),
   /** A name the person typed; the game's images stay as they are. */
   'library:rename': z.object({ id, title: z.string().trim().min(1).max(200) }).strict(),
   'app:setLastTab': z.object({ tab: z.enum(['library', 'store', 'downloads', 'settings']) }).strict(),
@@ -329,6 +340,15 @@ export interface Responses {
   'library:searchCover': Array<{ appid: number; name: string; image: string | null }>;
   'library:chooseCover': Game | null;
   'library:imageOptions': ImageOptions;
+  'stores:state': StoresState;
+  'stores:refresh': StoresState;
+  'stores:login': StoresState;
+  'stores:logout': StoresState;
+  'stores:install': StoresState;
+  'stores:cancel': void;
+  /** Null when no folder was chosen. */
+  'stores:adopt': Game | null;
+  'stores:update': void;
   'library:rename': Game | null;
   'app:setLastTab': void;
   'app:sceneEvent': void;
@@ -372,6 +392,7 @@ export interface Events {
   'downloads:changed': DownloadItem[];
   'download:progress': Pick<DownloadItem, 'id' | 'receivedBytes' | 'totalBytes' | 'speedBps' | 'etaSeconds' | 'state' | 'connections'>;
   'library:changed': Game[];
+  'stores:changed': StoresState;
   'ai:status': AiStatus;
   'models:changed': ModelList;
   'browser:snapshot': BrowserSnapshot & { policyRevision: number };

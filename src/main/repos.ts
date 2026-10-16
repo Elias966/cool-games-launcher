@@ -24,6 +24,7 @@ import type {
   DownloadState,
   Game,
   GameImages,
+  StoreId,
   GameStatus,
   InstallState,
   Platform,
@@ -1160,6 +1161,9 @@ interface GameRow {
   art_json?: string | null;
   images_json?: string | null;
   named_by_user?: number | null;
+  store?: string | null;
+  store_id?: string | null;
+  store_build?: string | null;
   installed_version_json: string | null;
   update_json: string | null;
   previous_json: string | null;
@@ -1180,7 +1184,9 @@ export interface PreviousBuild {
   replacedAt: string;
 }
 
-export interface GameRecord extends Omit<Game, 'running' | 'artwork' | 'executableCandidates' | 'version' | 'previousVersion' | 'canRollback' | 'archive' | 'launch' | 'art'> {
+export interface GameRecord extends Omit<Game, 'running' | 'artwork' | 'executableCandidates' | 'version' | 'previousVersion' | 'canRollback' | 'archive' | 'launch' | 'art' | 'storeUpdate'> {
+  /** The store's build id of the installed version (GOG buildId, Epic version). */
+  storeBuild: string | null;
   /** The person typed this name; automatic naming leaves it alone. */
   namedByUser: boolean;
   downloadId: number | null;
@@ -1235,12 +1241,15 @@ export class GamesRepo {
       redistDone: json<string[] | null>(r.redist_json ?? null, null),
       images: { cover: null, hero: null, ...json<Partial<GameImages>>(r.images_json ?? null, {}) },
       namedByUser: !!r.named_by_user,
+      store: (r.store as StoreId | null) ?? null,
+      storeId: r.store_id ?? null,
+      storeBuild: r.store_build ?? null,
       // A Store game's Steam artwork, or what was found for an imported game by its name.
       art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)) ?? json<Game['art']>(r.art_json ?? null, null),
     };
   }
 
-  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'images' | 'namedByUser' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
+  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'images' | 'namedByUser' | 'store' | 'storeId' | 'storeBuild' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
     const r = this.st
       .get(
         `INSERT INTO games (catalog_id, download_id, title, kind, install_dir, executable, args, runner, prefix_dir, managed, artwork_file, source_host, status, candidates_json, installed_version_json, update_checked_at)
@@ -1279,7 +1288,7 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images' | 'namedByUser'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images' | 'namedByUser' | 'store' | 'storeId' | 'storeBuild'>>) {
     const cols: Record<string, string> = {
       title: 'title',
       executable: 'executable',
@@ -1303,6 +1312,9 @@ export class GamesRepo {
       art: 'art_json',
       images: 'images_json',
       namedByUser: 'named_by_user',
+      store: 'store',
+      storeId: 'store_id',
+      storeBuild: 'store_build',
     };
     const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone', 'art', 'images']);
     const sets: string[] = [];

@@ -299,6 +299,9 @@ export class Library {
       launch: g.launch,
       art: g.catalogRating === 'safe' || g.catalogId === null ? g.art : null,
       images: g.images,
+      store: g.store,
+      storeId: g.storeId,
+      storeUpdate: this.storeUpdates?.(g) ?? false,
     };
   }
 
@@ -386,6 +389,13 @@ export class Library {
     if (d.state === 'completed') return { ...u, state: 'preparing', detail: tm('Unpacking the new version…') };
     return { ...u, detail: d.totalBytes ? `Downloading ${Math.round((d.receivedBytes / d.totalBytes) * 100)}%` : 'Downloading…' };
   }
+
+  /** GOG/Epic: whether the store has a newer build (set by the store service). */
+  storeUpdates?: (g: GameRecord) => boolean;
+  /** GOG/Epic: arguments the game needs at each start (Epic's login tokens), or null. */
+  storeLaunchArgs?: (g: GameRecord) => Promise<string[] | null>;
+  /** GOG/Epic: a store game left the Library. */
+  onUninstalled?: (g: GameRecord) => void;
 
   private listener: ((games: Game[]) => void) | null = null;
   private playingListener: ((playing: boolean) => void) | null = null;
@@ -846,12 +856,14 @@ export class Library {
     }
     if (runner === 'proton') this.compat.notifyRuntime();
     if (g.kind === 'windows' && g.redistDone === null && g.managed && g.installDir) await this.installRuntimes(g, runner, env);
+    // Epic games get their login tokens from legendary at each start.
+    const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
     // Free the GPU (AI model and classifier) before the game starts, not after.
     await this.beforeGame?.().catch(() => undefined);
     await this.worker.call('launch', {
       gameId: id,
       executable: g.executable,
-      args: splitArgs(g.args),
+      args: [...(storeArgs ?? []), ...splitArgs(g.args)],
       runner,
       prefixDir: g.prefixDir ?? (g.kind === 'windows' ? join(paths.prefixes, `game-${g.id}`) : null),
       ...env,
@@ -1018,6 +1030,7 @@ export class Library {
     if (g.downloadId) this.downloadsRepo.update(g.downloadId, { installState: 'none', installDetail: null, gameId: null });
     removeShortcuts(id);
     this.games.remove(id);
+    if (g.store) this.onUninstalled?.(g);
     this.downloads.broadcastList();
     this.broadcast();
   }

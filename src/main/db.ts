@@ -206,6 +206,15 @@ export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) =>
   { id: 'games.images_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'images_json', 'TEXT') },
   // The person typed the game's name: automatic naming leaves it alone.
   { id: 'games.named_by_user INTEGER if missing', run: (db) => addColumnIfMissing(db, 'games', 'named_by_user', 'INTEGER NOT NULL DEFAULT 0') },
+  // Games installed from (or linked to) a GOG or Epic account: the store, its id for the game, and the installed build.
+  {
+    id: 'games.store, store_id, store_build if missing',
+    run: (db) => {
+      addColumnIfMissing(db, 'games', 'store', 'TEXT');
+      addColumnIfMissing(db, 'games', 'store_id', 'TEXT');
+      addColumnIfMissing(db, 'games', 'store_build', 'TEXT');
+    },
+  },
 ];
 
 /** Adds a column unless the table already has it. */

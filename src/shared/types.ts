@@ -81,6 +81,28 @@ export interface WishItem {
   createdAt: string;
 }
 
+/** Game stores whose accounts the launcher can use. */
+export type StoreId = 'gog' | 'epic';
+
+/** A game the person owns on GOG or Epic. */
+export interface OwnedGame {
+  store: StoreId;
+  /** GOG product id or Epic app name. */
+  id: string;
+  title: string;
+  /** Wide image for the card, and a big one for the background. */
+  cover: string | null;
+  hero: string | null;
+  /** The Library game it is installed as, if any. */
+  gameId: number | null;
+}
+
+/** What a store is doing for one game. */
+export interface StoreJob { store: StoreId; id: string; kind: 'install' | 'update' | 'import'; progress: number | null; detail: string | null }
+
+export interface StoreAccount { loggedIn: boolean; user: string | null; error: string | null }
+export interface StoresState { accounts: Record<StoreId, StoreAccount>; owned: OwnedGame[]; jobs: StoreJob[]; refreshing: boolean }
+
 /** Images the person chose for a game; null means the default one. */
 export interface GameImages { cover: string | null; hero: string | null }
 
@@ -250,6 +272,11 @@ export interface Game {
   art: { hero: string | null; logo: string | null; capsule: string | null; appid: number } | null;
   /** Images the person chose: the Library card's cover and the big background (null: the default). */
   images: GameImages;
+  /** Installed from (or linked to) a GOG or Epic account; null for games from disk or websites. */
+  store: StoreId | null;
+  storeId: string | null;
+  /** The store has a newer build than the installed one. */
+  storeUpdate: boolean;
 }
 
 /** Per-game launch settings (Heroic-style). */

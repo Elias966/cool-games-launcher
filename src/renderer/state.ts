@@ -1,7 +1,7 @@
 // Minimal global state for the renderer, backed by main-process events.
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import type { AiStatus, BrowserSnapshot, CatalogSort, CrawlProgress, DownloadItem, Game, Platform, Settings, Source, SystemInfo, TabId, WishItem } from '@shared/types';
+import type { AiStatus, BrowserSnapshot, CatalogSort, CrawlProgress, DownloadItem, Game, Platform, Settings, Source, StoresState, SystemInfo, TabId, WishItem } from '@shared/types';
 
 export interface Toast {
   id: number;
@@ -31,6 +31,8 @@ export interface AppState {
   crawl: Record<number, CrawlProgress>;
   toasts: Toast[];
   appVisible: boolean;
+  /** GOG and Epic accounts, the games they own, and installs in progress. */
+  stores: StoresState;
   /** Increments whenever the catalog changed under the current policy. */
   catalogVersion: number;
   /** Catalog ids that must disappear immediately (policy tightened). */
@@ -92,6 +94,7 @@ let state: AppState = {
   crawl: {},
   toasts: [],
   appVisible: true,
+  stores: { accounts: { gog: { loggedIn: false, user: null, error: null }, epic: { loggedIn: false, user: null, error: null } }, owned: [], jobs: [], refreshing: false },
   catalogVersion: 0,
   hiddenIds: new Set(),
   browser: { open: false, snapshot: null, attention: null, stale: false },
@@ -208,6 +211,8 @@ export async function boot() {
   api.on('browser:verificationResolved', ({ sourceId }) => setState((s) => s.browser.attentionSourceId === sourceId ? { browser: { ...s.browser, attention: null, attentionSourceId: null } } : {}));
 
   document.addEventListener('visibilitychange', () => setState({ appVisible: document.visibilityState === 'visible' }));
+  api.on('stores:changed', (stores) => setState({ stores }));
+  void api.invoke('stores:state').then((stores) => setState({ stores })).catch(() => undefined);
   void api.invoke('wishlist:list').then((wishlist) => setState({ wishlist })).catch(() => undefined);
   // Also picks up the AI status from before this window subscribed to updates.
   const ai = await api.invoke('store:setActive', { active: state.tab === 'store' }).catch(() => null);

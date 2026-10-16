@@ -61,6 +61,8 @@ export function vendor() {
     classifier: join(v, 'models', 'nsfw-vit-fp16.onnx'),
     umu: join(v, 'umu', 'umu-run'),
     archiveDecoder: join(v, '7zip', '7zzs'),
+    legendary: join(v, 'stores', 'legendary'),
+    gogdl: join(v, 'stores', 'gogdl'),
   };
 }
 

@@ -25,6 +25,8 @@ texts ship inside the respective component directories of the AppImage
 | GUI-Owl MIT license | 08e7da63cb06 | MIT | https://raw.githubusercontent.com/X-PLUG/MobileAgent/08e7da63cb06866306c3502569f4fd216baa2941/ |
 | Qwen3-VL Apache license | e8c6dfbe0472 | Apache-2.0 | https://raw.githubusercontent.com/QwenLM/Qwen3-VL/e8c6dfbe0472e567b1bedc7640f550e0e506429f/ |
 | Qwen3-VL Thinking chat template | 92f3c4b4fead | Apache-2.0 | https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking/resolve/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/ |
+| legendary (Epic Games) | 0.21.1 | GPL-3.0 | https://github.com/legendary-gl/legendary/releases/download/0.21.1/ |
+| heroic-gogdl (GOG) | 1.3.0 | GPL-3.0 | https://github.com/Heroic-Games-Launcher/heroic-gogdl/releases/download/v1.3.0/ |
 
 Notes:
 

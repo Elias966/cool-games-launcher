@@ -13,12 +13,13 @@ import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
 
-type SectionId = 'sources' | 'ai' | 'compat' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
+type SectionId = 'sources' | 'accounts' | 'ai' | 'compat' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
 
 interface SectionDef { id: SectionId; label: string; icon: IconName; blurb: string; keywords: string }
 
 const SECTIONS: SectionDef[] = [
   { id: 'sources', label: tk('Websites & indexing'), icon: 'globe', blurb: tk('Sites the AI indexes, and how often'), keywords: 'websites sources add site rescan pages batch request gap rate limit refresh re-check interval indexing crawl learned layout' },
+  { id: 'accounts', label: tk('GOG & Epic'), icon: 'gamepad', blurb: tk('Your game store accounts'), keywords: 'gog epic games store account login log in sign in library owned bought heroic legendary' },
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
@@ -122,6 +123,7 @@ export function SettingsTab() {
                 {section === 'content' && <ContentSection settings={settings} />}
                 {section === 'appearance' && <AppearanceSection settings={settings} />}
                 {section === 'sound' && <SoundSection settings={settings} />}
+                {section === 'accounts' && <AccountsSection />}
                 {section === 'privacy' && <PrivacySection settings={settings} />}
                 {section === 'about' && <AboutSection />}
               </motion.div>
@@ -140,6 +142,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
   const sources = useApp((s) => s.sources);
   const info = useApp((s) => s.info);
   const ai = useApp((s) => s.ai);
+  const stores = useApp((s) => s.stores);
   const models = useModels();
   if (!settings) return {};
   const fara = models?.models.find((m) => m.id === RECOMMENDED_MODEL_ID);
@@ -152,6 +155,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
     content: settings.hideWomenCovers ? t('Women covers hidden') : t('Everything shown'),
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
     sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
+    accounts: [stores.accounts.gog.loggedIn ? 'GOG' : null, stores.accounts.epic.loggedIn ? 'Epic' : null].filter(Boolean).join(' · ') || t('Not connected'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
     about: info ? t('Version {v}', { v: info.appVersion }) : undefined,
   };
@@ -894,6 +898,40 @@ function AboutSection() {
         </dl>
       </Group>
       <p className="st-note">{t('Only download games you are allowed to download. The launcher never bypasses DRM, purchases, sign-ins or CAPTCHAs. This program comes with absolutely no warranty, to the extent permitted by law.')}</p>
+    </>
+  );
+}
+
+const STORE_NAMES = { gog: 'GOG', epic: 'Epic Games' } as const;
+
+/** GOG and Epic accounts: log in on the store's own page; owned games then appear in the Library. */
+function AccountsSection() {
+  const stores = useApp((s) => s.stores);
+  const owned = (id: 'gog' | 'epic') => stores.owned.filter((o) => o.store === id).length;
+  return (
+    <>
+      <Group>
+        {(['gog', 'epic'] as const).map((id) => {
+          const a = stores.accounts[id];
+          return (
+            <Row key={id} label={STORE_NAMES[id]} desc={a.loggedIn
+              ? t('Logged in as {user} · {n} games. They are in your Library, ready to install.', { user: a.user ?? '—', n: owned(id) })
+              : a.error ? t('Not connected: {detail}', { detail: a.error }) : t('Log in to see the games you bought and install or update them here.')}>
+              {a.loggedIn
+                ? <Button size="sm" variant="ghost" onClick={() => void attempt(() => api.invoke('stores:logout', { store: id }))}>{t('Sign out')}</Button>
+                : <Button size="sm" variant="primary" onClick={() => void attempt(() => api.invoke('stores:login', { store: id }))}>{t('Connect')}</Button>}
+            </Row>
+          );
+        })}
+        <Row label={t('Refresh your games')} desc={t('Reads the games you own and checks installed ones for updates. This also happens at start and every few hours.')}>
+          <Button size="sm" variant="ghost" icon="reload" disabled={stores.refreshing} onClick={() => void attempt(() => api.invoke('stores:refresh'))}>{stores.refreshing ? t('Refreshing…') : t('Refresh')}</Button>
+        </Row>
+      </Group>
+      <ul className="st-facts">
+        <li>{t('You log in on GOG\'s or Epic\'s own page in a separate window; the launcher never sees your password.')}</li>
+        <li>{t('Games install with the stores\' own tools (gogdl and legendary, as in Heroic) and run through Proton.')}</li>
+        <li>{t('Already have a game installed from GOG or Epic? Open it in the Library and choose “I already have it installed”.')}</li>
+      </ul>
     </>
   );
 }

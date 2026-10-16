@@ -6,7 +6,7 @@ import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
 import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
-import type { DownloadItem, Game, ImageOptions, LaunchOptions, ProtonInstall, Runner, SaveBackup } from '@shared/types';
+import type { DownloadItem, Game, ImageOptions, LaunchOptions, OwnedGame, ProtonInstall, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { PlayWeek, usePlayStats } from '../components/PlayWeek';
@@ -14,7 +14,11 @@ import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { hours, playtime, t, tk, locale } from '../i18n';
 
-type Filter = 'all' | 'favorites' | 'linux' | 'windows';
+type Filter = 'all' | 'favorites' | 'linux' | 'windows' | 'local' | 'gog' | 'epic';
+
+const STORE_LABEL = { gog: 'GOG', epic: 'Epic' } as const;
+/** Where a Library game comes from: GOG, Epic, or Local (from disk or a website). */
+const sourceTag = (g: Game) => (g.store ? STORE_LABEL[g.store] : t('Local'));
 
 /** Where a game on its way to the Library is, in a few words, with its progress (0..1) when known. */
 export function pendingStatus(d: DownloadItem, parts: DownloadItem[] = []): { label: string; detail: string | null; pct: number | null; failed: boolean; waiting: boolean } {
@@ -76,15 +80,23 @@ export function LibraryTab() {
     () =>
       games.filter(
         (g) =>
-          (filter === 'all' || (filter === 'favorites' ? g.favorite : g.kind === filter)) &&
+          (filter === 'all' || (filter === 'favorites' ? g.favorite : filter === 'gog' || filter === 'epic' ? g.store === filter : filter === 'local' ? !g.store : g.kind === filter)) &&
           (!search.trim() || g.title.toLowerCase().includes(search.trim().toLowerCase())),
       ),
     [games, filter, search],
   );
+  const stores = useApp((s) => s.stores);
+  const [ownedKey, setOwnedKey] = useState<string | null>(null);
+  // Bought on GOG or Epic but not installed: shown greyed, ready to install.
+  const shownOwned = useMemo(
+    () => stores.owned.filter((o) => o.gameId === null && (filter === 'all' || filter === o.store) && (!search.trim() || o.title.toLowerCase().includes(search.trim().toLowerCase()))),
+    [stores.owned, filter, search],
+  );
   const shownPending = useMemo(() => pending.filter((d) => (filter === 'all') && (!search.trim() || d.title.toLowerCase().includes(search.trim().toLowerCase()))), [pending, filter, search]);
   // With nothing installed yet, the game on its way fills the big panel.
   const selectedPending = pendingId !== null ? pending.find((d) => d.id === pendingId) ?? null : shown.length === 0 ? shownPending[0] ?? null : null;
-  const selected = selectedPending ? null : games.find((g) => g.id === selectedId) ?? shown[0] ?? null;
+  const selectedOwned = !selectedPending && ownedKey ? stores.owned.find((o) => `${o.store}:${o.id}` === ownedKey && o.gameId === null) ?? null : null;
+  const selected = selectedPending || selectedOwned ? null : games.find((g) => g.id === selectedId) ?? shown[0] ?? null;
   const updateCount = games.filter((g) => g.update?.state === 'available').length;
 
   useEffect(() => {
@@ -117,7 +129,7 @@ export function LibraryTab() {
           </div>
           {stats && games.length > 0 && <PlayWeek stats={stats} />}
           <div className="page__actions">
-            {games.some((g) => g.catalogId !== null) && (
+            {games.some((g) => g.catalogId !== null || g.store) && (
               <Button variant="ghost" icon="reload" onClick={() => void attempt(async () => {
                 const r = await api.invoke('library:checkUpdates');
                 return r;
@@ -132,7 +144,7 @@ export function LibraryTab() {
           </div>
         </header>
 
-        {games.length === 0 && pending.length === 0 ? (
+        {games.length === 0 && pending.length === 0 && stores.owned.length === 0 ? (
           <EmptyState
             icon="library"
             title={t('No games in your Library yet')}
@@ -147,7 +159,9 @@ export function LibraryTab() {
         ) : (
           <div className="library">
             <div ref={heroRef}>
-              {selectedPending ? <PendingHero key={`dl-${selectedPending.id}`} d={selectedPending} parts={partsOf(selectedPending)} /> : selected && <LibraryHero key={selected.id} game={selected} />}
+              {selectedPending ? <PendingHero key={`dl-${selectedPending.id}`} d={selectedPending} parts={partsOf(selectedPending)} />
+                : selectedOwned ? <OwnedHero key={`own-${selectedOwned.store}-${selectedOwned.id}`} o={selectedOwned} />
+                : selected && <LibraryHero key={selected.id} game={selected} />}
             </div>
             <div className="library__browser">
               <div className="toolbar toolbar--compact">
@@ -157,9 +171,9 @@ export function LibraryTab() {
                   <input type="search" placeholder={t('Search library')} value={search} onChange={(e) => setSearch(e.target.value)} />
                 </label>
                 <div className="chips" role="group" aria-label={t('Filter library')}>
-                  {(['all', 'favorites', 'linux', 'windows'] as Filter[]).map((f) => (
+                  {(['all', 'favorites', 'linux', 'windows', 'local', ...(stores.owned.some((o) => o.store === 'gog') || games.some((g) => g.store === 'gog') ? ['gog'] : []), ...(stores.owned.some((o) => o.store === 'epic') || games.some((g) => g.store === 'epic') ? ['epic'] : [])] as Filter[]).map((f) => (
                     <button key={f} className={`chip ${filter === f ? 'is-on' : ''}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>
-                      {f === 'all' ? t('All') : f === 'favorites' ? t('Favorites') : f === 'linux' ? t('Linux') : t('Windows')}
+                      {f === 'all' ? t('All') : f === 'favorites' ? t('Favorites') : f === 'linux' ? t('Linux') : f === 'windows' ? t('Windows') : f === 'local' ? t('Local') : STORE_LABEL[f]}
                     </button>
                   ))}
                 </div>
@@ -169,9 +183,12 @@ export function LibraryTab() {
                   <PendingCover key={`dl-${d.id}`} d={d} parts={partsOf(d)} index={i} selected={selectedPending?.id === d.id} onSelect={() => setPendingId(d.id)} />
                 ))}
                 {shown.map((g, i) => (
-                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setSelectedId(g.id); }} />
+                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setOwnedKey(null); setSelectedId(g.id); }} />
                 ))}
-                {shown.length === 0 && shownPending.length === 0 && <p className="muted">{t('No games match.')}</p>}
+                {shownOwned.map((o, i) => (
+                  <OwnedCover key={`own-${o.store}-${o.id}`} o={o} index={i + shown.length + shownPending.length} selected={selectedOwned === o || (!!selectedOwned && selectedOwned.store === o.store && selectedOwned.id === o.id)} onSelect={() => { setPendingId(null); setOwnedKey(`${o.store}:${o.id}`); }} />
+                ))}
+                {shown.length === 0 && shownPending.length === 0 && shownOwned.length === 0 && <p className="muted">{t('No games match.')}</p>}
               </div>
             </div>
           </div>
@@ -305,12 +322,14 @@ function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: nu
         <Artwork src={game.images.cover ?? game.art?.capsule ?? game.artwork} title={game.title} className="cover__art" />
         <span className="cover__edge" aria-hidden="true" />
         <span className="cover__title">{game.title}</span>
+        <span className={`cover__store cover__store--${game.store ?? 'local'}`}>{sourceTag(game)}</span>
         {game.favorite && (
           <span className="cover__fav" aria-label={t('Favorite')}>
             <Icon name="heart" size={13} />
           </span>
         )}
         {game.running && <span className="cover__live">{t('Running')}</span>}
+        {!game.running && game.storeUpdate && <span className="cover__update">{t('Update')}</span>}
         {!game.running && game.update && ['available', 'downloading', 'preparing', 'waiting'].includes(game.update.state) && (
           <span className={`cover__update ${game.update.state === 'available' ? '' : 'is-busy'}`}>{game.update.state === 'available' ? t('Update') : t('Updating')}</span>
         )}
@@ -587,6 +606,7 @@ function LibraryHero({ game }: { game: Game }) {
   const [coverOpen, setCoverOpen] = useState(false);
   const [imagesOpen, setImagesOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const storeJob = useApp((s) => (game.store ? s.stores.jobs.find((j) => j.store === game.store && j.id === game.storeId) : undefined));
   const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
   const argsRef = useRef(game.args);
   useEffect(() => {
@@ -609,7 +629,7 @@ function LibraryHero({ game }: { game: Game }) {
       </div>
       <div className="hero__content">
         <div className="hero__main">
-          <p className="eyebrow">{game.kind === 'windows' ? `${t('Windows')} · ${game.runner === 'proton' ? (game.launch.protonPath ? protonName(game.launch.protonPath) : 'Proton') : 'Wine'}` : t('Native Linux')}{game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : t(' · Imported')}</p>
+          <p className="eyebrow">{game.kind === 'windows' ? `${t('Windows')} · ${game.runner === 'proton' ? (game.launch.protonPath ? protonName(game.launch.protonPath) : 'Proton') : 'Wine'}` : t('Native Linux')}{game.store ? ` · ${STORE_LABEL[game.store]}` : game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : t(' · Imported')}</p>
           <GameLogo game={game} />
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
@@ -618,6 +638,14 @@ function LibraryHero({ game }: { game: Game }) {
             {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
           </p>
+          {game.store && (storeJob || game.storeUpdate) && (
+            <div className="hero__store-update">
+              {storeJob
+                ? <><span>{storeJob.progress !== null ? t('Updating from {store} · {p}%', { store: STORE_LABEL[game.store], p: Math.round(storeJob.progress * 100) }) : t('Updating from {store}…', { store: STORE_LABEL[game.store] })}</span>
+                    <Button size="sm" variant="ghost" onClick={() => void attempt(() => api.invoke('stores:cancel', { store: game.store!, id: game.storeId! }))}>{t('Cancel')}</Button></>
+                : <Button size="sm" variant="primary" icon="downloads" disabled={game.running} onClick={() => void attempt(() => api.invoke('stores:update', { id: game.id }))}>{t('Update from {store}', { store: STORE_LABEL[game.store] })}</Button>}
+            </div>
+          )}
           <div className="hero__quick">
             <IconButton icon="heart" label={game.favorite ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
             <IconButton icon="folder" label={t('Show files')} onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
@@ -929,5 +957,67 @@ function RenameGame({ game, open, onClose }: { game: Game; open: boolean; onClos
       </form>
       <p className="muted">{t('Only the name changes; the cover and background stay as they are.')}</p>
     </Dialog>
+  );
+}
+
+/** A game bought on GOG or Epic that is not installed: greyed, with its store and install progress. */
+function OwnedCover({ o, index, selected, onSelect }: { o: OwnedGame; index: number; selected: boolean; onSelect: () => void }) {
+  const { reduced } = useMotionPrefs();
+  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id));
+  return (
+    <motion.button
+      role="option"
+      aria-selected={selected}
+      aria-label={`${o.title}: ${STORE_LABEL[o.store]}, ${job ? t('installing') : t('not installed')}`}
+      className={`cover cover--owned ${selected ? 'is-selected' : ''}`}
+      onClick={onSelect}
+      onFocus={onSelect}
+      initial={reduced ? false : { opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduced ? 0 : 0.5, delay: reduced ? 0 : Math.min(index, 12) * 0.04 }}
+    >
+      <span className="cover__float">
+        <Artwork src={o.cover} title={o.title} className="cover__art" />
+        <span className="cover__veil" aria-hidden="true" />
+        <span className="cover__title">{o.title}</span>
+        <span className={`cover__store cover__store--${o.store}`}>{STORE_LABEL[o.store]}</span>
+        <span className="cover__owned-state">
+          {job ? (job.progress !== null ? t('Installing {p}%', { p: Math.round(job.progress * 100) }) : t('Installing…')) : <><Icon name="downloads" size={14} /> {t('Install')}</>}
+        </span>
+        {job?.progress != null && <span className="cover__progress" style={{ width: `${Math.round(job.progress * 100)}%` }} aria-hidden="true" />}
+      </span>
+    </motion.button>
+  );
+}
+
+/** The big panel of a GOG or Epic game that is not installed: install it, or link a copy already on disk. */
+function OwnedHero({ o }: { o: OwnedGame }) {
+  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id));
+  const store = STORE_LABEL[o.store];
+  return (
+    <section className="hero hero--owned" aria-label={`${o.title}`}>
+      <div className="hero__backdrop" aria-hidden="true" style={o.hero ? undefined : placeholderStyle(o.title)}>
+        {o.hero && <img src={o.hero} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+      </div>
+      <div className="hero__content">
+        <div className="hero__main">
+          <p className="eyebrow">{t('{store} · in your account, not installed', { store })}</p>
+          <h2 className="hero__title">{o.title}</h2>
+          <p className="hero__stats">
+            {job ? <span>{job.kind === 'import' ? t('Linking…') : job.progress !== null ? t('Installing {p}%', { p: Math.round(job.progress * 100) }) : t('Preparing the download…')}</span>
+              : <span>{t('Installs into your games folder with {store}\'s own tool, and runs through Proton.', { store })}</span>}
+          </p>
+          {job?.progress != null && <div className="st-progress st-progress--inline"><span style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}
+          <div className="hero__actions-row">
+            {job
+              ? <Button variant="ghost" onClick={() => void attempt(() => api.invoke('stores:cancel', { store: o.store, id: o.id }))}>{t('Cancel')}</Button>
+              : <>
+                  <Button variant="primary" icon="downloads" onClick={() => void attempt(() => api.invoke('stores:install', { store: o.store, id: o.id }))}>{t('Install')}</Button>
+                  <Button variant="ghost" icon="folder" onClick={() => void attempt(() => api.invoke('stores:adopt', { store: o.store, id: o.id }), t('{title} is linked to {store}; updates come from there.', { title: o.title, store }))}>{t('I already have it installed')}</Button>
+                </>}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }

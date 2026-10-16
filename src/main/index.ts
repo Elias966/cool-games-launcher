@@ -41,6 +41,8 @@ import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { GameIdentifier } from './game-identify';
 import { GameImagesService, IMAGE_EXTENSIONS } from './game-images';
+import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
+import type { StoreId } from '@shared/types';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
@@ -115,10 +117,14 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+/** GOG/Epic login windows: they may move between the stores' own https pages. */
+const storeLoginContents = new Set<number>();
+
 function hardenWebContents() {
   app.on('web-contents-created', (_e, contents) => {
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     contents.on('will-navigate', (e, url) => {
+      if (storeLoginContents.has(contents.id) && url.startsWith('https://')) return;
       if (url !== rendererUrl) e.preventDefault();
     });
     contents.on('will-attach-webview', (e) => e.preventDefault());
@@ -396,6 +402,56 @@ async function main() {
     changed: () => library.broadcast(),
   });
   session.on('enter', () => void identifier.pump());
+  // GOG and Epic accounts (see stores.ts). The person logs in on the store's own page.
+  const openStoreLogin = (store: StoreId) => new Promise<string | null>((resolve) => {
+    const win = new BrowserWindow({
+      width: 560, height: 780, parent: mainWindow ?? undefined, autoHideMenuBar: true, backgroundColor: '#ffffff',
+      title: store === 'gog' ? 'Log in to GOG' : 'Log in to Epic Games',
+      webPreferences: { partition: `persist:${store}-login`, sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    // Read now: after 'closed' the window's contents are gone and touching them throws.
+    const contentsId = win.webContents.id;
+    storeLoginContents.add(contentsId);
+    let finished = false;
+    const finish = (code: string | null) => {
+      if (finished) return;
+      finished = true;
+      resolve(code);
+      if (!win.isDestroyed()) win.close();
+    };
+    win.webContents.on('render-process-gone', () => finish(null));
+    const check = (url: string) => { if (store === 'gog') { const code = gogLoginCode(url); if (code) finish(code); } };
+    win.webContents.on('will-redirect', (_e, url) => check(url));
+    win.webContents.on('will-navigate', (_e, url) => check(url));
+    win.webContents.on('did-navigate', (_e, url) => check(url));
+    win.webContents.on('did-finish-load', () => {
+      if (win.isDestroyed()) return;
+      const url = win.webContents.getURL();
+      check(url);
+      // Epic shows the code as JSON on its redirect page.
+      if (store === 'epic' && url.startsWith('https://www.epicgames.com/id/api/redirect')) {
+        void win.webContents.executeJavaScript('document.body.innerText').then((text: string) => { const code = epicLoginCode(text); if (code) finish(code); }).catch(() => undefined);
+      }
+    });
+    win.on('closed', () => { storeLoginContents.delete(contentsId); finish(null); });
+    void win.loadURL(store === 'gog' ? GOG_LOGIN_URL : EPIC_LOGIN_URL);
+  });
+  const stores = new StoreService({
+    tools: { legendary: vendor().legendary, gogdl: vendor().gogdl },
+    dataDir: paths.data,
+    gamesDir: () => settingsRepo.get().libraryDir,
+    games: gamesRepo,
+    login: openStoreLogin,
+    prepareGame: (id) => gamesRepo.update(id, { prefixDir: join(paths.prefixes, `game-${id}`) }),
+    changed: () => library.broadcast(),
+    publish: (s) => publish('stores:changed', s),
+  });
+  library.storeUpdates = (g) => stores.hasUpdate(g);
+  library.storeLaunchArgs = (g) => stores.launchArgs(g);
+  library.onUninstalled = (g) => stores.forget(g);
+  setTimeout(() => void stores.refresh().catch((e) => console.warn('[stores]', (e as Error).message)), 8_000).unref();
+  setInterval(() => void stores.refresh().catch(() => undefined), 6 * 3600_000).unref();
+
   const gameImages = new GameImagesService({
     games: gamesRepo, catalog: catalogRepo, policy: () => policy.policy(), cache: aiCache,
     steamMedia: (appid) => descriptions.steamMediaFor(appid), artworkDir: paths.artwork,
@@ -747,6 +803,26 @@ async function main() {
     },
     'library:searchCover': ({ term }) => identifier.search(term),
     'library:imageOptions': ({ id }) => gameImages.options(id),
+    'stores:state': () => stores.state(),
+    'stores:refresh': () => stores.refresh(),
+    'stores:login': ({ store }) => stores.login(store),
+    'stores:logout': ({ store }) => stores.logout(store),
+    'stores:install': async ({ store, id }) => {
+      void stores.install(store, id).then((gameId) => toast('success', tm('{title} is installed.', { title: gamesRepo.get(gameId)?.title ?? '' })))
+        .catch((e) => { if ((e as Error).name !== 'AbortError') toast('error', tm('Could not install: {detail}', { detail: (e as Error).message })); });
+      return stores.state();
+    },
+    'stores:cancel': ({ store, id }) => { stores.cancel(store, id); },
+    'stores:adopt': async ({ store, id }) => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose the folder where the game is installed'), properties: ['openDirectory'] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      const gameId = await stores.adopt(store, id, r.filePaths[0]);
+      return library.list().find((g) => g.id === gameId) ?? null;
+    },
+    'stores:update': async ({ id }) => {
+      void stores.update(id).then(() => toast('success', tm('{title} is up to date.', { title: gamesRepo.get(id)?.title ?? '' })))
+        .catch((e) => { if ((e as Error).name !== 'AbortError') toast('error', tm('Could not update: {detail}', { detail: (e as Error).message })); });
+    },
     // Quietly: no settings broadcast on every tab switch.
     'app:setLastTab': ({ tab }) => { settingsRepo.update({ lastTab: tab }); },
     'library:rename': ({ id, title }) => {
@@ -776,7 +852,10 @@ async function main() {
     'library:update': ({ id }) => library.startUpdate(id),
     'library:ignoreUpdate': ({ id }) => library.ignoreUpdate(id),
     'library:rollback': ({ id }) => library.rollback(id),
-    'library:checkUpdates': () => ({ checking: updates.checkNow() }),
+    'library:checkUpdates': () => {
+      void stores.checkUpdates().catch(() => undefined);
+      return { checking: updates.checkNow() };
+    },
     'library:deleteArchive': ({ id }) => library.deleteArchive(id),
     'library:saves': ({ id }) => library.listSaves(id),
     'library:backupSaves': ({ id }) => library.backupSaves(id, 'made by you'),

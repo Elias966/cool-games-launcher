@@ -114,7 +114,7 @@ if (existsSync(join(umuInner, 'umu', 'umu-run'))) {
   // The zipapp tarball contains a top-level umu/ directory.
   await rename(join(umuInner, 'umu', 'umu-run'), join(umuInner, 'umu-run')).catch(() => {});
 }
-for (const exe of ['geckodriver/geckodriver', 'umu/umu-run', 'tools/runtime-x86_64', '7zip/7zzs']) {
+for (const exe of ['geckodriver/geckodriver', 'umu/umu-run', 'tools/runtime-x86_64', '7zip/7zzs', 'stores/legendary', 'stores/gogdl']) {
   const p = join(vendorDir, exe);
   if (existsSync(p)) await chmod(p, 0o755);
 }
