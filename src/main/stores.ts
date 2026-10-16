@@ -326,7 +326,10 @@ export class StoreService {
     const j = this.job(store, id, 'import');
     try {
       if (store === 'gog') {
-        const info = findGogInfo(folder, id, 1);
+        // The folder may be the game's own, one below it, or where its .exe sits (often a subfolder).
+        let info: string | null = null;
+        for (let d = folder, i = 0; i < 4 && !info; i++, d = dirname(d)) { info = findGogInfo(d, id, 0); if (d === dirname(d)) break; }
+        info ??= findGogInfo(folder, id, 2);
         if (!info) throw new Error(`This folder does not hold ${o.title} from GOG (no goggame-${id}.info).`);
         return await this.register(o, dirname(info), false);
       }

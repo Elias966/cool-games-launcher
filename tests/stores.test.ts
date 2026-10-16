@@ -127,6 +127,9 @@ describe('GOG and Epic accounts', () => {
     expect(t.games.list()).toHaveLength(1);
     expect(t.games.get(id)).toMatchObject({ store: 'gog', storeId: '1207658924', title: 'The Witcher', managed: false });
     await expect(t.stores.adopt('gog', '1207658924', join(t.dir, 'empty'))).rejects.toThrow(/does not hold/);
+    // Picked where the .exe sits, below the folder that holds GOG's info file.
+    mkdirSync(join(folder, 'Binaries'), { recursive: true });
+    expect(await t.stores.adopt('gog', '1207658924', join(folder, 'Binaries'))).toBe(local.id);
   });
 
   it('finds updates when the store has a newer build, and updates in place', async () => {
