@@ -43,6 +43,7 @@ import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
 import { SelfUpdater } from './self-update';
 import { CoverCheckService } from './cover-check';
+import { CoverModel } from './cover-model';
 import { hostOf } from '@shared/urls';
 import type { ProtonDbSummary, Settings } from '@shared/types';
 
@@ -191,10 +192,10 @@ async function main() {
   const limiter = new HostRateLimiter();
   const artwork = new ArtworkCache(paths.artwork, limiter);
   const classification = new ClassificationService(ai, artwork, catalogRepo, imageClass);
+  const coverModel = new CoverModel({ modelsDir: paths.models, fetch: (url, init) => net.fetch(url, init) });
   const coverCheck = new CoverCheckService({
-    ai, artwork, catalog: catalogRepo, settings: settingsRepo, session,
+    ai, artwork, catalog: catalogRepo, settings: settingsRepo, model: coverModel,
     changed: () => publish('catalog:changed', { policyRevision: settingsRepo.policy().revision, sourceId: null }),
-    pendingChanged: () => syncSession(),
   });
   const browser = new BrowserClient(browserWorker);
   const browserView = new BrowserView(browser, ai, policy, catalogRepo, session);
@@ -224,9 +225,7 @@ async function main() {
   const WAITING_FOR_AI = new Set(['resolving', 'needs-resolution', 'needs-user', 'queued', 'active']);
   /** A game download still needs the AI: its link, its preparation, or an update swap. */
   const aiWorkPending = () => downloadsRepo.list().some((d) => d.catalogId !== null && !d.modelAsset && !d.compatPackage &&
-    (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')))
-    // Covers waiting for the cover filter also need the AI, wherever the user is.
-    || (coverCheck.pending() > 0 && !!models.readyAgents());
+    (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')));
   let humanBrowserActive = false;
   let humanContext: 'interactive' | 'discovery' = 'interactive';
   const restoreAfterHuman = () => {
@@ -498,7 +497,13 @@ async function main() {
     'consent:enableNsfw': ({ acceptedWarning }) => policy.enable(acceptedWarning),
     'consent:disableNsfw': () => policy.disable(),
     'content:setHideWomenCovers': ({ on }) => policy.setHideWomenCovers(on),
-    'content:coverStatus': () => ({ ...catalogRepo.coverCounts(), enabled: settingsRepo.get().hideWomenCovers, aiReady: !!models.readyAgents() }),
+    'content:setCoverStrictness': ({ strictness }) => {
+      settingsRepo.setCoverStrictness(strictness);
+      const s = settingsRepo.get();
+      policy.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
+      return s;
+    },
+    'content:coverStatus': () => ({ ...catalogRepo.coverCounts(settingsRepo.policy().coverThreshold), enabled: settingsRepo.get().hideWomenCovers, model: coverModel.status() }),
     'sources:list': () => sourcesRepo.list(),
     'sources:add': ({ url, name }) => {
       if (sourcesRepo.list().some((s) => s.url === url)) throw new Error('This website is already in your sources');

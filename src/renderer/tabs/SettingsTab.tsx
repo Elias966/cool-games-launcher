@@ -601,30 +601,43 @@ function DownloadSection({ settings }: { settings: Settings }) {
   );
 }
 
-/** Hide games whose cover shows a woman as its main subject; the local AI checks every cover. */
+type CoverStatus = { checked: number; women: number; pending: number; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
+
+/** Hide games whose cover shows a woman; an image model scores every cover. */
 function CoverFilterRow({ settings }: { settings: Settings }) {
-  const [status, setStatus] = useState<{ checked: number; women: number; pending: number; enabled: boolean; aiReady: boolean } | null>(null);
+  const [status, setStatus] = useState<CoverStatus | null>(null);
   useEffect(() => {
     let live = true;
     const load = () => void api.invoke('content:coverStatus').then((r) => { if (live) setStatus(r); }).catch(() => undefined);
     load();
-    const timer = setInterval(load, 2500);
+    const timer = setInterval(load, 1500);
     return () => { live = false; clearInterval(timer); };
-  }, [settings.hideWomenCovers]);
+  }, [settings.hideWomenCovers, settings.coverStrictness]);
   const on = settings.hideWomenCovers;
   let progress: string | null = null;
   if (on && status) {
-    if (!status.aiReady) progress = t('The local AI is needed to check covers: download it in Settings → Local AI. Until then these games stay hidden.');
+    const m = status.model;
+    if (m.state === 'downloading') progress = t('Downloading the cover model ({size}): {p}%. Games stay hidden until their cover is checked.', { size: formatBytes(m.size), p: Math.round((m.received / (m.size || 1)) * 100) });
+    else if (m.state === 'error') progress = t('Could not download the cover model: {detail} It is tried again in a minute.', { detail: m.error ?? '' });
     else if (status.pending) progress = t('Checking covers: {done} of {total} done, {women} hidden so far. Games appear in the Store as soon as their cover is checked.', { done: status.checked, total: status.checked + status.pending, women: status.women });
     else progress = t('All {total} covers checked: {women} games are hidden.', { total: status.checked, women: status.women });
   }
   return (
-    <Row label={t('Hide games with a woman on the cover')} desc={<>
-      {t('The local AI looks at each game\'s cover and hides the game when a woman or female anime character is its main subject, even when the cover is not explicit. New games are checked as they are found.')}
-      {progress && <span className="st-cover-progress">{progress}</span>}
-    </>}>
-      <Switch checked={on} label={t('Hide games with a woman on the cover')} onChange={(v) => void attempt(() => api.invoke('content:setHideWomenCovers', { on: v }))} />
-    </Row>
+    <>
+      <Row label={t('Hide games with a woman on the cover')} desc={<>
+        {t('An image model on your computer looks at every game cover and hides the game when it shows a woman or girl, including drawn and anime characters, even when the cover is not explicit. Thousands of covers take a few minutes; new games are checked as they are found. The model (176 MB) downloads once, the first time you turn this on.')}
+        {progress && <span className="st-cover-progress">{progress}</span>}
+      </>}>
+        <Switch checked={on} label={t('Hide games with a woman on the cover')} onChange={(v) => void attempt(() => api.invoke('content:setHideWomenCovers', { on: v }))} />
+      </Row>
+      {on && (
+        <Row label={t('How strict')} desc={settings.coverStrictness === 'balanced'
+          ? t('Balanced: fewer games are hidden by mistake, but some covers with a woman may still show.')
+          : t('Strict: hides almost every cover with a woman, and some covers without one (for example cartoon characters).')}>
+          <Choice label={t('How strict')} value={settings.coverStrictness} options={[{ value: 'strict', label: tk('Strict') }, { value: 'balanced', label: tk('Balanced') }]} onChange={(v) => void attempt(() => api.invoke('content:setCoverStrictness', { strictness: v }))} />
+        </Row>
+      )}
+    </>
   );
 }
 
@@ -798,6 +811,7 @@ function AboutSection() {
     ['classifier', 'vit-base-nsfw-detector (fp16, GPU)', 'Apache-2.0'],
     ['umu', 'umu-launcher', 'GPL-3.0'],
     ['model', 'Fara1.5-9B by Microsoft', 'MIT', tk('downloaded on demand')],
+    ['coverModel', 'CLIP ViT-B/32 image encoder by OpenAI (cover filter)', 'MIT', tk('downloaded on demand')],
   ];
   return (
     <>

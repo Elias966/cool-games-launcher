@@ -34,6 +34,7 @@ Notes:
   Source: https://archive.mozilla.org/pub/firefox/releases/
 - **uBlock Origin** (GPL-3.0) is the unmodified, Mozilla-signed release.
   Source: https://github.com/gorhill/uBlock
+- **CLIP ViT-B/32 image encoder** (MIT), OpenAI; ONNX fp16 conversion by Xenova. Downloaded on demand for the cover filter, pinned revision d15189d7, SHA-256 verified. https://huggingface.co/Xenova/clip-vit-base-patch32 (original: https://github.com/openai/CLIP)
 - **Fara1.5-4B** (MIT), Microsoft Research. Optional browser-agent weights, quantized by bartowski. https://huggingface.co/microsoft/Fara1.5-4B
   Its published prompt and tool schema are adapted under the MIT license in resources/FARA-LICENSE.
 - **Holo3.1-4B** (Apache-2.0), H Company. Optional computer/file-agent weights, quantized by mradermacher. https://huggingface.co/Hcompany/Holo-3.1-4B

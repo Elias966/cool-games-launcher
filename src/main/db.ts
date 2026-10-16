@@ -194,8 +194,8 @@ export const MIGRATIONS: string[] = [
   // One row per play session, for play statistics.
   `CREATE TABLE play_sessions (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, started_at TEXT NOT NULL, seconds INTEGER NOT NULL);
    CREATE INDEX play_sessions_time ON play_sessions(started_at);`,
-  // What the local AI saw on a game's cover: 1 = a woman is the main subject, 0 = not; NULL = not checked.
-  `ALTER TABLE catalog ADD COLUMN cover_woman INTEGER;`,
+  // Cover filter: how likely the cover shows a woman (0..1, from the CLIP image model); NULL = not checked.
+  `ALTER TABLE catalog ADD COLUMN cover_score REAL;`,
 ];
 
 export type Db = DatabaseSync;

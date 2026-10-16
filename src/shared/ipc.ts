@@ -104,6 +104,7 @@ export const requests = {
   'consent:disableNsfw': z.undefined(),
   'content:setHideWomenCovers': z.object({ on: z.boolean() }).strict(),
   'content:coverStatus': z.undefined(),
+  'content:setCoverStrictness': z.object({ strictness: z.enum(['strict', 'balanced']) }).strict(),
   'sources:list': z.undefined(),
   'sources:add': z.object({ url: httpUrl, name: z.string().max(120).optional() }).strict(),
   'sources:update': z
@@ -252,7 +253,8 @@ export interface Responses {
   'consent:enableNsfw': Settings;
   'consent:disableNsfw': Settings;
   'content:setHideWomenCovers': Settings;
-  'content:coverStatus': { checked: number; women: number; pending: number; enabled: boolean; aiReady: boolean };
+  'content:coverStatus': { checked: number; women: number; pending: number; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
+  'content:setCoverStrictness': Settings;
   'sources:list': Source[];
   'sources:add': Source;
   'sources:update': Source;

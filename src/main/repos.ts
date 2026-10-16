@@ -6,7 +6,7 @@ import { cpus } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Db } from './db';
 import { Statements, tx } from './db';
-import { NSFW_IMAGE_THRESHOLD, coverCondition, coverVisible, visibleRatings, type VisibilityPolicy } from '@shared/policy';
+import { COVER_THRESHOLD, NSFW_IMAGE_THRESHOLD, coverCondition, coverVisible, visibleRatings, type VisibilityPolicy } from '@shared/policy';
 import { hostOf } from '@shared/urls';
 import type { SiteRecipe } from '@shared/site-recipe';
 import { compareVersions, findVersion, type InstalledVersion, type VersionFingerprint } from '@shared/game-version';
@@ -76,6 +76,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     closeToTray: true,
     freeGpuWhilePlaying: true,
     hideWomenCovers: false,
+    coverStrictness: 'strict',
     protonFolders: [],
     checkLauncherUpdates: true,
     language: 'en',
@@ -112,7 +113,7 @@ export class SettingsRepo {
 
   policy(): VisibilityPolicy {
     const s = this.get();
-    return { showNsfw: s.showNsfw, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers };
+    return { showNsfw: s.showNsfw, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers, coverThreshold: COVER_THRESHOLD[s.coverStrictness] ?? COVER_THRESHOLD.strict };
   }
 
   /** Turns the cover filter on or off and bumps the policy revision. */
@@ -120,6 +121,13 @@ export class SettingsRepo {
     const cur = this.get();
     if (cur.hideWomenCovers === on) return cur;
     return this.update({ hideWomenCovers: on, policyRevision: cur.policyRevision + 1 });
+  }
+
+  /** How strict the cover filter is (what score hides a game); bumps the policy revision. */
+  setCoverStrictness(strictness: Settings['coverStrictness']): Settings {
+    const cur = this.get();
+    if (cur.coverStrictness === strictness) return cur;
+    return this.update({ coverStrictness: strictness, policyRevision: cur.policyRevision + 1 });
   }
 
   /** Changes NSFW visibility and bumps the policy revision atomically. */
@@ -316,7 +324,7 @@ interface CatalogRow {
   detail_fetched_at: string | null;
   version_json?: string | null;
   listing_title?: string | null;
-  cover_woman?: number | null;
+  cover_score?: number | null;
   popularity_json?: string | null;
   published_at?: string | null;
   rank_popular?: number | null;
@@ -710,22 +718,21 @@ export class CatalogRepo {
   needingCoverCheck(limit = 20, skip: number[] = []): CatalogRaw[] {
     const not = skip.length ? ` AND id NOT IN (${skip.map((n) => Number(n)).join(',')})` : '';
     const rows = this.db
-      .prepare(`SELECT * FROM catalog WHERE cover_woman IS NULL AND rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')${not}
+      .prepare(`SELECT * FROM catalog WHERE cover_score IS NULL AND rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')${not}
          ORDER BY pop_score DESC, discovered_at DESC LIMIT ?`)
       .all(limit) as unknown as CatalogRow[];
     return rows.map((r) => this.toRaw(r));
   }
 
-  /** Records whether a woman is the main subject of the entry's cover. */
-  setCoverWoman(id: number, woman: boolean) {
-    this.st.get('UPDATE catalog SET cover_woman = ? WHERE id = ?').run(woman ? 1 : 0, id);
+  /** Records how likely the entry's cover shows a woman (0..1). */
+  setCoverScore(id: number, score: number) {
+    this.st.get('UPDATE catalog SET cover_score = ? WHERE id = ?').run(Math.max(0, Math.min(1, score)), id);
   }
 
-  /** Cover-filter progress over the Store's games: checked, hidden for a woman on the cover, still waiting. */
-  coverCounts(): { checked: number; women: number; pending: number } {
-    const r = this.st.get(`SELECT COUNT(cover_woman) AS checked, COALESCE(SUM(cover_woman = 1), 0) AS women, COALESCE(SUM(cover_woman IS NULL), 0) AS pending
-      FROM catalog WHERE rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')`).get() as { checked: number; women: number; pending: number };
-    return r;
+  /** Cover-filter progress over the Store's games: checked, hidden at this threshold, still waiting. */
+  coverCounts(threshold: number = COVER_THRESHOLD.strict): { checked: number; women: number; pending: number } {
+    return this.db.prepare(`SELECT COUNT(cover_score) AS checked, COALESCE(SUM(cover_score >= ?), 0) AS women, COALESCE(SUM(cover_score IS NULL), 0) AS pending
+      FROM catalog WHERE rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')`).get(threshold) as { checked: number; women: number; pending: number };
   }
 
   /** Entries that still need classification (new, failed or classified by an older model). */
@@ -830,7 +837,7 @@ export class CatalogRepo {
         `SELECT ${CatalogRepo.LIST_COLUMNS} FROM catalog c JOIN sources s ON s.id = c.source_id WHERE c.id = ?`,
       )
       .get(id) as CatalogRow | undefined;
-    if (!r || (r.download_status !== 'available' && r.download_status !== 'listed') || !visibleRatings(policy).includes(r.rating) || !coverVisible(r.cover_woman, policy)) return null;
+    if (!r || (r.download_status !== 'available' && r.download_status !== 'listed') || !visibleRatings(policy).includes(r.rating) || !coverVisible(r.cover_score, policy)) return null;
     const entry = this.toEntry(r);
     entry.steam = json<SteamMedia | null>(r.steam_json ?? null, null);
     entry.screenshots = this.toRaw(r)
@@ -842,7 +849,7 @@ export class CatalogRepo {
   /** Ids that are not visible under the policy (sent to the renderer to purge caches). */
   hiddenIds(policy: VisibilityPolicy): number[] {
     const visible = visibleRatings(policy);
-    const covers = policy.hideWomenCovers ? ' OR cover_woman IS NULL OR cover_woman != 0' : '';
+    const covers = policy.hideWomenCovers ? ` OR cover_score IS NULL OR cover_score >= ${Number(policy.coverThreshold ?? COVER_THRESHOLD.strict)}` : '';
     return (this.db.prepare(`SELECT id FROM catalog WHERE download_status NOT IN ('available', 'listed') OR rating NOT IN (${visible.map((r) => `'${r}'`).join(',')})${covers}`).all() as Array<{ id: number }>).map((r) => r.id);
   }
 

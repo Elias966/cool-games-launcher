@@ -166,9 +166,10 @@ export class AiService {
     return parsed;
   }
 
-  /** An image file as a small JPEG (base64) the vision model can read. */
-  async coverJpeg(path: string, signal?: AbortSignal): Promise<string> {
-    return (await this.worker.call<{ base64: string }>('coverJpeg', { path }, signal)).base64;
+  /** How likely a cover image shows a woman (0..1), from the cover filter's image model. Waits while a game runs. */
+  async coverScore(modelPath: string, imagePath: string, signal?: AbortSignal): Promise<number> {
+    await this.waitForGame(signal);
+    return (await this.worker.call<{ score: number }>('coverScore', { modelPath, imagePath }, signal)).score;
   }
 
   /** NSFW probabilities for an image file or base64 data; one score per region (or the whole image). */

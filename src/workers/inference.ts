@@ -12,6 +12,7 @@ import type { ModelPin } from '@shared/models';
 import {faraMessages,parseFaraCall} from '@shared/fara-chat';
 import {recordAllocation, type ModelRuntime} from './inference-runtime';
 import { imageWouldBeStale, promptPieces } from './prompt-cache';
+import { createCoverScorer, type CoverScorer } from './cover-score';
 
 process.title = 'cgl-inference';
 
@@ -443,25 +444,20 @@ interface ClassifyParams {
   includeWhole?: boolean;
 }
 
-// --- Cover images for the vision model ---------------------------------------
-// The model server reads only some formats (no WebP/AVIF); covers are sent as
-// small JPEGs, which is also faster.
 let vips: Promise<any> | null = null;
-async function coverJpeg(p: { path: string; size?: number }): Promise<{ base64: string }> {
-  vips ??= (require('wasm-vips') as (o: object) => Promise<any>)({ dynamicLibraries: [] }).then((v) => { v.concurrency(1); return v; });
-  const v = await vips;
-  const size = Math.min(1024, Math.max(128, p.size ?? 640));
-  const thumb = v.Image.thumbnailBuffer(readFileSync(p.path), size, { height: size });
-  try {
-    const flat = thumb.hasAlpha() ? thumb.flatten({ background: [255, 255, 255] }) : thumb;
-    try {
-      return { base64: Buffer.from(flat.writeToBuffer('.jpg', { Q: 85 })).toString('base64') };
-    } finally {
-      if (flat !== thumb) flat.delete();
-    }
-  } finally {
-    thumb.delete();
+
+// --- Cover filter (CLIP) -----------------------------------------------------
+let coverScorer: { path: string; scorer: Promise<CoverScorer> } | null = null;
+async function coverScore(p: { modelPath: string; imagePath: string }, signal: AbortSignal): Promise<{ score: number }> {
+  if (coverScorer?.path !== p.modelPath) {
+    vips ??= (require('wasm-vips') as (o: object) => Promise<any>)({ dynamicLibraries: [] }).then((v) => { v.concurrency(1); return v; });
+    const scorer = vips.then((v) => createCoverScorer(p.modelPath, v, log));
+    scorer.catch(() => { if (coverScorer?.scorer === scorer) coverScorer = null; });
+    coverScorer = { path: p.modelPath, scorer };
   }
+  const scorer = await coverScorer.scorer;
+  throwIfAborted(signal);
+  return { score: await scorer.score(p.imagePath) };
 }
 
 async function classify(p: ClassifyParams, signal: AbortSignal): Promise<{ scores: number[] }> {
@@ -505,13 +501,16 @@ serve({
   },
   chat,
   classify,
-  coverJpeg,
+  coverScore,
   async unload() {
     await stopAndWait();loadedModelId=null;
     // The image classifier's GPU memory goes too; it loads again on its next use.
     const c = classifier;
     classifier = null;
     if (c) await c.then((x) => x.release()).catch(() => undefined);
+    const cs = coverScorer;
+    coverScorer = null;
+    if (cs) await cs.scorer.then((x) => x.release()).catch(() => undefined);
     return { ok: true };
   },
   status() {

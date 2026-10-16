@@ -353,6 +353,8 @@ export interface Settings {
   freeGpuWhilePlaying: boolean;
   /** Hide Store games whose cover's main subject is a woman (the local AI checks every cover). */
   hideWomenCovers: boolean;
+  /** Strict hides more covers (some without a woman); Balanced hides fewer by mistake but misses more. */
+  coverStrictness: 'strict' | 'balanced';
   /** Look for new launcher versions on GitHub. */
   checkLauncherUpdates: boolean;
   /** Interface language (Arabic lays the interface out right to left). */

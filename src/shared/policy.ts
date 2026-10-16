@@ -6,17 +6,21 @@ import type { ContentRating } from './types';
 export interface VisibilityPolicy {
   showNsfw: boolean;
   revision: number;
-  /** Hide games whose cover's main subject is a woman (checked by the local AI; unchecked covers wait hidden). */
+  /** Hide games whose cover shows a woman (scored by an image model; unchecked covers wait hidden). */
   hideWomenCovers?: boolean;
+  /** Covers scoring at least this are hidden (Strict 0.2, Balanced 0.3). */
+  coverThreshold?: number;
 }
+
+export const COVER_THRESHOLD = { strict: 0.2, balanced: 0.3 } as const;
 
 /** SQL condition (with a leading AND) for the cover filter on a catalog alias. */
-export function coverCondition(policy: Pick<VisibilityPolicy, 'hideWomenCovers'>, alias = 'c.'): string {
-  return policy.hideWomenCovers ? ` AND ${alias}cover_woman = 0` : '';
+export function coverCondition(policy: Pick<VisibilityPolicy, 'hideWomenCovers' | 'coverThreshold'>, alias = 'c.'): string {
+  return policy.hideWomenCovers ? ` AND ${alias}cover_score < ${Number(policy.coverThreshold ?? COVER_THRESHOLD.strict)}` : '';
 }
 
-export function coverVisible(coverWoman: number | null | undefined, policy: Pick<VisibilityPolicy, 'hideWomenCovers'>): boolean {
-  return !policy.hideWomenCovers || coverWoman === 0;
+export function coverVisible(score: number | null | undefined, policy: Pick<VisibilityPolicy, 'hideWomenCovers' | 'coverThreshold'>): boolean {
+  return !policy.hideWomenCovers || (score !== null && score !== undefined && score < (policy.coverThreshold ?? COVER_THRESHOLD.strict));
 }
 
 export const ADULT_WARNING_TITLE = 'Adult content warning';
