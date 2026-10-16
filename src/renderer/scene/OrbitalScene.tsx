@@ -743,21 +743,26 @@ function Invalidator({ deps }: { deps: unknown[] }) {
 }
 
 /** Cinematic finish: bloom makes the energy actually glow. Skipped in low-power mode; trimmed when frames run long. */
-function Effects({ sun, tier }: { sun: THREE.Mesh | null; tier: number }) {
+/**
+ * The same effects at every quality tier: switching effects on and off changes
+ * the picture's brightness (the film grain alone lightens it a lot), which
+ * read as a white layer flickering whenever the tier changed. Tiers only change
+ * the render resolution.
+ */
+function Effects({ sun }: { sun: THREE.Mesh | null }) {
   const offset = useMemo(() => new THREE.Vector2(0.0006, 0.0009), []);
-  const full = tier >= 2;
   return (
     <EffectComposer multisampling={0}>
-      {sun && tier >= 1 ? <GodRays sun={sun} samples={full ? 40 : 24} density={0.92} decay={0.92} weight={0.3} exposure={0.26} clampMax={0.8} blur /> : <></>}
+      {sun ? <GodRays sun={sun} samples={32} density={0.92} decay={0.92} weight={0.3} exposure={0.26} clampMax={0.8} blur /> : <></>}
       <Bloom mipmapBlur luminanceThreshold={0.18} luminanceSmoothing={0.3} intensity={1.15} radius={0.75} />
-      {full ? <ChromaticAberration offset={offset} radialModulation modulationOffset={0.35} /> : <></>}
-      {full ? <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.35} /> : <></>}
+      <ChromaticAberration offset={offset} radialModulation modulationOffset={0.35} />
+      <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.35} />
       <Vignette eskil={false} offset={0.22} darkness={0.75} />
     </EffectComposer>
   );
 }
 
-const DPR_TIERS = [0.6, 0.85, Math.min(1.5, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)];
+const DPR_TIERS = [0.8, 0.9, Math.min(1.5, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)];
 
 /**
  * Keeps the whole interface smooth: when frames run long (a busy Store grid,
@@ -765,7 +770,7 @@ const DPR_TIERS = [0.6, 0.85, Math.min(1.5, typeof window === 'undefined' ? 1 : 
  * and climbs back once there is headroom again.
  */
 function AdaptiveQuality({ tier, onTier }: { tier: number; onTier: (tier: number) => void }) {
-  const s = useRef({ acc: 0, frames: 0, good: 0 });
+  const s = useRef({ acc: 0, frames: 0, good: 0, bad: 0 });
   useFrame((_, dt) => {
     const st = s.current;
     st.acc += Math.min(dt, 0.25);
@@ -774,9 +779,11 @@ function AdaptiveQuality({ tier, onTier }: { tier: number; onTier: (tier: number
     const fps = st.frames / st.acc;
     st.acc = 0;
     st.frames = 0;
-    if (fps < 48 && tier > 0) { st.good = 0; onTier(tier - 1); }
-    else if (fps > 57 && tier < DPR_TIERS.length - 1) { if (++st.good >= 4) { st.good = 0; onTier(tier + 1); } }
-    else st.good = 0;
+    // Only a sustained slowdown (three windows, ~4.5 s) lowers the tier: hovering
+    // cards and switching tabs dip for a moment and must not change anything.
+    if (fps < 45) { st.good = 0; if (++st.bad >= 3 && tier > 0) { st.bad = 0; onTier(tier - 1); } }
+    else if (fps > 57) { st.bad = 0; if (++st.good >= 8 && tier < DPR_TIERS.length - 1) { st.good = 0; onTier(tier + 1); } }
+    else { st.good = 0; st.bad = 0; }
   });
   return null;
 }
@@ -809,7 +816,7 @@ export function OrbitalScene(props: SceneProps) {
         <Rig tab={tab} animate={animate} pulse={pulse} />
         <Invalidator deps={[tab, low, visible]} />
         {!low && animate && <AdaptiveQuality tier={tier} onTier={setTier} />}
-        {!low && <Effects sun={sun} tier={tier} />}
+        {!low && <Effects sun={sun} />}
       </Canvas>
     </div>
   );
