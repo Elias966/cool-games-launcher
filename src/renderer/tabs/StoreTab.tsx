@@ -63,6 +63,8 @@ export function StoreTab() {
   const [farDown, setFarDown] = useState(false);
   /** Newly indexed games are waiting: they are applied at the top, never under the reader's eyes. */
   const [stale, setStale] = useState(false);
+  /** Near the top of the list, where changes may move things around. */
+  const [nearTop, setNearTop] = useState(true);
 
   const setSort = (v: CatalogSort) => setStoreView({ sort: v, scrollTop: 0 });
   const setCategory = (v: string) => setStoreView({ category: v, scrollTop: 0 });
@@ -188,6 +190,7 @@ export function StoreTab() {
   const onScroll = (top: number) => {
     scrollTop.current = top;
     if ((top > 900) !== farDown) setFarDown(top > 900);
+    if ((top <= NEAR_TOP) !== nearTop) setNearTop(top <= NEAR_TOP);
     if (stale && top <= NEAR_TOP) refresh();
   };
 
@@ -221,8 +224,10 @@ export function StoreTab() {
 
   // Immediate local purge when adult content becomes hidden, before the refetch lands.
   const visible = useMemo(
-    () => entries.filter((e) => !hiddenIds.has(e.id) && (policy.showNsfw || e.rating !== 'adult')),
-    [entries, hiddenIds, policy.showNsfw],
+    // Games hidden while someone scrolls further down keep their place as a
+    // blank card until they are back at the top, so nothing shifts under them.
+    () => entries.filter((e) => (!nearTop || !hiddenIds.has(e.id)) && (policy.showNsfw || e.rating !== 'adult')),
+    [entries, hiddenIds, policy.showNsfw, nearTop],
   );
 
   // Detail view follows the global detail id and is closed when its entry becomes hidden.
@@ -481,7 +486,9 @@ export function StoreTab() {
         ) : (
           <>
             <div className="grid" role="list" aria-label={t('Games')} ref={gridRef}>
-              {visible.map((e, i) => (
+              {visible.map((e, i) => hiddenIds.has(e.id) ? (
+                <div role="listitem" key={e.id} className="grid__cell" aria-hidden="true"><div className="card-hidden" /></div>
+              ) : (
                 <div role="listitem" key={e.id} className="grid__cell">
                   <GameCard entry={e} index={i} onOpen={openDetail} onKeyNav={onKeyNav} downloadState={downloadStates.get(e.id) ?? null} rank={rankFor(e)} />
                 </div>

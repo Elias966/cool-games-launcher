@@ -13,6 +13,18 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.16
+
+- **Choose a game's images**: the palette button next to a Library game lets you pick its
+  cover (the card) and its background (the big picture) from the game's Steam artwork
+  and screenshots, the download site's images, or an image file of your own.
+- **Library**: the chosen game's bar floats at the top while you scroll a long Library,
+  with Play and a way back to its details, plus a back-to-top button.
+- **Store**: games hidden by the cover filter while you scroll keep their place as a blank
+  card until you are back at the top, so the list no longer jumps.
+- **Diagnostics**: the launcher's log records what happens to the 3D background (lost
+  graphics, resizes, long stalls, tab changes) to trace remaining flicker.
+
 ## What's new in 0.2.15
 
 - **Covers for imported games**: an imported game gets its real name and cover even when
@@ -300,11 +312,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.15-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.16-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.15-x86_64.AppImage
+./Cool-Games-Launcher-0.2.16-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

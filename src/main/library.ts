@@ -298,6 +298,7 @@ export class Library {
       archive: g.archiveKept || this.settings.get().afterInstall !== 'ask' ? null : this.archiveOf(g),
       launch: g.launch,
       art: g.catalogRating === 'safe' || g.catalogId === null ? g.art : null,
+      images: g.images,
     };
   }
 

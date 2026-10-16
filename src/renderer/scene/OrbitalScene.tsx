@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import type { TabId } from '@shared/types';
 import { BlockArena } from './BlockArena';
 import { onScene } from './events';
+import { api } from '../api';
 
 export interface SceneProps {
   tab: TabId;
@@ -459,6 +460,49 @@ function Structure({ tab, low, animate, pulse, groupRef }: { tab: TabId; low: bo
   );
 }
 
+/**
+ * Writes what happens to the background into the launcher's log: a lost or
+ * restored graphics context, a resized canvas, a frame that took far too long,
+ * and each tab change with the frame rate just before it. Black-outs that only
+ * some computers show can then be traced.
+ */
+function SceneWatch({ tab }: { tab: TabId }) {
+  const gl = useThree((s) => s.gl);
+  const size = useThree((s) => s.size);
+  const report = (event: 'context-lost' | 'context-restored' | 'resize' | 'stall' | 'tab', detail: string) => void api.invoke('app:sceneEvent', { event, detail }).catch(() => undefined);
+  const frames = useRef<number[]>([]);
+  const lastStall = useRef(0);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const lost = () => report('context-lost', 'the GPU dropped the background');
+    const restored = () => report('context-restored', '');
+    canvas.addEventListener('webglcontextlost', lost);
+    canvas.addEventListener('webglcontextrestored', restored);
+    return () => { canvas.removeEventListener('webglcontextlost', lost); canvas.removeEventListener('webglcontextrestored', restored); };
+  }, [gl]);
+  const firstSize = useRef(true);
+  useEffect(() => {
+    if (firstSize.current) { firstSize.current = false; return; }
+    report('resize', `${Math.round(size.width)}x${Math.round(size.height)} canvas ${gl.domElement.width}x${gl.domElement.height}`);
+  }, [size.width, size.height]);
+  useEffect(() => {
+    const now = performance.now();
+    const recent = frames.current.filter((t) => now - t < 1000).length;
+    report('tab', `${tab} (${recent} fps before)`);
+  }, [tab]);
+  useFrame(() => {
+    const now = performance.now();
+    const prev = frames.current[frames.current.length - 1];
+    frames.current.push(now);
+    if (frames.current.length > 120) frames.current.splice(0, 60);
+    if (prev && now - prev > 400 && document.visibilityState === 'visible' && now - lastStall.current > 3000) {
+      lastStall.current = now;
+      report('stall', `${Math.round(now - prev)} ms without a frame`);
+    }
+  });
+  return null;
+}
+
 /** Re-renders once when inputs change while the loop is paused (reduced motion). */
 function Invalidator({ deps }: { deps: unknown[] }) {
   const { invalidate } = useThree();
@@ -523,6 +567,7 @@ export function OrbitalScene(props: SceneProps) {
         <Driver tab={tab} activity={activity} flow={flow} animate={animate} pulse={pulse} />
         <Rig tab={tab} animate={animate} pulse={pulse} />
         <Invalidator deps={[tab, low, visible]} />
+        <SceneWatch tab={tab} />
         {!low && <Effects />}
       </Canvas>
     </div>

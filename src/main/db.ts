@@ -202,6 +202,8 @@ export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) =>
   { id: 'catalog.cover_score REAL if missing', run: (db) => addColumnIfMissing(db, 'catalog', 'cover_score', 'REAL') },
   // Imported games: Steam artwork found for them by name ({hero, logo, capsule, appid}).
   { id: 'games.art_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'art_json', 'TEXT') },
+  // The cover and background image the person chose for a game ({cover, hero}: image URLs).
+  { id: 'games.images_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'images_json', 'TEXT') },
 ];
 
 /** Adds a column unless the table already has it. */

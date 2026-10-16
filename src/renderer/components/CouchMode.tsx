@@ -23,7 +23,7 @@ type Tile =
 interface Row { title: string; tiles: Tile[] }
 
 const art = (t: Tile): { tile: string | null; hero: string | null; logo: string | null; title: string } => {
-  if (t.kind === 'game') return { tile: t.game.art?.capsule ?? t.game.artwork, hero: t.game.art?.hero ?? t.game.artwork, logo: t.game.art?.logo ?? null, title: t.game.title };
+  if (t.kind === 'game') return { tile: t.game.images.cover ?? t.game.art?.capsule ?? t.game.artwork, hero: t.game.images.hero ?? t.game.art?.hero ?? t.game.artwork, logo: t.game.art?.logo ?? null, title: t.game.title };
   if (t.kind === 'pending') return { tile: t.d.artwork, hero: t.d.artwork, logo: null, title: t.d.title };
   const s = t.entry.rating === 'safe' ? t.entry.steam : null;
   return { tile: s?.capsule ?? t.entry.artwork, hero: s?.hero ?? s?.capsule ?? t.entry.artwork, logo: s?.logo ?? null, title: t.entry.title };

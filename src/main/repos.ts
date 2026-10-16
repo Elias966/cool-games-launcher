@@ -23,6 +23,7 @@ import type {
   DownloadItem,
   DownloadState,
   Game,
+  GameImages,
   GameStatus,
   InstallState,
   Platform,
@@ -874,7 +875,9 @@ export class CatalogRepo {
     const viaGame = this.st
       .get(`SELECT 1 FROM games g LEFT JOIN catalog c ON c.id = g.catalog_id WHERE g.artwork_file = ? AND (c.id IS NULL OR c.rating IN (${ratings})) LIMIT 1`)
       .get(file);
-    return !!viaGame;
+    if (viaGame) return true;
+    // An image the person chose for a game in their Library.
+    return !!this.st.get('SELECT 1 FROM games WHERE images_json LIKE ? LIMIT 1').get(`%cgl-media://artwork/${encodeURIComponent(file)}"%`);
   }
 
   ratingOfPage(url: string): ContentRating | null {
@@ -1154,6 +1157,7 @@ interface GameRow {
   catalog_rating?: ContentRating | null;
   catalog_steam?: string | null;
   art_json?: string | null;
+  images_json?: string | null;
   installed_version_json: string | null;
   update_json: string | null;
   previous_json: string | null;
@@ -1225,12 +1229,13 @@ export class GamesRepo {
       archiveKept: !!r.archive_kept,
       launch: { ...DEFAULT_LAUNCH, ...json<Partial<LaunchOptions>>(r.launch_json ?? null, {}) },
       redistDone: json<string[] | null>(r.redist_json ?? null, null),
+      images: { cover: null, hero: null, ...json<Partial<GameImages>>(r.images_json ?? null, {}) },
       // A Store game's Steam artwork, or what was found for an imported game by its name.
       art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)) ?? json<Game['art']>(r.art_json ?? null, null),
     };
   }
 
-  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
+  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'images' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
     const r = this.st
       .get(
         `INSERT INTO games (catalog_id, download_id, title, kind, install_dir, executable, args, runner, prefix_dir, managed, artwork_file, source_host, status, candidates_json, installed_version_json, update_checked_at)
@@ -1269,7 +1274,7 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images'>>) {
     const cols: Record<string, string> = {
       title: 'title',
       executable: 'executable',
@@ -1291,8 +1296,9 @@ export class GamesRepo {
       launch: 'launch_json',
       redistDone: 'redist_json',
       art: 'art_json',
+      images: 'images_json',
     };
-    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone', 'art']);
+    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone', 'art', 'images']);
     const sets: string[] = [];
     const vals: Array<string | number | null> = [];
     for (const [k, v] of Object.entries(patch)) {

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { CUSTOM_SOUNDS } from './types';
 import type {
   AiStatus,
+  ImageOptions,
   StoreSearchResult,
   ProtonReleaseList,
   BrowserSnapshot,
@@ -204,6 +205,12 @@ export const requests = {
   /** Steam games for a name, to pick an imported game's cover. */
   'library:searchCover': z.object({ term: z.string().trim().min(2).max(120) }).strict(),
   'library:chooseCover': z.object({ id, appid: z.number().int().positive(), name: z.string().min(1).max(200) }).strict(),
+  /** The cover and background images a Library game can be switched to. */
+  'library:imageOptions': z.object({ id }).strict(),
+  /** Something worth knowing about the 3D background (lost graphics context, resize, stall), for the log. */
+  'app:sceneEvent': z.object({ event: z.enum(['context-lost', 'context-restored', 'resize', 'stall', 'tab']), detail: z.string().max(200) }).strict(),
+  'library:setImage': z.object({ id, which: z.enum(['cover', 'hero']), url: z.string().max(2100).nullable() }).strict(),
+  'library:imageFromFile': z.object({ id, which: z.enum(['cover', 'hero']) }).strict(),
   'library:pickExecutable': z.object({ id }).strict(),
   'library:runInstaller': z.object({ id }).strict(),
   'library:reveal': z.object({ id }).strict(),
@@ -318,6 +325,11 @@ export interface Responses {
   'library:import': Game | null;
   'library:searchCover': Array<{ appid: number; name: string; image: string | null }>;
   'library:chooseCover': Game | null;
+  'library:imageOptions': ImageOptions;
+  'app:sceneEvent': void;
+  'library:setImage': Game | null;
+  /** Null when no file was chosen. */
+  'library:imageFromFile': Game | null;
   'library:pickExecutable': Game | null;
   'library:runInstaller': void;
   'library:reveal': void;

@@ -6,7 +6,7 @@ import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
 import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
-import type { DownloadItem, Game, LaunchOptions, ProtonInstall, Runner, SaveBackup } from '@shared/types';
+import type { DownloadItem, Game, ImageOptions, LaunchOptions, ProtonInstall, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { PlayWeek, usePlayStats } from '../components/PlayWeek';
@@ -58,6 +58,19 @@ export function LibraryTab() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const stats = usePlayStats();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  /** The big panel of the chosen game has scrolled out of view: its compact bar floats on top. */
+  const [heroHidden, setHeroHidden] = useState(false);
+  const [farDown, setFarDown] = useState(false);
+  useEffect(() => {
+    const el = heroRef.current;
+    if (!el || !scrollRef.current) return;
+    const io = new IntersectionObserver(([e]) => setHeroHidden(!e.isIntersecting), { root: scrollRef.current, threshold: 0, rootMargin: '-120px 0px 0px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [games.length > 0 || pending.length > 0]);
+  const toTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
 
   const shown = useMemo(
     () =>
@@ -88,7 +101,7 @@ export function LibraryTab() {
 
   return (
     <div className="page page--library">
-      <div className="page__scroll">
+      <div className="page__scroll" ref={scrollRef} onScroll={(e) => { const far = e.currentTarget.scrollTop > 700; if (far !== farDown) setFarDown(far); }}>
         <header className="page__header">
           <div className="page__titles">
             <p className="eyebrow">{t('Collection')}</p>
@@ -133,7 +146,9 @@ export function LibraryTab() {
             {t('Download a game from the Store and install it from Downloads, or import a game you already have with “Import game”.')}</EmptyState>
         ) : (
           <div className="library">
-            {selectedPending ? <PendingHero key={`dl-${selectedPending.id}`} d={selectedPending} parts={partsOf(selectedPending)} /> : selected && <LibraryHero key={selected.id} game={selected} />}
+            <div ref={heroRef}>
+              {selectedPending ? <PendingHero key={`dl-${selectedPending.id}`} d={selectedPending} parts={partsOf(selectedPending)} /> : selected && <LibraryHero key={selected.id} game={selected} />}
+            </div>
             <div className="library__browser">
               <div className="toolbar toolbar--compact">
                 <label className="search search--sm">
@@ -162,6 +177,38 @@ export function LibraryTab() {
           </div>
         )}
       </div>
+      <AnimatePresence>
+        {heroHidden && selected && !selectedPending && (
+          <motion.div key="float" className="library-float" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
+            <FloatingGame game={selected} onDetails={toTop} />
+          </motion.div>
+        )}
+        {farDown && (
+          <motion.button key="to-top" className="to-top" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }} onClick={toTop} aria-label={t('Back to top')} title={t('Back to top')}>
+            <Icon name="up" size={20} />
+          </motion.button>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** The chosen game, kept in view while the Library scrolls: its cover, name and Play. */
+function FloatingGame({ game, onDetails }: { game: Game; onDetails: () => void }) {
+  const ready = game.status === 'installed' && !!game.executable;
+  const [busy, setBusy] = useState(false);
+  const cover = game.images.cover ?? game.art?.capsule ?? game.artwork;
+  return (
+    <div className="library-float__bar">
+      <button type="button" className="library-float__game" onClick={onDetails} title={t('Show details')}>
+        {cover ? <img src={cover} alt="" /> : <span className="library-float__blank" style={placeholderStyle(game.title)} />}
+        <span className="library-float__title">{game.title}</span>
+      </button>
+      <Button size="sm" variant="ghost" icon="up" onClick={onDetails}>{t('Details')}</Button>
+      <Button size="sm" variant={game.running ? 'secondary' : 'primary'} icon={game.running ? 'stop' : 'play'} disabled={!ready || busy}
+        onClick={() => { setBusy(true); void attempt(() => api.invoke(game.running ? 'library:stop' : 'library:launch', { id: game.id })).finally(() => setTimeout(() => setBusy(false), 800)); }}>
+        {game.running ? t('Stop') : t('Play')}
+      </Button>
     </div>
   );
 }
@@ -255,7 +302,7 @@ function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: nu
       transition={{ duration: reduced ? 0 : 0.6, delay: reduced ? 0 : Math.min(index, 12) * 0.05, ease: [0.16, 1, 0.3, 1] }}
     >
       <span className="cover__float">
-        <Artwork src={game.art?.capsule ?? game.artwork} title={game.title} className="cover__art" />
+        <Artwork src={game.images.cover ?? game.art?.capsule ?? game.artwork} title={game.title} className="cover__art" />
         <span className="cover__edge" aria-hidden="true" />
         <span className="cover__title">{game.title}</span>
         {game.favorite && (
@@ -538,6 +585,8 @@ function LibraryHero({ game }: { game: Game }) {
   const [removePrefix, setRemovePrefix] = useState(false);
   const [args, setArgs] = useState(game.args);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false);
+  const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
   const argsRef = useRef(game.args);
   useEffect(() => {
     setArgs(game.args);
@@ -554,8 +603,8 @@ function LibraryHero({ game }: { game: Game }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: reduced ? 0 : 0.45, ease: [0.16, 1, 0.3, 1] }}
     >
-      <div className={`hero__backdrop ${game.art?.hero ? 'is-steam' : ''}`} aria-hidden="true" style={game.art?.hero || game.artwork ? undefined : placeholderStyle(game.title)}>
-        {(game.art?.hero ?? game.artwork) && <img src={game.art?.hero ?? game.artwork!} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
+      <div className={`hero__backdrop ${heroImage && heroImage === game.art?.hero ? 'is-steam' : ''}`} aria-hidden="true" style={heroImage ? undefined : placeholderStyle(game.title)}>
+        {heroImage && <img key={heroImage} src={heroImage} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />}
       </div>
       <div className="hero__content">
         <div className="hero__main">
@@ -572,6 +621,7 @@ function LibraryHero({ game }: { game: Game }) {
             <IconButton icon="heart" label={game.favorite ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
             <IconButton icon="folder" label={t('Show files')} onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
             <IconButton icon="trash" label={t('Uninstall')} onClick={() => setUninstallOpen(true)} disabled={game.running} />
+            <IconButton icon="palette" label={t('Change cover and background')} onClick={() => setImagesOpen(true)} />
             {game.catalogId === null && <IconButton icon="search" label={t('Find the cover by name')} onClick={() => setCoverOpen(true)} />}
           </div>
         </div>
@@ -725,6 +775,7 @@ function LibraryHero({ game }: { game: Game }) {
       </details>
 
       <CoverSearch game={game} open={coverOpen} onClose={() => setCoverOpen(false)} />
+      <ImagePicker game={game} open={imagesOpen} onClose={() => setImagesOpen(false)} />
       <Dialog
         open={uninstallOpen}
         title={t('Uninstall {title}?', { title: game.title })}
@@ -804,6 +855,52 @@ function CoverSearch({ game, open, onClose }: { game: Game; open: boolean; onClo
             ))}
           </ul>
         ))}
+    </Dialog>
+  );
+}
+
+/**
+ * Choose a game's cover (its Library card) and background (the big image when
+ * it is open) among its Steam artwork and screenshots, the download site's
+ * images, or an image file of your own.
+ */
+function ImagePicker({ game, open, onClose }: { game: Game; open: boolean; onClose: () => void }) {
+  const [options, setOptions] = useState<ImageOptions | null>(null);
+  const [which, setWhich] = useState<'cover' | 'hero'>('cover');
+  useEffect(() => {
+    if (!open) return;
+    setOptions(null);
+    let live = true;
+    void attempt(() => api.invoke('library:imageOptions', { id: game.id })).then((o) => { if (live) setOptions(o ?? { covers: [], heroes: [] }); });
+    return () => { live = false; };
+  }, [open, game.id]);
+  const current = which === 'cover' ? (game.images.cover ?? game.art?.capsule ?? game.artwork) : (game.images.hero ?? game.art?.hero ?? game.artwork);
+  const list = options ? (which === 'cover' ? options.covers : options.heroes) : [];
+  const set = (url: string | null) => void attempt(() => api.invoke('library:setImage', { id: game.id, which, url }));
+  return (
+    <Dialog open={open} title={t('Images of {title}', { title: game.title })} onClose={onClose}
+      actions={<Button variant="secondary" onClick={onClose}>{t('Done')}</Button>}>
+      <div className="image-picker__tabs" role="tablist">
+        <button role="tab" aria-selected={which === 'cover'} className={`sort-tab ${which === 'cover' ? 'is-on' : ''}`} onClick={() => setWhich('cover')}>{t('Cover')}</button>
+        <button role="tab" aria-selected={which === 'hero'} className={`sort-tab ${which === 'hero' ? 'is-on' : ''}`} onClick={() => setWhich('hero')}>{t('Background')}</button>
+      </div>
+      <p className="muted image-picker__hint">{which === 'cover' ? t('The picture on the game\'s card in your Library.') : t('The big picture behind the game when you open it.')}</p>
+      {!options ? <p className="muted">{t('Looking for images…')}</p> : (
+        <ul className={`image-picker__grid ${which === 'hero' ? 'is-wide' : ''}`}>
+          {list.map((url) => (
+            <li key={url}>
+              <button type="button" className={`image-picker__item ${url === current ? 'is-on' : ''}`} aria-pressed={url === current} onClick={() => set(url)} aria-label={t('Use this image')}>
+                <img src={url} alt="" loading="lazy" onError={(e) => { (e.currentTarget.closest('li') as HTMLElement).style.display = 'none'; }} />
+              </button>
+            </li>
+          ))}
+          {list.length === 0 && <li className="muted">{t('No other images were found for this game.')}</li>}
+        </ul>
+      )}
+      <div className="image-picker__actions">
+        <Button size="sm" variant="ghost" icon="folder" onClick={() => void attempt(() => api.invoke('library:imageFromFile', { id: game.id, which }))}>{t('Use an image file…')}</Button>
+        {(which === 'cover' ? game.images.cover : game.images.hero) && <Button size="sm" variant="ghost" icon="retry" onClick={() => set(null)}>{t('Back to the default')}</Button>}
+      </div>
     </Dialog>
   );
 }

@@ -81,6 +81,12 @@ export interface WishItem {
   createdAt: string;
 }
 
+/** Images the person chose for a game; null means the default one. */
+export interface GameImages { cover: string | null; hero: string | null }
+
+/** What a game's images can be changed to. */
+export interface ImageOptions { covers: string[]; heroes: string[] }
+
 export interface SteamMedia {
   appid: number;
   /** Wide library banner (3840×1240). */
@@ -242,6 +248,8 @@ export interface Game {
   launch: LaunchOptions;
   /** Steam artwork for the Library (banner, logo, capsule), when the game is on Steam. */
   art: { hero: string | null; logo: string | null; capsule: string | null; appid: number } | null;
+  /** Images the person chose: the Library card's cover and the big background (null: the default). */
+  images: GameImages;
 }
 
 /** Per-game launch settings (Heroic-style). */

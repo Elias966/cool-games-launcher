@@ -40,6 +40,7 @@ import { writeDiagnostics } from './diagnostics';
 import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { GameIdentifier } from './game-identify';
+import { GameImagesService, IMAGE_EXTENSIONS } from './game-images';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
@@ -395,6 +396,10 @@ async function main() {
     changed: () => library.broadcast(),
   });
   session.on('enter', () => void identifier.pump());
+  const gameImages = new GameImagesService({
+    games: gamesRepo, catalog: catalogRepo, policy: () => policy.policy(), cache: aiCache,
+    steamMedia: (appid) => descriptions.steamMediaFor(appid), artworkDir: paths.artwork,
+  });
   setTimeout(() => identifier.resume(), 15_000).unref();
 
   // The AI keeps working on downloads (finding the file, unpacking, choosing
@@ -741,6 +746,20 @@ async function main() {
       return game;
     },
     'library:searchCover': ({ term }) => identifier.search(term),
+    'library:imageOptions': ({ id }) => gameImages.options(id),
+    'app:sceneEvent': ({ event, detail }) => { console.log(`[scene] ${event} ${detail}`); },
+    'library:setImage': ({ id, which, url }) => {
+      gameImages.set(id, which, url);
+      library.broadcast();
+      return library.list().find((g) => g.id === id) ?? null;
+    },
+    'library:imageFromFile': async ({ id, which }) => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose an image'), properties: ['openFile'], filters: [{ name: tm('Images'), extensions: IMAGE_EXTENSIONS }] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      gameImages.fromFile(id, which, r.filePaths[0]);
+      library.broadcast();
+      return library.list().find((g) => g.id === id) ?? null;
+    },
     'library:chooseCover': async ({ id, appid, name }) => {
       await identifier.choose(id, appid, name);
       return library.list().find((g) => g.id === id) ?? null;
