@@ -6,7 +6,7 @@ import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
 import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
-import type { DownloadItem, Game, LaunchOptions, Runner, SaveBackup } from '@shared/types';
+import type { DownloadItem, Game, LaunchOptions, ProtonInstall, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { PlayWeek, usePlayStats } from '../components/PlayWeek';
@@ -418,19 +418,24 @@ function SavesPanel({ game }: { game: Game }) {
 }
 
 const RESOLUTIONS = ['1280x720', '1920x1080', '2560x1440', '3840x2160'];
+const PROVIDER_LABEL: Record<ProtonInstall['provider'], string> = { ge: 'GE-Proton', cachyos: 'CachyOS', valve: 'Valve', other: 'Proton' };
+/** "GE-Proton10-25" from a Proton folder path (launcher installs are named "<provider>-<version>"). */
+const protonName = (path: string) => (path.split('/').pop() ?? path).replace(/^(ge|cachyos|valve)-/, '');
 const FPS = [30, 60, 90, 120, 144, 165];
 
 /** Heroic-style per-game options: Proton build, Gamescope, frame cap, overlay, GameMode, Proton switches, variables. */
 function LaunchOptionsPanel({ game }: { game: Game }) {
   const tools = useApp((s) => s.info?.tools) ?? { gamescope: false, mangohud: false, gamemode: false };
-  const [protons, setProtons] = useState<Array<{ path: string; name: string }>>([]);
+  const [protons, setProtons] = useState<ProtonInstall[]>([]);
+  const [defaultPath, setDefaultPath] = useState<string | null>(null);
   const [env, setEnv] = useState(game.launch.env);
   useEffect(() => setEnv(game.launch.env), [game.launch.env]);
   useEffect(() => {
     if (game.kind !== 'windows') return;
-    void api.invoke('compat:releases', { refresh: false }).then((r) => setProtons(r.installed ?? [])).catch(() => undefined);
-  }, [game.kind]);
+    void api.invoke('compat:releases', { refresh: false }).then((r) => { setProtons(r.installed ?? []); setDefaultPath(r.defaultPath ?? null); }).catch(() => undefined);
+  }, [game.kind, game.launch.protonPath]);
   const l = game.launch;
+  const defaultName = protons.find((p) => p.path === defaultPath)?.name ?? null;
   const set = (launch: Partial<LaunchOptions>) => void attempt(() => api.invoke('library:configure', { id: game.id, launch }));
   const windows = game.kind === 'windows';
   const missing = (name: string) => <span className="field__hint">{t('Not installed — install “{name}” with your distribution’s package manager to use this.', { name })}</span>;
@@ -440,9 +445,14 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
         <div className="field">
           <label className="field__label" htmlFor={`proton-${game.id}`}>{t('Proton version')}</label>
           <select id={`proton-${game.id}`} className="input" value={l.protonPath ?? ''} onChange={(e) => set({ protonPath: e.target.value || null })}>
-            <option value="">{t('Launcher default (Settings → Windows games)')}</option>
-            {protons.map((p) => <option key={p.path} value={p.path}>{p.name}</option>)}
+            <option value="">{defaultName ? t('Default ({name})', { name: defaultName }) : t('Launcher default (Settings → Windows games)')}</option>
+            {protons.map((p) => <option key={p.path} value={p.path}>{p.name} · {PROVIDER_LABEL[p.provider]}</option>)}
           </select>
+          <span className="field__hint launch-proton-note">
+            {l.protonPath
+              ? t('Only this game uses {name}; the choice is kept with the game. Other games use the default.', { name: protonName(l.protonPath) })
+              : t('Uses the default Proton. Pick a version here to use a different one for this game only.')}
+          </span>
         </div>
       )}
       <div className="field">
@@ -548,7 +558,7 @@ function LibraryHero({ game }: { game: Game }) {
       </div>
       <div className="hero__content">
         <div className="hero__main">
-          <p className="eyebrow">{game.kind === 'windows' ? `${t('Windows')} · ${game.runner === 'proton' ? 'Proton' : 'Wine'}` : t('Native Linux')}{game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : t(' · Imported')}</p>
+          <p className="eyebrow">{game.kind === 'windows' ? `${t('Windows')} · ${game.runner === 'proton' ? (game.launch.protonPath ? protonName(game.launch.protonPath) : 'Proton') : 'Wine'}` : t('Native Linux')}{game.sourceHost ? ` · ${game.sourceHost}` : game.managed ? '' : t(' · Imported')}</p>
           <GameLogo game={game} />
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}

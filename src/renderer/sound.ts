@@ -2,8 +2,7 @@
 // window's close sound is a recorded clip (assets/sounds/close.mp3). Voices are FM synths, filtered noise and sub
 // thumps routed through a compressor, a stereo convolution reverb and a
 // ping-pong delay. Hover/click sounds follow the cursor in the stereo field,
-// and hover pitches walk a pentatonic scale across the screen. An optional
-// ambient pad breathes underneath and brightens while the AI works.
+// and hover pitches walk a pentatonic scale across the screen.
 
 import type { SoundGroup, SoundGroups } from '@shared/types';
 import closeClipUrl from './assets/sounds/close.mp3';
@@ -39,33 +38,19 @@ class SoundEngine {
   private delay: GainNode | null = null;
   private enabled = true;
   private volume = 0.5;
-  private ambientOn = false;
-  private ambientVolume = 0.5;
   private groups: SoundGroups = ALL_GROUPS;
-  private ambient: { gain: GainNode; filter: BiquadFilterNode; stop: () => void } | null = null;
   private last = new Map<SoundName, number>();
-  /** Why the ambient pad is silent right now (window hidden, a game running). */
-  private quiet = new Set<string>();
   /** The close sound, with its leading and trailing silence trimmed (seconds). */
   private closeClip: { buffer: AudioBuffer; start: number; end: number } | null = null;
   private closeClipLoading = false;
   pointer = { x: 0.5, y: 0.5 };
 
-  configure(enabled: boolean, volume: number, ambient: boolean, ambientVolume = 0.5, groups: SoundGroups = ALL_GROUPS) {
+  configure(enabled: boolean, volume: number, groups: SoundGroups = ALL_GROUPS) {
     this.enabled = enabled;
     this.volume = volume;
     this.groups = { ...ALL_GROUPS, ...groups };
-    this.ambientVolume = ambientVolume;
     if (this.master) this.master.gain.value = volume;
-    if (this.ambient && this.ctx) this.ambient.gain.gain.setTargetAtTime(0.1 * ambientVolume, this.ctx.currentTime, 0.4);
-    this.ambientOn = enabled && ambient;
-    this.updateAmbient();
     if (enabled) void this.loadCloseClip();
-  }
-
-  private updateAmbient() {
-    if (this.ambientOn && !this.quiet.size) this.startAmbient();
-    else this.stopAmbient();
   }
 
   /** Decodes the close sound once, ahead of time, so it plays without delay. */
@@ -375,71 +360,6 @@ class SoundEngine {
       }
     }
     return true;
-  }
-
-  /** AI activity 0..1 opens the ambient pad's filter. */
-  setActivity(level: number) {
-    if (!this.ambient || !this.ctx) return;
-    this.ambient.filter.frequency.setTargetAtTime(380 + level * 1400, this.ctx.currentTime, 1.2);
-  }
-
-  private startAmbient() {
-    if (this.ambient) return;
-    const ctx = this.context();
-    if (!ctx || !this.master || !this.reverb) return;
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    gain.gain.setTargetAtTime(0.1 * this.ambientVolume, ctx.currentTime, 3);
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 380;
-    filter.Q.value = 3;
-    // Slow filter breathing.
-    const lfo = ctx.createOscillator();
-    const lfoDepth = ctx.createGain();
-    lfo.frequency.value = 0.05;
-    lfoDepth.gain.value = 160;
-    lfo.connect(lfoDepth).connect(filter.frequency);
-    const oscs: OscillatorNode[] = [lfo];
-    // A suspended A chord, each voice detuned and panned.
-    [[55, -0.2], [82.41, 0.3], [110, -0.5], [123.47, 0.5], [164.81, 0]].forEach(([f, p], i) => {
-      for (const det of [-6, 6]) {
-        const o = ctx.createOscillator();
-        o.type = i < 2 ? 'sawtooth' : 'triangle';
-        o.frequency.value = f;
-        o.detune.value = det + (i * 1.3);
-        const panner = ctx.createStereoPanner();
-        panner.pan.value = p + det / 40;
-        o.connect(panner).connect(filter);
-        oscs.push(o);
-      }
-    });
-    filter.connect(gain);
-    gain.connect(this.master);
-    const send = ctx.createGain();
-    send.gain.value = 0.8;
-    gain.connect(send).connect(this.reverb);
-    for (const o of oscs) o.start();
-    this.ambient = {
-      gain,
-      filter,
-      stop: () => {
-        gain.gain.setTargetAtTime(0, ctx.currentTime, 0.8);
-        setTimeout(() => { for (const o of oscs) { try { o.stop(); } catch { /* already stopped */ } } gain.disconnect(); }, 4000);
-      },
-    };
-  }
-
-  private stopAmbient() {
-    this.ambient?.stop();
-    this.ambient = null;
-  }
-
-  /** Silences the ambient pad for a reason (window hidden, a game running) until it is lifted. */
-  setQuiet(reason: string, on: boolean) {
-    if (on) this.quiet.add(reason);
-    else this.quiet.delete(reason);
-    this.updateAmbient();
   }
 }
 

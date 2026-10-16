@@ -92,8 +92,54 @@ describe('Proton provisioning', () => {
     const missing = setup(false);
     await expect(missing.compat.ensureProton()).rejects.toThrow('Python 3');
     expect(missing.downloads.handoff).not.toHaveBeenCalled();
-    const ready = setup();
-    await ready.compat.installProton();
-    await expect(ready.compat.installPackage({ ...pin, provider: 'cachyos', dir: 'cachyos-v1', url: pin.url + '?other' })).rejects.toThrow('Finish or cancel');
+  });
+
+  it('installs several versions; only the first becomes the default, and unpacking happens one at a time', async () => {
+    const { compat, repo, downloads, worker, settings } = setup();
+    await compat.installProton();
+    await compat.installPackage({ ...pin, provider: 'cachyos', version: 'cachyos-v1', dir: 'cachyos-cachyos-v1', url: pin.url + '?cachy' });
+    expect(downloads.handoff).toHaveBeenCalledTimes(2);
+    const [ge, cachy] = repo.list().sort((a, b) => a.id - b.id);
+    let unpacking = 0, most = 0;
+    worker.call.mockImplementation(async (method: string, args: any) => {
+      if (method === 'hashFile') return pin.sha256;
+      unpacking++; most = Math.max(most, unpacking);
+      await new Promise((r) => setTimeout(r, 20));
+      mkdirSync(join(args.dest, 'p'), { recursive: true }); writeFileSync(join(args.dest, 'p', 'proton'), 'x');
+      unpacking--;
+    });
+    for (const d of [ge, cachy]) {
+      const archive = join(dir, `${d.id}.tar.gz`); writeFileSync(archive, 'fixture');
+      repo.update(d.id, { state: 'completed', finalPath: archive });
+      downloads.emit('completed', d.id, archive);
+    }
+    await vi.waitFor(() => expect([repo.get(ge.id)?.installState, repo.get(cachy.id)?.installState]).toEqual(['installed', 'installed']));
+    expect(most).toBe(1);
+    expect(settings.get().protonPath).toBe(join(dir, 'compat', pin.dir));
+    expect(compat.installed().map((p) => [p.name, p.provider, p.source, p.removable]).sort()).toEqual([
+      ['GE-Test', 'ge', 'launcher', true],
+      ['cachyos-v1', 'cachyos', 'launcher', true],
+    ]);
+  });
+
+  it('sets the default, removes launcher installs, forgets added folders and never touches Steam builds', async () => {
+    const steam = join(dir, 'steam', 'Proton 9.0'); mkdirSync(steam, { recursive: true }); writeFileSync(join(steam, 'proton'), 'x');
+    const own = join(dir, 'compat', 'ge-GE-Proton10-1'); mkdirSync(own, { recursive: true }); writeFileSync(join(own, 'proton'), 'x');
+    const added = join(dir, 'mine'); mkdirSync(added); writeFileSync(join(added, 'proton'), 'x');
+    const { compat, settings } = setup(true, [steam]);
+    compat.addFolder(added);
+    expect(compat.installed().map((p) => [p.name, p.provider, p.source])).toEqual([['GE-Proton10-1', 'ge', 'launcher'], ['Proton 9.0', 'valve', 'system'], ['mine', 'other', 'folder']]);
+    compat.setDefault(own);
+    expect(settings.get().protonPath).toBe(own);
+    expect(() => compat.setDefault(join(dir, 'nowhere'))).toThrow('not installed');
+    expect(() => compat.remove(steam)).toThrow('Only versions');
+    expect(existsSync(steam)).toBe(true);
+    compat.remove(own);
+    expect(existsSync(own)).toBe(false);
+    expect(settings.get().protonPath).toBe('');
+    compat.remove(added);
+    expect(existsSync(added)).toBe(true);
+    expect(compat.installed().map((p) => p.path)).toEqual([steam]);
+    expect(() => compat.addFolder(join(dir, 'empty'))).toThrow('no Proton');
   });
 });

@@ -1,20 +1,30 @@
 // GE-Proton is provisioned through the same resumable queue as game downloads.
 // Only a verified archive is extracted, into a staging directory first.
 import { existsSync, statSync, mkdirSync, renameSync, rmSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { WorkerHost } from './worker-host';
 import type { DownloadsRepo, SettingsRepo } from './repos';
 import type { DownloadManager } from './downloads';
-import type { ProtonPackage } from '@shared/types';
+import type { ProtonInstall, ProtonPackage } from '@shared/types';
 import { publish, toast } from './bus';
 import { tm } from './i18n';
 
 export interface ProtonPin { version: string; url: string; sha256: string; size: number; dir: string }
 export interface CompatStatus { protonPath: string | null; provisioning: boolean; python3: boolean }
 
+/** Which project a Proton build comes from, by its folder name. */
+export function protonProvider(name: string): ProtonInstall['provider'] {
+  if (/cachyos/i.test(name)) return 'cachyos';
+  if (/^ge-|ge-proton/i.test(name)) return 'ge';
+  if (/^valve-|^proton[\s_-]|^proton$|experimental/i.test(name)) return 'valve';
+  return 'other';
+}
+
 export class CompatManager {
   private installing: number | null = null;
+  /** Archives that finished downloading while another version was being unpacked. */
+  private unpackQueue: Array<[number, string]> = [];
   private waiting: Array<() => void> = [];
   private runtimeNoticeShown = false;
   private python3: boolean;
@@ -69,24 +79,69 @@ export class CompatManager {
     return this.installPackage({ ...this.deps.pin, provider: 'ge' });
   }
 
-  installed(): Array<{ path: string; name: string }> {
-    const root = join(this.deps.dataDir, 'compat');
-    const managed = existsSync(root) ? readdirSync(root).filter((n) => !n.startsWith('.')).map((n) => join(root, n)) : [];
-    return [...new Set([...this.deps.detectProton(), ...managed, this.deps.settings.get().protonPath])]
-      .filter((p) => p && this.valid(p)).map((p) => ({ path: p, name: p.split('/').pop()! }));
+  private get root() {
+    return join(this.deps.dataDir, 'compat');
+  }
+
+  /** Inside the launcher's own Proton folder (only those are ever deleted). */
+  private managed(path: string): boolean {
+    const r = resolve(this.root);
+    const p = resolve(path);
+    return p.startsWith(r + sep) && !p.slice(r.length + 1).includes(sep);
+  }
+
+  /** Every usable Proton: installed by the launcher, found from Steam and the system, and folders added by hand. */
+  installed(): ProtonInstall[] {
+    const settings = this.deps.settings.get();
+    const managed = existsSync(this.root) ? readdirSync(this.root).filter((n) => !n.startsWith('.')).map((n) => join(this.root, n)) : [];
+    const folders = settings.protonFolders ?? [];
+    return [...new Set([...managed, ...this.deps.detectProton(), ...folders, settings.protonPath])]
+      .filter((p) => p && this.valid(p))
+      .map((p) => {
+        const dir = p.split('/').pop()!;
+        const own = this.managed(p);
+        // Launcher installs are named "<provider>-<version>".
+        const name = own ? dir.replace(/^(ge|cachyos|valve)-/, '') : dir;
+        return { path: p, name, provider: protonProvider(own ? dir : name), source: own ? 'launcher' : folders.includes(p) ? 'folder' : 'system', removable: own || folders.includes(p) };
+      });
+  }
+
+  /** Makes a build the default for Windows games; null picks one automatically. */
+  setDefault(path: string | null): CompatStatus {
+    if (path !== null && !this.installed().some((p) => p.path === path)) throw new Error('That Proton version is not installed');
+    this.deps.settings.update({ protonPath: path ?? '' });
+    publish('settings:changed', this.deps.settings.get());
+    return this.status();
+  }
+
+  /** Adds a Proton build installed elsewhere (it does not become the default by itself). */
+  addFolder(dir: string): ProtonInstall[] {
+    if (!this.valid(dir)) throw new Error('That folder has no Proton in it (no "proton" file).');
+    const folders = this.deps.settings.get().protonFolders ?? [];
+    if (!folders.includes(dir)) this.deps.settings.update({ protonFolders: [...folders, dir] });
+    publish('settings:changed', this.deps.settings.get());
+    return this.installed();
+  }
+
+  /** Deletes a build the launcher installed, or forgets a folder added by hand (its files stay). */
+  remove(path: string): ProtonInstall[] {
+    const entry = this.installed().find((p) => p.path === path);
+    if (!entry?.removable) throw new Error('Only versions installed by the launcher or added by hand can be removed here.');
+    const settings = this.deps.settings.get();
+    if (entry.source === 'launcher') rmSync(path, { recursive: true, force: true });
+    this.deps.settings.update({
+      protonFolders: (settings.protonFolders ?? []).filter((p) => p !== path),
+      ...(settings.protonPath === path ? { protonPath: '' } : {}),
+    });
+    publish('settings:changed', this.deps.settings.get());
+    return this.installed();
   }
 
   async installPackage(pin: ProtonPackage): Promise<CompatStatus> {
     if (!this.python3) throw new Error('Install Python 3 and restart the launcher before installing Proton.');
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,160}$/.test(pin.dir) || !/^[a-f0-9]{64}$/i.test(pin.sha256)) throw new Error('Invalid Proton package metadata');
     const destination = join(this.deps.dataDir, 'compat', pin.dir);
-    if (this.valid(destination)) {
-      this.deps.settings.update({ protonPath: destination });
-      publish('settings:changed', this.deps.settings.get());
-      return this.status();
-    }
-    const other = this.deps.repo.list().find((d) => this.isOwnDownload(d.id) && ['active', 'queued', 'paused'].includes(d.state) && d.url !== pin.url);
-    if (other || this.installing !== null) throw new Error('Finish or cancel the current Proton setup in Downloads before installing another version.');
+    if (this.valid(destination)) return this.status();
     const existing = this.deps.repo.list().find((d) => this.isOwnDownload(d.id) && d.url === pin.url);
     if (existing?.state === 'completed' && existing.finalPath && existsSync(existing.finalPath) && existing.installState !== 'failed') {
       void this.installArchive(existing.id, existing.finalPath);
@@ -131,7 +186,9 @@ export class CompatManager {
   }
 
   private async installArchive(id: number, archive: string) {
-    if (this.installing !== null) return;
+    if (this.installing === id || this.unpackQueue.some(([q]) => q === id)) return;
+    // One unpack at a time; several versions may download at once.
+    if (this.installing !== null) { this.unpackQueue.push([id, archive]); return; }
     this.installing = id;
     const pin = this.deps.repo.get(id)?.compatPackage ?? this.deps.pin;
     const root = join(this.deps.dataDir, 'compat');
@@ -152,12 +209,18 @@ export class CompatManager {
       if (candidates.length !== 1) throw new Error('The Proton archive does not contain exactly one expected launcher.');
       const unpacked = candidates[0];
       const dest = join(root, pin.dir);
+      // The first Proton becomes the default; later ones wait to be chosen.
+      const first = this.protonPath() === null;
       rmSync(dest, { recursive: true, force: true });
       renameSync(unpacked, dest);
-      this.deps.settings.update({ protonPath: dest });
-      publish('settings:changed', this.deps.settings.get());
+      if (first) {
+        this.deps.settings.update({ protonPath: dest });
+        publish('settings:changed', this.deps.settings.get());
+      }
       this.deps.repo.update(id, { installState: 'installed', installDetail: `${pin.version} is ready. Press Play in the Library.` });
-      toast('success', tm('Proton is ready. Windows games can now use the Proton runner.'));
+      toast('success', first
+        ? tm('Proton is ready. Windows games can now use the Proton runner.')
+        : tm('{name} is installed. Make it the default in Settings → Windows games, or choose it for one game in its Launch options.', { name: pin.version }));
       for (const run of this.waiting.splice(0)) run();
     } catch (e) {
       this.deps.repo.update(id, { installState: 'failed', installDetail: (e as Error).message });
@@ -166,6 +229,8 @@ export class CompatManager {
       try { rmSync(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* a retry removes interrupted staging before extraction */ }
       this.installing = null;
       this.deps.downloads.broadcastList();
+      const next = this.unpackQueue.shift();
+      if (next) void this.installArchive(next[0], next[1]);
     }
   }
 }

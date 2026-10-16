@@ -165,6 +165,8 @@ export type InstallState = 'none' | 'installing' | 'installed' | 'failed';
 export interface DownloadItem {
   id: number;
   catalogId: number | null;
+  /** Set for a Proton build the launcher is installing (its version name). */
+  compatVersion?: string | null;
   title: string;
   sourceHost: string | null;
   fileName: string | null;
@@ -325,6 +327,8 @@ export interface Settings {
   downloadConnections: number;
   winePath: string;
   protonPath: string;
+  /** Proton folders added by hand (Settings → Windows games). */
+  protonFolders: string[];
   umuPath: string;
   effects: EffectsLevel;
   motion: MotionPreference;
@@ -332,10 +336,6 @@ export interface Settings {
   uiSounds: boolean;
   /** 0..1 */
   uiVolume: number;
-  /** Soft ambient pad under the interface. */
-  uiAmbient: boolean;
-  /** 0..1, relative to the main volume. */
-  uiAmbientVolume: number;
   /** Individual sound groups (all on by default). */
   uiSoundGroups: SoundGroups;
   crawlRefreshHours: number;
@@ -434,10 +434,25 @@ export interface ProtonRelease {
   size: number | null;
   unavailableReason: string | null;
 }
+export interface ProtonInstall {
+  path: string;
+  /** Display name, e.g. "GE-Proton10-25". */
+  name: string;
+  provider: 'ge' | 'cachyos' | 'valve' | 'other';
+  /** launcher: installed by the launcher; system: Steam or system folders; folder: added by hand. */
+  source: 'launcher' | 'system' | 'folder';
+  /** Launcher installs can be deleted, hand-added folders forgotten; Steam's are never touched. */
+  removable: boolean;
+  /** How many games use this version instead of the default. */
+  usedBy?: number;
+}
+
 export interface ProtonReleaseList {
   providers: Array<{ id: string; name: string; checkedAt: string | null; error: string | null }>;
   releases: ProtonRelease[];
-  installed?: Array<{ path: string; name: string }>;
+  installed?: ProtonInstall[];
+  /** The build Windows games use when they do not choose one. */
+  defaultPath?: string | null;
 }
 
 export interface StoreSearchResult { id: number | null; message: string; cancelled?: boolean }

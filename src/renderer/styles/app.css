@@ -3281,3 +3281,17 @@ kbd {
 .play-week__bars li:not(.is-today) .play-week__bar { opacity: 0.6; }
 .play-week__day { position: absolute; bottom: 0; font-size: 0.68rem; color: var(--text-3, var(--text-2)); }
 .play-week__bars li.is-today .play-week__day { color: var(--cyan); font-weight: 600; }
+
+/* Installed Proton versions (Settings → Windows games). */
+.proton-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.proton-list__item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); }
+.proton-list__item.is-default { border-color: rgba(72, 225, 255, 0.45); background: rgba(72, 225, 255, 0.06); box-shadow: inset 0 0 0 1px rgba(72, 225, 255, 0.12); }
+.proton-list__item.is-pending { opacity: 0.8; border-style: dashed; }
+.proton-list__text { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.proton-list__text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proton-list__chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.8rem; }
+.proton-list__actions { display: flex; align-items: center; gap: 8px; }
+.proton-chip--ge { color: #8ef0b0; border-color: rgba(142, 240, 176, 0.35); }
+.proton-chip--cachyos { color: #7fd4ff; border-color: rgba(127, 212, 255, 0.35); }
+.proton-chip--valve { color: #c9b8ff; border-color: rgba(201, 184, 255, 0.35); }
+.launch-proton-note { margin-top: 6px; }

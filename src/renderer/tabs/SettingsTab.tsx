@@ -2,11 +2,11 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { KineticTitle } from '../components/KineticTitle';
 import { RECOMMENDED_MODEL_ID, type ModelList, type ModelOption } from '@shared/models';
-import type { LauncherUpdate, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
+import type { LauncherUpdate, ProtonInstall, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
 import { formatBytes } from '@shared/format';
 import { api } from '../api';
 import { attempt, pushToast, useApp } from '../state';
-import { Button, IconButton } from '../components/ui';
+import { Button, Dialog, IconButton } from '../components/ui';
 import { ConsentDialog } from '../components/ConsentDialog';
 import { Icon, type IconName } from '../components/Icon';
 import { sound, type SoundName } from '../sound';
@@ -24,7 +24,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
   { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('Adult-content visibility'), keywords: 'nsfw adult content consent classifier safe mature' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
-  { id: 'sound', label: tk('Sound'), icon: 'volume', blurb: tk('Interface sounds and ambience'), keywords: 'sound audio volume hover click navigation ambient soundscape music mute alerts downloads' },
+  { id: 'sound', label: tk('Sound'), icon: 'volume', blurb: tk('Interface sounds'), keywords: 'sound audio volume hover click navigation funny fart close mute alerts downloads' },
   { id: 'privacy', label: tk('Privacy & data'), icon: 'lock', blurb: tk('Tracking and stored data'), keywords: 'privacy tracking do not track cookies clear cache browser data forget catalog' },
   { id: 'about', label: tk('About'), icon: 'info', blurb: tk('Version, logs and licences'), keywords: 'about version license logs folder keyboard shortcuts components' },
 ];
@@ -147,11 +147,11 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
   return {
     sources: sources.length ? `${sources.length === 1 ? t('1 site') : t('{n} sites', { n: sources.length })} · ${t('{n} games', { n: games })}` : t('No websites yet'),
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
-    compat: settings.protonPath ? t('{name} active', { name: settings.protonPath.split('/').pop()?.replace(/^ge-/, '') }) : t('Installs on first use'),
+    compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
     content: settings.showNsfw ? t('Adult content shown') : t('Adult content hidden'),
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
-    sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%${settings.uiAmbient ? ` · ${t('ambience')}` : ''}` : t('Off'),
+    sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
     about: info ? t('Version {v}', { v: info.appVersion }) : undefined,
   };
@@ -398,6 +398,83 @@ function AiSection({ settings }: { settings: Settings }) {
   );
 }
 
+/** "GE-Proton10-25" from a Proton folder (launcher installs are named "<provider>-<version>"). */
+const protonName = (path: string) => (path.split('/').pop() ?? path).replace(/^(ge|cachyos|valve)-/, '');
+
+const PROVIDER_NAME: Record<string, string> = { ge: 'GE-Proton', cachyos: 'CachyOS', valve: 'Valve', other: 'Proton' };
+const PROVIDER_HINT: Record<string, string> = {
+  ge: tk('Community build with extra game fixes and media codecs. A good default.'),
+  cachyos: tk('Performance-tuned build from CachyOS, often with the newest fixes.'),
+  valve: tk('Official builds come with Steam: install them in Steam and they appear in the list above.'),
+};
+const SOURCE_TEXT: Record<ProtonInstall['source'], string> = { launcher: tk('Installed by the launcher'), system: tk('Found on this computer (Steam)'), folder: tk('Folder you added') };
+
+/** Every installed Proton build: choose the default, remove the ones the launcher installed. */
+function ProtonVersions({ settings, releases, onChanged }: { settings: Settings; releases: ProtonReleaseList | null; onChanged: (r: ProtonReleaseList) => void }) {
+  const downloads = useApp((s) => s.downloads);
+  const [removing, setRemoving] = useState<ProtonInstall | null>(null);
+  const installed = releases?.installed ?? [];
+  const reload = async () => onChanged(await api.invoke('compat:releases', { refresh: false }));
+  const makeDefault = (path: string | null) => void attempt(async () => { await api.invoke('compat:setDefault', { path }); await reload(); });
+  const automatic = !settings.protonPath || !installed.some((p) => p.path === settings.protonPath);
+  const autoName = installed.find((p) => p.path === releases?.defaultPath)?.name;
+  const pending = downloads.filter((d) => d.compatVersion && d.state !== 'cancelled' && !(d.state === 'completed' && (d.installState === 'installed' || d.installState === 'failed')));
+  return (
+    <Group title={t('Installed versions')} aside={<Button size="sm" variant="ghost" icon="folder" onClick={() => void attempt(async () => { const r = await api.invoke('compat:addFolder'); if (r) await reload(); })}>{t('Add a folder…')}</Button>}>
+      <ul className="proton-list">
+        <li className={`proton-list__item ${automatic ? 'is-default' : ''}`}>
+          <div className="proton-list__text">
+            <strong>{t('Automatic')}</strong>
+            <span className="muted">{autoName ? t('Uses the newest found version: {name}', { name: autoName }) : t('Uses the newest version found on this computer.')}</span>
+          </div>
+          <div className="proton-list__actions">
+            {automatic ? <span className="st-chip st-chip--ai">{t('Default')}</span> : <Button size="sm" variant="secondary" onClick={() => makeDefault(null)}>{t('Make default')}</Button>}
+          </div>
+        </li>
+        {installed.map((p) => {
+          const isDefault = !automatic && settings.protonPath === p.path;
+          return (
+            <li key={p.path} className={`proton-list__item ${isDefault ? 'is-default' : ''}`}>
+              <div className="proton-list__text">
+                <strong>{p.name}</strong>
+                <span className="proton-list__chips">
+                  <span className={`st-chip proton-chip--${p.provider}`}>{PROVIDER_NAME[p.provider]}</span>
+                  {p.usedBy ? <span className="st-chip st-chip--muted">{p.usedBy === 1 ? t('1 game uses it') : t('{n} games use it', { n: p.usedBy })}</span> : null}
+                  <span className="muted">{t(SOURCE_TEXT[p.source])}</span>
+                </span>
+              </div>
+              <div className="proton-list__actions">
+                {isDefault ? <span className="st-chip st-chip--ai">{t('Default')}</span> : <Button size="sm" variant="secondary" onClick={() => makeDefault(p.path)}>{t('Make default')}</Button>}
+                {p.removable && <IconButton icon="trash" label={p.source === 'launcher' ? t('Remove {name}', { name: p.name }) : t('Forget {name}', { name: p.name })} onClick={() => setRemoving(p)} />}
+              </div>
+            </li>
+          );
+        })}
+        {pending.map((d) => (
+          <li key={d.id} className="proton-list__item is-pending">
+            <div className="proton-list__text">
+              <strong>{d.compatVersion}</strong>
+              <span className="muted">{d.state === 'completed' ? (d.installDetail ?? t('Installing…')) : d.totalBytes ? t('Downloading… {p}%', { p: Math.round((d.receivedBytes / d.totalBytes) * 100) }) : t('Downloading…')}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {!installed.length && !pending.length && <p className="st-note">{t('No Proton yet. Install GE-Proton below; Windows games also install it by themselves on first Play.')}</p>}
+      <Dialog
+        open={!!removing}
+        title={removing?.source === 'launcher' ? t('Remove {name}?', { name: removing?.name ?? '' }) : t('Forget {name}?', { name: removing?.name ?? '' })}
+        onClose={() => setRemoving(null)}
+        actions={<>
+          <Button variant="secondary" onClick={() => setRemoving(null)}>{t('Cancel')}</Button>
+          <Button variant="danger" icon="trash" onClick={() => { const p = removing!; setRemoving(null); void attempt(async () => { await api.invoke('compat:remove', { path: p.path }); await reload(); }); }}>{removing?.source === 'launcher' ? t('Remove') : t('Forget')}</Button>
+        </>}
+      >
+        <p>{removing?.source === 'launcher' ? t('Its files are deleted. You can install it again any time.') : t('The folder stays on your computer; the launcher just stops listing it.')} {removing?.usedBy ? t('Games that use it switch to the default version.') : ''}</p>
+      </Dialog>
+    </Group>
+  );
+}
+
 function CompatSection({ settings }: { settings: Settings }) {
   const info = useApp((s) => s.info);
   const [compat, setCompat] = useState<{ protonPath: string | null; provisioning: boolean; python3: boolean } | null>(null);
@@ -407,6 +484,8 @@ function CompatSection({ settings }: { settings: Settings }) {
   const [busy, setBusy] = useState(false);
   const [wine, setWine] = useState(settings.winePath);
   const [umu, setUmu] = useState(settings.umuPath);
+  // A version finishing its install appears in the list right away.
+  const finished = useApp((s) => s.downloads.filter((d) => d.compatVersion && d.installState === 'installed').length);
   useEffect(() => {
     let live = true;
     const status = () => { void api.invoke('compat:status').then((r) => { if (live) setCompat(r); }).catch(() => undefined); };
@@ -414,17 +493,18 @@ function CompatSection({ settings }: { settings: Settings }) {
     status(); list(false);
     const a = setInterval(status, 3000), b = setInterval(() => list(false), 15 * 60_000);
     return () => { live = false; clearInterval(a); clearInterval(b); };
-  }, [settings.protonPath]);
+  }, [settings.protonPath, finished]);
   const versions = releases?.releases.filter((r) => r.provider === provider) ?? [];
   const selected = versions.find((r) => r.id === releaseId) ?? versions[0];
   const installed = releases?.installed ?? [];
+  const isInstalled = (version: string) => installed.some((p) => p.name === version || p.path.endsWith(`-${version}`));
   const active = settings.protonPath || compat?.protonPath || '';
   return (
     <>
       <StatusCard
         icon="wine"
         tone={compat?.python3 === false ? 'warn' : active ? 'ok' : compat?.provisioning ? 'busy' : 'off'}
-        title={active ? t('{name} is ready', { name: active.split('/').pop()?.replace(/^ge-/, '') }) : compat?.provisioning ? t('Setting up GE-Proton…') : t('Proton installs on first use')}
+        title={active ? t('Default: {name}', { name: protonName(active) }) : compat?.provisioning ? t('Setting up GE-Proton…') : t('Proton installs on first use')}
         detail={compat?.python3 === false
           ? t('Python 3 is missing. Install python3 with your distribution’s package manager, then restart the launcher.')
           : t('Windows games run through Proton via umu-launcher, with a separate prefix per game. Pressing Play while Proton is still installing starts the game when it is ready.')}
@@ -432,30 +512,19 @@ function CompatSection({ settings }: { settings: Settings }) {
         {!active && !compat?.provisioning && <Button variant="primary" disabled={busy || compat?.python3 === false} onClick={() => { setBusy(true); void attempt(async () => setCompat(await api.invoke('compat:installProton'))).finally(() => setBusy(false)); }}>{t('Install GE-Proton now')}</Button>}
       </StatusCard>
 
-      <Group title={t('Active version')}>
-        <Row label={t('Proton used for Windows games')} desc={t('Choose any installed build. Automatic picks the newest detected installation.')}>
-          <select className="input" value={settings.protonPath} onChange={(e) => void update({ protonPath: e.target.value })} aria-label={t('Active Proton')}>
-            <option value="">{t('Automatic')}</option>
-            {settings.protonPath && !installed.some((p) => p.path === settings.protonPath) && <option value={settings.protonPath}>{settings.protonPath.split('/').pop()}</option>}
-            {installed.map((p) => <option key={p.path} value={p.path}>{p.name}</option>)}
-          </select>
-        </Row>
-        <Row label={t('Use a Proton folder')} desc={t('For builds installed elsewhere, such as through Steam.')}>
-          <Button variant="ghost" size="sm" icon="folder" onClick={() => void attempt(async () => { const dir = await api.invoke('settings:pickDirectory', { title: t('Choose a Proton folder') }); if (dir) await update({ protonPath: dir }); })}>{t('Browse…')}</Button>
-        </Row>
-      </Group>
+      <ProtonVersions settings={settings} releases={releases} onChanged={(r) => setReleases(r)} />
 
-      <Group title={t('Install another version')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => void attempt(async () => setReleases(await api.invoke('compat:releases', { refresh: true })))}>{t('Refresh')}</Button>}>
-        <Row label={t('Provider')}>
-          <Choice label={t('Proton provider')} value={provider} options={(releases?.providers ?? [{ id: 'ge', name: 'GE-Proton' }, { id: 'cachyos', name: 'CachyOS' }, { id: 'valve', name: 'Valve' }]).map((p) => ({ value: p.id, label: p.name.replace(/ Proton.*$/, '').replace(/^Valve.*/, 'Valve') }))} onChange={(v) => { setProvider(v); setReleaseId(''); }} />
+      <Group title={t('Get more versions')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => void attempt(async () => setReleases(await api.invoke('compat:releases', { refresh: true })))}>{t('Refresh')}</Button>}>
+        <Row label={t('Provider')} desc={PROVIDER_HINT[provider] ? t(PROVIDER_HINT[provider]) : undefined}>
+          <Choice label={t('Proton provider')} value={provider} options={(releases?.providers ?? [{ id: 'ge', name: 'GE-Proton' }, { id: 'cachyos', name: 'CachyOS' }, { id: 'valve', name: 'Valve' }]).map((p) => ({ value: p.id, label: PROVIDER_NAME[p.id] ?? p.name }))} onChange={(v) => { setProvider(v); setReleaseId(''); }} />
         </Row>
-        <Row stacked label={t('Version')} desc={selected?.unavailableReason ?? t('Verified against the published checksum before it is installed. New releases never replace your active version by themselves.')}>
+        <Row stacked label={t('Version')} desc={selected?.unavailableReason ?? t('Verified against the published checksum before it is installed. Installing never changes your default version: make it the default in the list above, or choose it for one game in its Launch options.')}>
           <div className="st-inline">
             <select className="input" value={selected?.id ?? ''} onChange={(e) => setReleaseId(e.target.value)} disabled={!versions.length} aria-label={t('Proton version')}>
               {!versions.length && <option value="">{t('Loading releases…')}</option>}
-              {versions.map((r) => <option key={r.id} value={r.id}>{r.name || r.version}{r.prerelease ? t(' (pre-release)') : ''}</option>)}
+              {versions.map((r) => <option key={r.id} value={r.id}>{r.name || r.version}{r.prerelease ? t(' (pre-release)') : ''}{isInstalled(r.version) ? t(' · installed') : ''}</option>)}
             </select>
-            <Button variant="primary" disabled={!selected || !!selected.unavailableReason || busy || !!compat?.provisioning} onClick={() => { if (!selected) return; setBusy(true); void attempt(async () => setCompat(await api.invoke('compat:installVersion', { id: selected.id }))).finally(() => setBusy(false)); }}>{compat?.provisioning ? t('Installing…') : t('Install')}</Button>
+            <Button variant="primary" icon="downloads" disabled={!selected || !!selected.unavailableReason || busy || isInstalled(selected.version)} onClick={() => { if (!selected) return; setBusy(true); void attempt(async () => setCompat(await api.invoke('compat:installVersion', { id: selected.id }))).finally(() => setBusy(false)); }}>{selected && isInstalled(selected.version) ? t('Installed') : t('Install')}</Button>
             {selected && <IconButton icon="external" label={t('Release notes')} onClick={() => void attempt(() => api.invoke('compat:openRelease', { id: selected.id }))} />}
           </div>
         </Row>
@@ -586,7 +655,7 @@ function SoundSection({ settings }: { settings: Settings }) {
   return (
     <>
       <Group>
-        <Row label={t('Interface sounds')} desc={t('Synthesized live on your computer: no audio files.')}>
+        <Row label={t('Interface sounds')} desc={t('Synthesized live on your computer; only the close sound is a recording.')}>
           <Switch checked={on} label={t('Interface sounds')} onChange={(v) => { void update({ uiSounds: v }); if (v) sound.play('success', { force: true }); }} />
         </Row>
         <Row label={t('Main volume')}>
@@ -602,14 +671,6 @@ function SoundSection({ settings }: { settings: Settings }) {
             </div>
           </Row>
         ))}
-      </Group>
-      <Group title={t('Ambience')}>
-        <Row label={t('Ambient soundscape')} desc={t('A soft evolving pad under the interface that brightens while the AI works. Paused when the window is hidden or a game is running.')}>
-          <Switch checked={settings.uiAmbient} disabled={!on} label={t('Ambient soundscape')} onChange={(v) => void update({ uiAmbient: v })} />
-        </Row>
-        <Row label={t('Ambience volume')}>
-          <Range label={t('Ambience volume')} value={Math.round(settings.uiAmbientVolume * 100)} min={0} max={100} step={5} unit="%" onCommit={(v) => void update({ uiAmbientVolume: v / 100 })} />
-        </Row>
       </Group>
     </>
   );

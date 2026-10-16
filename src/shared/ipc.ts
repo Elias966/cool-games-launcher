@@ -11,6 +11,7 @@ import type {
   CatalogFacets,
   SaveBackup,
   ProtonDbSummary,
+  ProtonInstall,
   LauncherUpdate,
   PlayStats,
   WishItem,
@@ -54,13 +55,12 @@ export const settingsPatch = z
     downloadConnections: z.number().int().min(1).max(16),
     winePath: z.string().max(4096),
     protonPath: z.string().max(4096),
+    protonFolders: z.array(absPath).max(50),
     umuPath: z.string().max(4096),
     effects: z.enum(['full', 'low']),
     motion: z.enum(['system', 'reduced', 'full']),
     uiSounds: z.boolean(),
     uiVolume: z.number().min(0).max(1),
-    uiAmbient: z.boolean(),
-    uiAmbientVolume: z.number().min(0).max(1),
     uiSoundGroups: z.object({ hover: z.boolean(), click: z.boolean(), navigation: z.boolean(), downloads: z.boolean(), alerts: z.boolean(), funny: z.boolean().default(true) }).strict(),
     crawlRefreshHours: z.number().int().min(1).max(24 * 30),
     gameUpdates: z.enum(['notify', 'auto']),
@@ -91,6 +91,9 @@ export const requests = {
   'compat:installVersion': z.object({ id: z.string().min(1).max(160) }).strict(),
   'compat:openRelease': z.object({ id: z.string().min(1).max(160) }).strict(),
   'compat:installProton': z.undefined(),
+  'compat:setDefault': z.object({ path: absPath.nullable() }).strict(),
+  'compat:addFolder': z.undefined(),
+  'compat:remove': z.object({ path: absPath }).strict(),
   'settings:get': z.undefined(),
   'settings:update': settingsPatch,
   'settings:pickDirectory': z.object({ title: z.string().max(200) }).strict(),
@@ -233,6 +236,10 @@ export interface Responses {
   'compat:openRelease': void;
   'compat:status': { protonPath: string | null; provisioning: boolean; python3: boolean };
   'compat:installProton': Responses['compat:status'];
+  'compat:setDefault': Responses['compat:status'];
+  /** Null when no folder was chosen. */
+  'compat:addFolder': ProtonInstall[] | null;
+  'compat:remove': ProtonInstall[];
   'settings:get': Settings;
   'settings:update': Settings;
   'settings:pickDirectory': string | null;

@@ -75,14 +75,10 @@ export function App() {
   if (language() !== lang) setLanguage(lang);
   const uiSounds = useApp((s) => s.settings?.uiSounds ?? true);
   const uiVolume = useApp((s) => s.settings?.uiVolume ?? 0.5);
-  const uiAmbient = useApp((s) => s.settings?.uiAmbient ?? true);
-  const uiAmbientVolume = useApp((s) => s.settings?.uiAmbientVolume ?? 0.5);
   const uiSoundGroups = useApp((s) => s.settings?.uiSoundGroups);
-  useEffect(() => sound.configure(uiSounds, uiVolume, uiAmbient, uiAmbientVolume, uiSoundGroups), [uiSounds, uiVolume, uiAmbient, uiAmbientVolume, uiSoundGroups]);
-  useEffect(() => sound.setQuiet('hidden', !appVisible), [appVisible]);
-  // While a game runs, the launcher stays quiet and its 3D scene stops drawing.
+  useEffect(() => sound.configure(uiSounds, uiVolume, uiSoundGroups), [uiSounds, uiVolume, uiSoundGroups]);
+  // While a game runs, the 3D scene stops drawing.
   const gaming = useApp((s) => s.library.some((g) => g.running));
-  useEffect(() => sound.setQuiet('gaming', gaming), [gaming]);
   useEffect(() => attachInterfaceSounds(), []);
   const firstTab = useRef(true);
   useEffect(() => {
@@ -161,7 +157,6 @@ export function App() {
   }, [downloads]);
 
   const activity = ai.storeActive ? (ACTIVITY[ai.phase] ?? 0) : 0;
-  useEffect(() => sound.setActivity(activity), [activity]);
 
   return (
     <MotionConfig reducedMotion={reduced ? 'always' : 'never'}>

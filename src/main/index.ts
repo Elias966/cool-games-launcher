@@ -269,6 +269,11 @@ async function main() {
   const protonRefreshTimer = setInterval(() => { void protonReleases.refresh(); }, RELEASE_REFRESH_MS);
   protonRefreshTimer.unref();
   const library = new Library(installWorker, gamesRepo, downloadsRepo, downloads, catalogRepo, settingsRepo, policy, () => mainWindow, compat, {agent: gameAgent, session, foreground});
+  /** Installed Proton builds with how many games chose each one. */
+  const protonsWithUse = () => {
+    const games = gamesRepo.list();
+    return compat.installed().map((p) => ({ ...p, usedBy: games.filter((g) => g.launch.protonPath === p.path).length }));
+  };
   libraryRef = library;
   // While a game runs: the model is unloaded, AI requests wait, and indexing pauses.
   // The model and classifier leave the GPU before the game process starts.
@@ -398,7 +403,20 @@ async function main() {
       cacheDir: paths.cache,
       configDir: paths.config,
     }),
-    'compat:releases': async ({ refresh }) => ({ ...await protonReleases.refresh(refresh), installed: compat.installed() }),
+    'compat:releases': async ({ refresh }) => ({ ...await protonReleases.refresh(refresh), installed: protonsWithUse(), defaultPath: compat.protonPath() }),
+    'compat:setDefault': ({ path }) => compat.setDefault(path),
+    'compat:addFolder': async () => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose a Proton folder'), properties: ['openDirectory'] });
+      if (r.canceled || !r.filePaths[0]) return null;
+      compat.addFolder(r.filePaths[0]);
+      return protonsWithUse();
+    },
+    'compat:remove': ({ path }) => {
+      compat.remove(path);
+      // Games that used it go back to the default version.
+      for (const g of gamesRepo.list()) if (g.launch.protonPath === path) library.configure(g.id, { launch: { protonPath: null } });
+      return protonsWithUse();
+    },
     'compat:installVersion': async ({ id }) => {
       await protonReleases.refresh();
       const release = protonReleases.find(id);
