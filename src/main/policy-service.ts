@@ -30,6 +30,13 @@ export class PolicyService extends EventEmitter {
     return s;
   }
 
+  /** Hides or shows Store games whose cover's main subject is a woman. */
+  setHideWomenCovers(on: boolean): Settings {
+    const s = this.settings.setHideWomenCovers(on);
+    this.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
+    return s;
+  }
+
   disable(): Settings {
     this.consent.revoke();
     const s = this.settings.setShowNsfw(false);

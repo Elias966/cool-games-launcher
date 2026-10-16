@@ -27,6 +27,8 @@ export interface ChatRequest {
   toolName?: string;
   /** false skips the model's hidden reasoning: much faster for extraction-style answers. */
   think?: boolean;
+  /** Sampling temperature (default 0.1); 0 gives the same answer for the same input. */
+  temperature?: number;
 }
 
 // fp16 matches the fp32 reference (max |Δ| 0.002); the old int8 build flipped
@@ -147,7 +149,7 @@ export class AiService {
             { role: 'user', content: req.user },
           ],
           maxTokens: req.maxTokens ?? 400,
-          temperature: 0.1,
+          temperature: req.temperature ?? 0.1,
           jsonSchema: req.schema,
           priority: req.priority ?? 0,
         },
@@ -162,6 +164,11 @@ export class AiService {
     const parsed = parseJsonLoose<T>(res.content);
     if (key) this.cache.set(key, parsed);
     return parsed;
+  }
+
+  /** An image file as a small JPEG (base64) the vision model can read. */
+  async coverJpeg(path: string, signal?: AbortSignal): Promise<string> {
+    return (await this.worker.call<{ base64: string }>('coverJpeg', { path }, signal)).base64;
   }
 
   /** NSFW probabilities for an image file or base64 data; one score per region (or the whole image). */

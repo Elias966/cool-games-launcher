@@ -6,7 +6,7 @@ import { cpus } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Db } from './db';
 import { Statements, tx } from './db';
-import { NSFW_IMAGE_THRESHOLD, visibleRatings, type VisibilityPolicy } from '@shared/policy';
+import { NSFW_IMAGE_THRESHOLD, coverCondition, coverVisible, visibleRatings, type VisibilityPolicy } from '@shared/policy';
 import { hostOf } from '@shared/urls';
 import type { SiteRecipe } from '@shared/site-recipe';
 import { compareVersions, findVersion, type InstalledVersion, type VersionFingerprint } from '@shared/game-version';
@@ -75,6 +75,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     saveBackupsKeep: 5,
     closeToTray: true,
     freeGpuWhilePlaying: true,
+    hideWomenCovers: false,
     protonFolders: [],
     checkLauncherUpdates: true,
     language: 'en',
@@ -111,7 +112,14 @@ export class SettingsRepo {
 
   policy(): VisibilityPolicy {
     const s = this.get();
-    return { showNsfw: s.showNsfw, revision: s.policyRevision };
+    return { showNsfw: s.showNsfw, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers };
+  }
+
+  /** Turns the cover filter on or off and bumps the policy revision. */
+  setHideWomenCovers(on: boolean): Settings {
+    const cur = this.get();
+    if (cur.hideWomenCovers === on) return cur;
+    return this.update({ hideWomenCovers: on, policyRevision: cur.policyRevision + 1 });
   }
 
   /** Changes NSFW visibility and bumps the policy revision atomically. */
@@ -308,6 +316,7 @@ interface CatalogRow {
   detail_fetched_at: string | null;
   version_json?: string | null;
   listing_title?: string | null;
+  cover_woman?: number | null;
   popularity_json?: string | null;
   published_at?: string | null;
   rank_popular?: number | null;
@@ -697,6 +706,28 @@ export class CatalogRepo {
     return r ? this.toRaw(r) : null;
   }
 
+  /** Store entries whose cover the local AI has not looked at yet (for the cover filter), most popular first. */
+  needingCoverCheck(limit = 20, skip: number[] = []): CatalogRaw[] {
+    const not = skip.length ? ` AND id NOT IN (${skip.map((n) => Number(n)).join(',')})` : '';
+    const rows = this.db
+      .prepare(`SELECT * FROM catalog WHERE cover_woman IS NULL AND rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')${not}
+         ORDER BY pop_score DESC, discovered_at DESC LIMIT ?`)
+      .all(limit) as unknown as CatalogRow[];
+    return rows.map((r) => this.toRaw(r));
+  }
+
+  /** Records whether a woman is the main subject of the entry's cover. */
+  setCoverWoman(id: number, woman: boolean) {
+    this.st.get('UPDATE catalog SET cover_woman = ? WHERE id = ?').run(woman ? 1 : 0, id);
+  }
+
+  /** Cover-filter progress over the Store's games: checked, hidden for a woman on the cover, still waiting. */
+  coverCounts(): { checked: number; women: number; pending: number } {
+    const r = this.st.get(`SELECT COUNT(cover_woman) AS checked, COALESCE(SUM(cover_woman = 1), 0) AS women, COALESCE(SUM(cover_woman IS NULL), 0) AS pending
+      FROM catalog WHERE rating IN ('safe', 'adult') AND download_status IN ('available', 'listed')`).get() as { checked: number; women: number; pending: number };
+    return r;
+  }
+
   /** Entries that still need classification (new, failed or classified by an older model). */
   needingClassification(classifierVersion: string, limit = 50, downloadableOnly = false): CatalogRaw[] {
     const rows = this.st
@@ -725,7 +756,7 @@ export class CatalogRepo {
            EXISTS (SELECT 1 FROM wishlist w WHERE w.catalog_id = c.id) AS wishlisted`;
 
   query(policy: VisibilityPolicy, q: CatalogQuery): { total: number; entries: CatalogEntry[]; fuzzy?: boolean } {
-    const where: string[] = ["c.download_status IN ('available', 'listed')", `c.rating IN (${visibleRatings(policy).map((r) => `'${r}'`).join(',')})`];
+    const where: string[] = ["c.download_status IN ('available', 'listed')", `c.rating IN (${visibleRatings(policy).map((r) => `'${r}'`).join(',')})${coverCondition(policy)}`];
     const params: Array<string | number> = [];
     if (q.sourceIds?.length) {
       where.push(`c.source_id IN (${q.sourceIds.map(() => '?').join(',')})`);
@@ -778,7 +809,7 @@ export class CatalogRepo {
           2 * (SELECT COUNT(*) FROM json_each(c.categories_json) a WHERE lower(a.value) IN (SELECT lower(m.value) FROM catalog me, json_each(me.categories_json) m WHERE me.id = ?))
             + (SELECT COUNT(*) FROM json_each(c.tags_json) a WHERE lower(a.value) IN (SELECT lower(m.value) FROM catalog me, json_each(me.tags_json) m WHERE me.id = ?)) AS overlap
         FROM catalog c JOIN sources s ON s.id = c.source_id
-        WHERE c.id != ? AND c.download_status = 'available' AND c.rating IN (${ratings})
+        WHERE c.id != ? AND c.download_status = 'available' AND c.rating IN (${ratings})${coverCondition(policy)}
       ) WHERE overlap > 0 ORDER BY overlap DESC, pop_score DESC, discovered_at DESC LIMIT ?`).all(id, id, id, limit) as unknown as CatalogRow[];
     return rows.map((r) => this.toEntry(r));
   }
@@ -787,8 +818,8 @@ export class CatalogRepo {
   facets(policy: VisibilityPolicy): { categories: Array<{ name: string; count: number }>; tags: Array<{ name: string; count: number }>; ranked: number } {
     const ratings = visibleRatings(policy).map((r) => `'${r}'`).join(',');
     const values = (column: string) => this.db.prepare(`SELECT lower(trim(f.value)) AS name, COUNT(DISTINCT c.id) AS count FROM catalog c, json_each(c.${column}) f
-      WHERE c.download_status IN ('available', 'listed') AND c.rating IN (${ratings}) GROUP BY lower(trim(f.value)) ORDER BY count DESC, name COLLATE NOCASE`).all() as Array<{ name: string; count: number }>;
-    const ranked = (this.db.prepare(`SELECT COUNT(*) AS n FROM catalog c WHERE c.download_status IN ('available', 'listed') AND c.rating IN (${ratings}) AND (c.pop_score > 0 OR c.rank_trending IS NOT NULL)`).get() as { n: number }).n;
+      WHERE c.download_status IN ('available', 'listed') AND c.rating IN (${ratings})${coverCondition(policy)} GROUP BY lower(trim(f.value)) ORDER BY count DESC, name COLLATE NOCASE`).all() as Array<{ name: string; count: number }>;
+    const ranked = (this.db.prepare(`SELECT COUNT(*) AS n FROM catalog c WHERE c.download_status IN ('available', 'listed') AND c.rating IN (${ratings})${coverCondition(policy)} AND (c.pop_score > 0 OR c.rank_trending IS NOT NULL)`).get() as { n: number }).n;
     return { categories: values('categories_json').filter((c) => c.name), tags: values('tags_json').filter((t) => usefulTag(t.name)).slice(0, 1500), ranked };
   }
 
@@ -799,7 +830,7 @@ export class CatalogRepo {
         `SELECT ${CatalogRepo.LIST_COLUMNS} FROM catalog c JOIN sources s ON s.id = c.source_id WHERE c.id = ?`,
       )
       .get(id) as CatalogRow | undefined;
-    if (!r || (r.download_status !== 'available' && r.download_status !== 'listed') || !visibleRatings(policy).includes(r.rating)) return null;
+    if (!r || (r.download_status !== 'available' && r.download_status !== 'listed') || !visibleRatings(policy).includes(r.rating) || !coverVisible(r.cover_woman, policy)) return null;
     const entry = this.toEntry(r);
     entry.steam = json<SteamMedia | null>(r.steam_json ?? null, null);
     entry.screenshots = this.toRaw(r)
@@ -811,7 +842,8 @@ export class CatalogRepo {
   /** Ids that are not visible under the policy (sent to the renderer to purge caches). */
   hiddenIds(policy: VisibilityPolicy): number[] {
     const visible = visibleRatings(policy);
-    return (this.db.prepare(`SELECT id FROM catalog WHERE download_status NOT IN ('available', 'listed') OR rating NOT IN (${visible.map((r) => `'${r}'`).join(',')})`).all() as Array<{ id: number }>).map((r) => r.id);
+    const covers = policy.hideWomenCovers ? ' OR cover_woman IS NULL OR cover_woman != 0' : '';
+    return (this.db.prepare(`SELECT id FROM catalog WHERE download_status NOT IN ('available', 'listed') OR rating NOT IN (${visible.map((r) => `'${r}'`).join(',')})${covers}`).all() as Array<{ id: number }>).map((r) => r.id);
   }
 
   /** Whether an artwork file may be served under the policy. */
@@ -819,11 +851,11 @@ export class CatalogRepo {
     const ratings = visibleRatings(policy)
       .map((r) => `'${r}'`)
       .join(',');
-    const viaCatalog = this.st.get(`SELECT 1 FROM catalog WHERE artwork_file = ? AND rating IN (${ratings}) LIMIT 1`).get(file);
+    const viaCatalog = this.st.get(`SELECT 1 FROM catalog c WHERE c.artwork_file = ? AND c.rating IN (${ratings})${coverCondition(policy)} LIMIT 1`).get(file);
     if (viaCatalog) return true;
     // Screenshots: the entry must be visible and the image itself must pass on its own score.
     const shots = this.db
-      .prepare(`SELECT screenshot_files_json AS j FROM catalog WHERE rating IN (${ratings}) AND screenshot_files_json LIKE ? LIMIT 5`)
+      .prepare(`SELECT screenshot_files_json AS j FROM catalog c WHERE c.rating IN (${ratings})${coverCondition(policy)} AND c.screenshot_files_json LIKE ? LIMIT 5`)
       .all(`%${file}%`) as Array<{ j: string }>;
     for (const row of shots) {
       const hit = json<Array<{ file: string; score: number }>>(row.j, []).find((f) => f.file === file);

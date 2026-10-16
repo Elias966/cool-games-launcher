@@ -351,6 +351,8 @@ export interface Settings {
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
   freeGpuWhilePlaying: boolean;
+  /** Hide Store games whose cover's main subject is a woman (the local AI checks every cover). */
+  hideWomenCovers: boolean;
   /** Look for new launcher versions on GitHub. */
   checkLauncherUpdates: boolean;
   /** Interface language (Arabic lays the interface out right to left). */

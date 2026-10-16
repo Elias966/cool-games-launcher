@@ -11,6 +11,7 @@ import { createClassifier, type Classifier, type Region } from './classifier';
 import type { ModelPin } from '@shared/models';
 import {faraMessages,parseFaraCall} from '@shared/fara-chat';
 import {recordAllocation, type ModelRuntime} from './inference-runtime';
+import { imageWouldBeStale, promptPieces } from './prompt-cache';
 
 process.title = 'cgl-inference';
 
@@ -336,6 +337,7 @@ async function pump() {
 
 async function stopAndWait() {
   const child=server;
+  cachedPrompt = null;
   stopServer();
   if(child&&child.exitCode===null&&child.signalCode===null)await new Promise<void>(resolve=>{
     const timer=setTimeout(()=>{child.kill('SIGKILL');resolve();},3500);
@@ -356,6 +358,9 @@ async function selectModel(id:string|undefined,signal:AbortSignal) {
     log('agent model selected',modelId);
   }
 }
+
+/** The prompt the server has cached (one slot): to avoid reusing an image from it by mistake. */
+let cachedPrompt: string[] | null = null;
 
 async function chat(p: ChatParams, signal: AbortSignal) {
   return enqueue(p.priority ?? 0, signal, async () => {
@@ -385,9 +390,13 @@ async function chat(p: ChatParams, signal: AbortSignal) {
       body.tool_choice={type:'function',function:{name:toolName}};
       body.parallel_tool_calls=false;
     } else if (p.jsonSchema) body.response_format = { type: 'json_schema', json_schema: { name: 'result', schema: p.jsonSchema, strict: true } };
+    // Never let the prompt cache answer about the previous image.
+    const pieces = [`F:${JSON.stringify(body.tools ?? null)}`, ...promptPieces(body.messages as never)];
+    if (imageWouldBeStale(cachedPrompt, pieces)) body.cache_prompt = false;
+    cachedPrompt = pieces;
     try {
       const sent = Date.now();
-      log('chat request', { model: loadedModelId, messages: p.messages.length, thinking, schema: !!p.jsonSchema, tools: p.tools?.length ?? 0 });
+      log('chat request', { model: loadedModelId, messages: p.messages.length, thinking, schema: !!p.jsonSchema, tools: p.tools?.length ?? 0, cache: body.cache_prompt });
       const res = await httpJson('POST', '/v1/chat/completions', body, signal);
       const t = res?.timings;
       // Prompt/generation token counts and speeds, never prompt text.
@@ -434,6 +443,27 @@ interface ClassifyParams {
   includeWhole?: boolean;
 }
 
+// --- Cover images for the vision model ---------------------------------------
+// The model server reads only some formats (no WebP/AVIF); covers are sent as
+// small JPEGs, which is also faster.
+let vips: Promise<any> | null = null;
+async function coverJpeg(p: { path: string; size?: number }): Promise<{ base64: string }> {
+  vips ??= (require('wasm-vips') as (o: object) => Promise<any>)({ dynamicLibraries: [] }).then((v) => { v.concurrency(1); return v; });
+  const v = await vips;
+  const size = Math.min(1024, Math.max(128, p.size ?? 640));
+  const thumb = v.Image.thumbnailBuffer(readFileSync(p.path), size, { height: size });
+  try {
+    const flat = thumb.hasAlpha() ? thumb.flatten({ background: [255, 255, 255] }) : thumb;
+    try {
+      return { base64: Buffer.from(flat.writeToBuffer('.jpg', { Q: 85 })).toString('base64') };
+    } finally {
+      if (flat !== thumb) flat.delete();
+    }
+  } finally {
+    thumb.delete();
+  }
+}
+
 async function classify(p: ClassifyParams, signal: AbortSignal): Promise<{ scores: number[] }> {
   const c = await getClassifier();
   throwIfAborted(signal);
@@ -466,6 +496,7 @@ serve({
       if(!warmed.has(loadedModelId??'')){
         const t=Date.now();
         await httpJson('POST','/v1/chat/completions',{messages:[{role:'user',content:'Reply with OK.'}],max_tokens:2,chat_template_kwargs:{enable_thinking:false},cache_prompt:false},signal).catch(()=>undefined);
+        cachedPrompt = null;
         warmed.add(loadedModelId??'');
         log('warmed up',{ms:Date.now()-t});
       }
@@ -474,6 +505,7 @@ serve({
   },
   chat,
   classify,
+  coverJpeg,
   async unload() {
     await stopAndWait();loadedModelId=null;
     // The image classifier's GPU memory goes too; it loads again on its next use.

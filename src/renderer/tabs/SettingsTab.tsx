@@ -22,7 +22,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
-  { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('Adult-content visibility'), keywords: 'nsfw adult content consent classifier safe mature' },
+  { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('Adult-content visibility'), keywords: 'nsfw adult content consent classifier safe mature woman women female girl anime cover filter' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
   { id: 'sound', label: tk('Sound'), icon: 'volume', blurb: tk('Interface sounds'), keywords: 'sound audio volume hover click navigation funny fart close mute alerts downloads' },
   { id: 'privacy', label: tk('Privacy & data'), icon: 'lock', blurb: tk('Tracking and stored data'), keywords: 'privacy tracking do not track cookies clear cache browser data forget catalog' },
@@ -149,7 +149,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
     compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
-    content: settings.showNsfw ? t('Adult content shown') : t('Adult content hidden'),
+    content: `${settings.showNsfw ? t('Adult content shown') : t('Adult content hidden')}${settings.hideWomenCovers ? ` · ${t('cover filter on')}` : ''}`,
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
     sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
@@ -601,6 +601,33 @@ function DownloadSection({ settings }: { settings: Settings }) {
   );
 }
 
+/** Hide games whose cover shows a woman as its main subject; the local AI checks every cover. */
+function CoverFilterRow({ settings }: { settings: Settings }) {
+  const [status, setStatus] = useState<{ checked: number; women: number; pending: number; enabled: boolean; aiReady: boolean } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => void api.invoke('content:coverStatus').then((r) => { if (live) setStatus(r); }).catch(() => undefined);
+    load();
+    const timer = setInterval(load, 2500);
+    return () => { live = false; clearInterval(timer); };
+  }, [settings.hideWomenCovers]);
+  const on = settings.hideWomenCovers;
+  let progress: string | null = null;
+  if (on && status) {
+    if (!status.aiReady) progress = t('The local AI is needed to check covers: download it in Settings → Local AI. Until then these games stay hidden.');
+    else if (status.pending) progress = t('Checking covers: {done} of {total} done, {women} hidden so far. Games appear in the Store as soon as their cover is checked.', { done: status.checked, total: status.checked + status.pending, women: status.women });
+    else progress = t('All {total} covers checked: {women} games are hidden.', { total: status.checked, women: status.women });
+  }
+  return (
+    <Row label={t('Hide games with a woman on the cover')} desc={<>
+      {t('The local AI looks at each game\'s cover and hides the game when a woman or female anime character is its main subject, even when the cover is not explicit. New games are checked as they are found.')}
+      {progress && <span className="st-cover-progress">{progress}</span>}
+    </>}>
+      <Switch checked={on} label={t('Hide games with a woman on the cover')} onChange={(v) => void attempt(() => api.invoke('content:setHideWomenCovers', { on: v }))} />
+    </Row>
+  );
+}
+
 function ContentSection({ settings }: { settings: Settings }) {
   const [dialog, setDialog] = useState(false);
   const [consentAt, setConsentAt] = useState<string | null>(null);
@@ -611,6 +638,7 @@ function ContentSection({ settings }: { settings: Settings }) {
         <Row label={t('Show adult (NSFW) games')} desc={settings.showNsfw ? `${t('Shown with an NSFW badge.')}${consentAt ? ` ${t('You confirmed you are 18+ on {when}.', { when: new Date(consentAt).toLocaleString(locale()) })}` : ''}` : t('Hidden. Browser previews of adult pages are masked too.')}>
           <Switch checked={settings.showNsfw} label={t('Show adult games')} onChange={(v) => { if (v) setDialog(true); else void attempt(() => api.invoke('consent:disableNsfw'), t('Adult content is hidden again.')); }} />
         </Row>
+        <CoverFilterRow settings={settings} />
       </Group>
       <ul className="st-facts">
         <li>{t('Every game’s artwork and text is checked by a local classifier (on your GPU) before it appears. Unchecked games stay hidden.')}</li>

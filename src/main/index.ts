@@ -42,6 +42,7 @@ import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
 import { SelfUpdater } from './self-update';
+import { CoverCheckService } from './cover-check';
 import { hostOf } from '@shared/urls';
 import type { ProtonDbSummary, Settings } from '@shared/types';
 
@@ -190,6 +191,11 @@ async function main() {
   const limiter = new HostRateLimiter();
   const artwork = new ArtworkCache(paths.artwork, limiter);
   const classification = new ClassificationService(ai, artwork, catalogRepo, imageClass);
+  const coverCheck = new CoverCheckService({
+    ai, artwork, catalog: catalogRepo, settings: settingsRepo, session,
+    changed: () => publish('catalog:changed', { policyRevision: settingsRepo.policy().revision, sourceId: null }),
+    pendingChanged: () => syncSession(),
+  });
   const browser = new BrowserClient(browserWorker);
   const browserView = new BrowserView(browser, ai, policy, catalogRepo, session);
   const gameAgent = new LocalGameAgent(ai, browser, session);
@@ -218,7 +224,9 @@ async function main() {
   const WAITING_FOR_AI = new Set(['resolving', 'needs-resolution', 'needs-user', 'queued', 'active']);
   /** A game download still needs the AI: its link, its preparation, or an update swap. */
   const aiWorkPending = () => downloadsRepo.list().some((d) => d.catalogId !== null && !d.modelAsset && !d.compatPackage &&
-    (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')));
+    (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')))
+    // Covers waiting for the cover filter also need the AI, wherever the user is.
+    || (coverCheck.pending() > 0 && !!models.readyAgents());
   let humanBrowserActive = false;
   let humanContext: 'interactive' | 'discovery' = 'interactive';
   const restoreAfterHuman = () => {
@@ -350,7 +358,9 @@ async function main() {
   policy.on('changed', ({ showNsfw, revision }: { showNsfw: boolean; revision: number }) => {
     publish('policy:changed', { showNsfw, policyRevision: revision });
     publish('settings:changed', settingsRepo.get());
-    if (!showNsfw) publish('catalog:hidden', { policyRevision: revision, ids: catalogRepo.hiddenIds(policy.policy()) });
+    publish('catalog:hidden', { policyRevision: revision, ids: catalogRepo.hiddenIds(policy.policy()) });
+    coverCheck.poke();
+    syncSession();
     publish('catalog:changed', { policyRevision: revision, sourceId: null });
   });
 
@@ -377,6 +387,8 @@ async function main() {
   };
   downloads.on('listChanged', () => syncSession());
   syncSession();
+  // The cover filter checks the games already indexed as soon as the launcher starts.
+  coverCheck.poke();
 
   const partsOf = (id: number) => {
     const d = downloadsRepo.get(id);
@@ -485,6 +497,8 @@ async function main() {
     },
     'consent:enableNsfw': ({ acceptedWarning }) => policy.enable(acceptedWarning),
     'consent:disableNsfw': () => policy.disable(),
+    'content:setHideWomenCovers': ({ on }) => policy.setHideWomenCovers(on),
+    'content:coverStatus': () => ({ ...catalogRepo.coverCounts(), enabled: settingsRepo.get().hideWomenCovers, aiReady: !!models.readyAgents() }),
     'sources:list': () => sourcesRepo.list(),
     'sources:add': ({ url, name }) => {
       if (sourcesRepo.list().some((s) => s.url === url)) throw new Error('This website is already in your sources');

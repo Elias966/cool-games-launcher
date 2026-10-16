@@ -3299,3 +3299,5 @@ kbd {
 /* Section heading with an action on the right (Downloads → Clear). */
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 30px 0 14px; }
 .section-head .section-title { margin: 0; }
+
+.st-cover-progress { display: block; margin-top: 6px; color: var(--cyan); }

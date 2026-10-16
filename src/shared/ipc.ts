@@ -102,6 +102,8 @@ export const requests = {
   /** Enabling requires the explicit acceptance flag that only the consent dialog sends. */
   'consent:enableNsfw': z.object({ acceptedWarning: z.literal(true) }).strict(),
   'consent:disableNsfw': z.undefined(),
+  'content:setHideWomenCovers': z.object({ on: z.boolean() }).strict(),
+  'content:coverStatus': z.undefined(),
   'sources:list': z.undefined(),
   'sources:add': z.object({ url: httpUrl, name: z.string().max(120).optional() }).strict(),
   'sources:update': z
@@ -249,6 +251,8 @@ export interface Responses {
   'consent:get': ConsentRecord & { showNsfw: boolean; policyRevision: number };
   'consent:enableNsfw': Settings;
   'consent:disableNsfw': Settings;
+  'content:setHideWomenCovers': Settings;
+  'content:coverStatus': { checked: number; women: number; pending: number; enabled: boolean; aiReady: boolean };
   'sources:list': Source[];
   'sources:add': Source;
   'sources:update': Source;
