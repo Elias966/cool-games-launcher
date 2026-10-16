@@ -122,7 +122,11 @@ const storeLoginContents = new Set<number>();
 
 function hardenWebContents() {
   app.on('web-contents-created', (_e, contents) => {
-    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // Store login pages may open their sign-in pop-ups (Google, Apple, Facebook…) in the same login session.
+    contents.setWindowOpenHandler(({ url }) => storeLoginContents.has(contents.id) && url.startsWith('https://')
+      ? { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, webPreferences: { session: contents.session, sandbox: true, contextIsolation: true, nodeIntegration: false } } }
+      : { action: 'deny' });
+    contents.on('did-create-window', (child) => { if (storeLoginContents.has(contents.id)) storeLoginContents.add(child.webContents.id); });
     contents.on('will-navigate', (e, url) => {
       if (storeLoginContents.has(contents.id) && url.startsWith('https://')) return;
       if (url !== rendererUrl) e.preventDefault();
@@ -818,6 +822,12 @@ async function main() {
       if (r.canceled || !r.filePaths[0]) return null;
       const gameId = await stores.adopt(store, id, r.filePaths[0]);
       return library.list().find((g) => g.id === gameId) ?? null;
+    },
+    'stores:linkGame': async ({ store, id, gameId }) => {
+      const g = gamesRepo.get(gameId);
+      if (!g?.installDir) throw new Error('That game has no folder.');
+      await stores.adopt(store, id, g.installDir);
+      return library.list().find((x) => x.id === gameId) ?? null;
     },
     'stores:update': async ({ id }) => {
       void stores.update(id).then(() => toast('success', tm('{title} is up to date.', { title: gamesRepo.get(id)?.title ?? '' })))

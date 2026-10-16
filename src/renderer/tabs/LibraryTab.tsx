@@ -994,6 +994,9 @@ function OwnedCover({ o, index, selected, onSelect }: { o: OwnedGame; index: num
 function OwnedHero({ o }: { o: OwnedGame }) {
   const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id));
   const store = STORE_LABEL[o.store];
+  // The same game already in the Library from disk: offer to link it, or remove it.
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const twin = useApp((s) => s.library.find((g) => !g.store && norm(g.title) === norm(o.title)));
   return (
     <section className="hero hero--owned" aria-label={`${o.title}`}>
       <div className="hero__backdrop" aria-hidden="true" style={o.hero ? undefined : placeholderStyle(o.title)}>
@@ -1008,6 +1011,13 @@ function OwnedHero({ o }: { o: OwnedGame }) {
               : <span>{t('Installs into your games folder with {store}\'s own tool, and runs through Proton.', { store })}</span>}
           </p>
           {job?.progress != null && <div className="st-progress st-progress--inline"><span style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>}
+          {twin && !job && (
+            <div className="hero__store-update">
+              <span>{t('{title} is already in your Library from disk.', { title: twin.title })}</span>
+              <Button size="sm" variant="primary" onClick={() => void attempt(() => api.invoke('stores:linkGame', { store: o.store, id: o.id, gameId: twin.id }), t('{title} is linked to {store}; updates come from there.', { title: o.title, store }))}>{t('Merge them')}</Button>
+              <Button size="sm" variant="ghost" icon="trash" onClick={() => void attempt(() => api.invoke('library:uninstall', { id: twin.id, removePrefix: false }))}>{t('Remove the copy from the Library')}</Button>
+            </div>
+          )}
           <div className="hero__actions-row">
             {job
               ? <Button variant="ghost" onClick={() => void attempt(() => api.invoke('stores:cancel', { store: o.store, id: o.id }))}>{t('Cancel')}</Button>

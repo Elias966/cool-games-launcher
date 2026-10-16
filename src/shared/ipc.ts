@@ -218,6 +218,8 @@ export const requests = {
   /** Link a copy already on disk (a folder picker opens). */
   'stores:adopt': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
   'stores:update': z.object({ id }).strict(),
+  /** Link a Library game already on disk to the same game in the store account. */
+  'stores:linkGame': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200), gameId: id }).strict(),
   /** A name the person typed; the game's images stay as they are. */
   'library:rename': z.object({ id, title: z.string().trim().min(1).max(200) }).strict(),
   'app:setLastTab': z.object({ tab: z.enum(['library', 'store', 'downloads', 'settings']) }).strict(),
@@ -349,6 +351,7 @@ export interface Responses {
   /** Null when no folder was chosen. */
   'stores:adopt': Game | null;
   'stores:update': void;
+  'stores:linkGame': Game | null;
   'library:rename': Game | null;
   'app:setLastTab': void;
   'app:sceneEvent': void;
