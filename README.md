@@ -13,6 +13,15 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.15
+
+- **Covers for imported games**: an imported game gets its real name and cover even when
+  its file is called something like `downloadgame-amensia-game.exe`. A quick lookup runs
+  right after the import; when that is not enough, the local AI reads the file and folder
+  names, works out the title and picks the game among Steam's results (the next time
+  the Store is open, like all AI work). The search button next to an imported game lets
+  you type a name and pick the right game yourself.
+
 ## What's new in 0.2.14
 
 - **New app icon**: a glowing planet with a game controller, now also shown in the taskbar
@@ -288,11 +297,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.14-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.15-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.14-x86_64.AppImage
+./Cool-Games-Launcher-0.2.15-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

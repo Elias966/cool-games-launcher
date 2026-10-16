@@ -201,6 +201,9 @@ export const requests = {
     })
     .strict(),
   'library:import': z.undefined(),
+  /** Steam games for a name, to pick an imported game's cover. */
+  'library:searchCover': z.object({ term: z.string().trim().min(2).max(120) }).strict(),
+  'library:chooseCover': z.object({ id, appid: z.number().int().positive(), name: z.string().min(1).max(200) }).strict(),
   'library:pickExecutable': z.object({ id }).strict(),
   'library:runInstaller': z.object({ id }).strict(),
   'library:reveal': z.object({ id }).strict(),
@@ -313,6 +316,8 @@ export interface Responses {
   'library:uninstall': void;
   'library:configure': Game;
   'library:import': Game | null;
+  'library:searchCover': Array<{ appid: number; name: string; image: string | null }>;
+  'library:chooseCover': Game | null;
   'library:pickExecutable': Game | null;
   'library:runInstaller': void;
   'library:reveal': void;

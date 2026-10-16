@@ -297,7 +297,7 @@ export class Library {
       canRollback: !!g.previous?.installDir && existsSync(g.previous.installDir),
       archive: g.archiveKept || this.settings.get().afterInstall !== 'ask' ? null : this.archiveOf(g),
       launch: g.launch,
-      art: g.catalogRating === 'safe' ? g.art : null,
+      art: g.catalogRating === 'safe' || g.catalogId === null ? g.art : null,
     };
   }
 

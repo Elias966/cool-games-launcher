@@ -1153,6 +1153,7 @@ interface GameRow {
   playtime_seconds: number;
   catalog_rating?: ContentRating | null;
   catalog_steam?: string | null;
+  art_json?: string | null;
   installed_version_json: string | null;
   update_json: string | null;
   previous_json: string | null;
@@ -1224,7 +1225,8 @@ export class GamesRepo {
       archiveKept: !!r.archive_kept,
       launch: { ...DEFAULT_LAUNCH, ...json<Partial<LaunchOptions>>(r.launch_json ?? null, {}) },
       redistDone: json<string[] | null>(r.redist_json ?? null, null),
-      art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)),
+      // A Store game's Steam artwork, or what was found for an imported game by its name.
+      art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)) ?? json<Game['art']>(r.art_json ?? null, null),
     };
   }
 
@@ -1267,7 +1269,7 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art'>>) {
     const cols: Record<string, string> = {
       title: 'title',
       executable: 'executable',
@@ -1288,8 +1290,9 @@ export class GamesRepo {
       archiveKept: 'archive_kept',
       launch: 'launch_json',
       redistDone: 'redist_json',
+      art: 'art_json',
     };
-    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone']);
+    const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone', 'art']);
     const sets: string[] = [];
     const vals: Array<string | number | null> = [];
     for (const [k, v] of Object.entries(patch)) {

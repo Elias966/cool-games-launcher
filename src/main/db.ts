@@ -200,6 +200,8 @@ export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) =>
   // Cover filter: how likely the cover shows a woman (0..1, from the CLIP image model); NULL = not checked.
   // Conditional: a test build created this column in place of the one above.
   { id: 'catalog.cover_score REAL if missing', run: (db) => addColumnIfMissing(db, 'catalog', 'cover_score', 'REAL') },
+  // Imported games: Steam artwork found for them by name ({hero, logo, capsule, appid}).
+  { id: 'games.art_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'art_json', 'TEXT') },
 ];
 
 /** Adds a column unless the table already has it. */

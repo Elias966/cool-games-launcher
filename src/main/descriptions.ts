@@ -198,6 +198,22 @@ export class GameInfoService {
     return res.ok ? ((await res.json()) as T) : null;
   }
 
+  /** Steam store search for a name, rate-limited like every Steam request (at most 10 results). */
+  async searchSteam(term: string, signal: AbortSignal = new AbortController().signal): Promise<SteamResult[]> {
+    const q = term.trim();
+    if (q.length < 2) return [];
+    const search = await this.steamJson<{ items?: Array<{ id: number; name: string; type?: string; tiny_image?: string }> }>(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(q)}&l=english&cc=US`, signal);
+    return (search?.items ?? []).filter((i) => i.id && i.name && (!i.type || i.type === 'app')).slice(0, 10).map((i) => ({ appid: i.id, name: i.name, image: i.tiny_image ?? null }));
+  }
+
+  /** Steam's all-ages artwork for one app, or null. */
+  async steamMediaFor(appid: number, signal: AbortSignal = new AbortController().signal): Promise<SteamMedia | null> {
+    const wait = this.steamAt + STEAM_SPACING_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    this.steamAt = Date.now();
+    return (await this.steamItems([appid], signal)).get(appid)?.media ?? null;
+  }
+
   /** The Steam app for a catalog title (same game, any edition), or null. */
   private async findAppId(title: string, signal: AbortSignal): Promise<number | null> {
     const term = baseTitle(title);
@@ -244,6 +260,8 @@ interface RawTrailer {
 }
 
 interface SteamItem { media: SteamMedia; description: string | null }
+
+export interface SteamResult { appid: number; name: string; image: string | null }
 
 const ASSETS = 'https://shared.akamai.steamstatic.com/store_item_assets/';
 const VIDEO = 'https://video.akamai.steamstatic.com/store_trailers/';

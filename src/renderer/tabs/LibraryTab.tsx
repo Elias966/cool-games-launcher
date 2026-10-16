@@ -537,6 +537,7 @@ function LibraryHero({ game }: { game: Game }) {
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [removePrefix, setRemovePrefix] = useState(false);
   const [args, setArgs] = useState(game.args);
+  const [coverOpen, setCoverOpen] = useState(false);
   const argsRef = useRef(game.args);
   useEffect(() => {
     setArgs(game.args);
@@ -571,6 +572,7 @@ function LibraryHero({ game }: { game: Game }) {
             <IconButton icon="heart" label={game.favorite ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
             <IconButton icon="folder" label={t('Show files')} onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
             <IconButton icon="trash" label={t('Uninstall')} onClick={() => setUninstallOpen(true)} disabled={game.running} />
+            {game.catalogId === null && <IconButton icon="search" label={t('Find the cover by name')} onClick={() => setCoverOpen(true)} />}
           </div>
         </div>
         <PlayControl game={game} />
@@ -722,6 +724,7 @@ function LibraryHero({ game }: { game: Game }) {
         </div>
       </details>
 
+      <CoverSearch game={game} open={coverOpen} onClose={() => setCoverOpen(false)} />
       <Dialog
         open={uninstallOpen}
         title={t('Uninstall {title}?', { title: game.title })}
@@ -755,5 +758,52 @@ function LibraryHero({ game }: { game: Game }) {
         )}
       </Dialog>
     </motion.section>
+  );
+}
+
+/**
+ * Picks an imported game's cover: search Steam by name and choose the game.
+ * (The local AI already tries this on its own after an import.)
+ */
+function CoverSearch({ game, open, onClose }: { game: Game; open: boolean; onClose: () => void }) {
+  const [term, setTerm] = useState(game.title);
+  const [results, setResults] = useState<Array<{ appid: number; name: string; image: string | null }> | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setTerm(game.title); setResults(null); } }, [open, game.title]);
+  const search = async () => {
+    if (term.trim().length < 2) return;
+    setBusy(true);
+    const r = await attempt(() => api.invoke('library:searchCover', { term: term.trim() }));
+    setBusy(false);
+    setResults(r ?? []);
+  };
+  useEffect(() => { if (open) void search(); }, [open]);
+  const choose = (r: { appid: number; name: string }) => {
+    onClose();
+    void attempt(() => api.invoke('library:chooseCover', { id: game.id, appid: r.appid, name: r.name }), t('{title} now has its cover.', { title: r.name }));
+  };
+  return (
+    <Dialog open={open} title={t('Find the cover of {title}', { title: game.title })} onClose={onClose}
+      actions={<Button variant="secondary" onClick={onClose}>{t('Close')}</Button>}>
+      <form className="cover-search" onSubmit={(e) => { e.preventDefault(); void search(); }}>
+        <input className="input" value={term} onChange={(e) => setTerm(e.target.value)} aria-label={t('Game name')} placeholder={t('Game name')} autoFocus />
+        <Button type="submit" variant="primary" size="sm" icon="search" disabled={busy || term.trim().length < 2}>{t('Search')}</Button>
+      </form>
+      {busy && <p className="muted">{t('Searching Steam…')}</p>}
+      {results && !busy && (results.length === 0
+        ? <p className="muted">{t('No games found. Try a shorter or different name.')}</p>
+        : (
+          <ul className="cover-search__list">
+            {results.map((r) => (
+              <li key={r.appid}>
+                <button type="button" className="cover-search__item" onClick={() => choose(r)}>
+                  {r.image ? <img src={r.image} alt="" /> : <span className="cover-search__blank" />}
+                  <span>{r.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </Dialog>
   );
 }

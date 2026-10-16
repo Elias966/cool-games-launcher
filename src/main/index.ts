@@ -7,7 +7,7 @@ import {ModelManager} from './models';
 import { LocalGameAgent } from './game-agent';
 // Composition root for the main process.
 import { app, BrowserWindow, dialog, ipcMain, net, shell, session as electronSession, type IpcMainInvokeEvent, Notification } from 'electron';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { cpus, totalmem } from 'node:os';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -39,6 +39,7 @@ import { ensureLauncherEntry, gameFromArgs } from './shortcuts';
 import { writeDiagnostics } from './diagnostics';
 import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
+import { GameIdentifier } from './game-identify';
 import { handleMedia, registerMediaScheme } from './media';
 import { registerIpc, type Handlers } from './ipc';
 import { attach, publish, toast } from './bus';
@@ -375,6 +376,26 @@ async function main() {
   library.recover();
   updates.start();
   descriptions.startBackfill();
+
+  // Names and covers for imported games (see game-identify.ts).
+  const identifier = new GameIdentifier({
+    games: gamesRepo,
+    cache: aiCache,
+    steam: { search: (term) => descriptions.searchSteam(term), media: (appid) => descriptions.steamMediaFor(appid) },
+    ask: (req) => foreground.run(20, (token) => ai.chatJson(token, req)),
+    saveArtwork: (url) => artwork.fetch(url, null),
+    clues: (g) => {
+      const exe = g.executable ?? '';
+      const folders: string[] = [];
+      for (let d = dirname(exe), i = 0; i < 3 && d !== dirname(d); i++, d = dirname(d)) folders.push(basename(d));
+      let files: string[] = [];
+      try { files = readdirSync(g.installDir ?? dirname(exe)).slice(0, 40); } catch { /* folder gone */ }
+      return { executable: exe, folders, files };
+    },
+    changed: () => library.broadcast(),
+  });
+  session.on('enter', () => void identifier.pump());
+  setTimeout(() => identifier.resume(), 15_000).unref();
 
   // The AI keeps working on downloads (finding the file, unpacking, choosing
   // the executable) wherever the user is in the app. Indexing and the GPU
@@ -714,7 +735,16 @@ async function main() {
     'library:favorite': ({ id, favorite }) => library.setFavorite(id, favorite),
     'library:uninstall': ({ id, removePrefix }) => library.uninstall(id, removePrefix),
     'library:configure': ({ id, ...patch }) => library.configure(id, patch),
-    'library:import': () => library.importGame(),
+    'library:import': async () => {
+      const game = await library.importGame();
+      if (game) void identifier.imported(game.id).catch((e) => console.warn('[identify]', (e as Error).message));
+      return game;
+    },
+    'library:searchCover': ({ term }) => identifier.search(term),
+    'library:chooseCover': async ({ id, appid, name }) => {
+      await identifier.choose(id, appid, name);
+      return library.list().find((g) => g.id === id) ?? null;
+    },
     'library:pickExecutable': ({ id }) => library.pickExecutable(id),
     'library:runInstaller': ({ id }) => library.runInstaller(id),
     'library:reveal': ({ id }) => library.reveal(id),
