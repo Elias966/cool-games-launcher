@@ -138,15 +138,18 @@ export function App() {
     return () => { stop(); off(); };
   }, []);
 
+  // While a page scrolls the 3D background holds still (its last frame stays on
+  // screen), so the GPU only has the list to draw: smooth scrolling on integrated GPUs.
+  const [scrolling, setScrolling] = useState(false);
   // While a page scrolls, glass panels floating over it drop their live blur
   // (re-blurring moving content every frame is the most expensive effect).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const root = document.documentElement;
     const onScroll = () => {
-      if (!timer) root.classList.add('is-scrolling');
+      if (!timer) { root.classList.add('is-scrolling'); setScrolling(true); }
       else clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; root.classList.remove('is-scrolling'); }, 160);
+      timer = setTimeout(() => { timer = null; root.classList.remove('is-scrolling'); setScrolling(false); }, 160);
     };
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     return () => { window.removeEventListener('scroll', onScroll, { capture: true }); if (timer) clearTimeout(timer); };
@@ -166,7 +169,7 @@ export function App() {
         {WEBGL && (
           <SceneBoundary>
             <Suspense fallback={null}>
-              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible && !gaming} />
+              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible && !gaming && !scrolling} />
             </Suspense>
           </SceneBoundary>
         )}

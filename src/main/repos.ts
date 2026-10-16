@@ -860,7 +860,12 @@ export class CatalogRepo {
   }
 
   /** Whether an artwork file may be served under the policy. */
+  /** Cached store images (GOG/Epic covers) the launcher may always show. */
+  private extraArtwork = new Set<string>();
+  allowArtwork(file: string) { this.extraArtwork.add(file); }
+
   artworkVisible(file: string, policy: VisibilityPolicy): boolean {
+    if (this.extraArtwork.has(file)) return true;
     const ratings = visibleRatings(policy)
       .map((r) => `'${r}'`)
       .join(',');

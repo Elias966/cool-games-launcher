@@ -123,6 +123,10 @@ export interface StoreDeps {
   prepareGame: (gameId: number) => void;
   changed: () => void;
   publish: (s: StoresState) => void;
+  /** Saves an image into the launcher's artwork cache once; returns its cgl-media address. */
+  cacheImage?: (url: string) => Promise<string | null>;
+  /** Lets the launcher serve a cached store image. */
+  allowArtwork?: (file: string) => void;
 }
 
 export class StoreService {
@@ -142,6 +146,32 @@ export class StoreService {
       const saved = JSON.parse(readFileSync(join(this.dir, 'owned.json'), 'utf8')) as OwnedGame[];
       if (Array.isArray(saved)) this.owned = saved;
     } catch { /* first start */ }
+    for (const o of this.owned) for (const u of [o.cover, o.hero]) this.allowCached(u);
+  }
+
+  private allowCached(u: string | null) {
+    const m = u && /^cgl-media:\/\/artwork\/(.+)$/.exec(u);
+    if (m) this.deps.allowArtwork?.(decodeURIComponent(m[1]));
+  }
+
+  /** Store images are kept on disk: they no longer load again every time the Library opens. */
+  private async cacheImages() {
+    if (!this.deps.cacheImage) return;
+    let changed = false, last = Date.now();
+    for (const o of this.owned) {
+      for (const key of ['cover', 'hero'] as const) {
+        const url = o[key];
+        if (!url || !url.startsWith('https://')) continue;
+        const local = await this.deps.cacheImage(url).catch(() => null);
+        if (!local) continue;
+        o[key] = local;
+        this.allowCached(local);
+        changed = true;
+      }
+      if (changed && Date.now() - last > 1500) { last = Date.now(); this.save(); this.publish(); changed = false; }
+    }
+    this.save();
+    this.publish();
   }
 
   private get dir() { return join(this.deps.dataDir, 'stores'); }
@@ -224,6 +254,7 @@ export class StoreService {
         else if (!result.account.loggedIn) this.owned = this.owned.filter((o) => o.store !== store);
       }
       this.save();
+      void this.cacheImages();
       await this.checkUpdates().catch(() => undefined);
     } finally {
       this.refreshing = false;

@@ -449,6 +449,8 @@ async function main() {
     prepareGame: (id) => gamesRepo.update(id, { prefixDir: join(paths.prefixes, `game-${id}`) }),
     changed: () => library.broadcast(),
     publish: (s) => publish('stores:changed', s),
+    cacheImage: async (url) => `cgl-media://artwork/${encodeURIComponent(await artwork.fetch(url, null))}`,
+    allowArtwork: (file) => catalogRepo.allowArtwork(file),
   });
   library.storeUpdates = (g) => stores.hasUpdate(g);
   library.storeLaunchArgs = (g) => stores.launchArgs(g);

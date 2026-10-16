@@ -3407,15 +3407,15 @@ kbd {
 .cover__store--local { color: #bfe9ff; border-color: rgba(72, 225, 255, 0.35); }
 
 /* Bought on GOG or Epic, not installed: a grey, see-through veil until it is. */
-.cover--owned .cover__art { filter: grayscale(0.85) brightness(0.62); }
-.cover__veil { position: absolute; inset: 0; z-index: 1; border-radius: inherit; background: rgba(120, 128, 140, 0.28); pointer-events: none; }
-.cover--owned:hover .cover__art, .cover--owned.is-selected .cover__art { filter: grayscale(0.55) brightness(0.75); }
+.cover--owned .cover__art img, .cover--owned .cover__art .artwork__placeholder { filter: brightness(0.55) saturate(0.55) !important; }
+.cover__veil { display: none; }
+.cover--owned:hover .cover__art img, .cover--owned.is-selected .cover__art img { filter: brightness(0.72) saturate(0.75) !important; }
 .cover__owned-state {
   position: absolute; inset-inline-end: 10px; top: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: rgba(72, 225, 255, 0.28); border: 1px solid rgba(72, 225, 255, 0.55);
 }
 .cover__progress { position: absolute; left: 0; bottom: 0; height: 4px; z-index: 3; background: linear-gradient(90deg, #48e1ff, #a084ff); border-radius: 0 4px 4px 0; transition: width 0.4s; }
-.hero--owned .hero__backdrop img { filter: grayscale(0.6) brightness(0.7); }
+.hero--owned .hero__backdrop img { filter: saturate(0.55) brightness(0.75); }
 .hero__actions-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .hero__store-update { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; }
 
