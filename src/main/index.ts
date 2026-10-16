@@ -509,8 +509,6 @@ async function main() {
       const s = settingsRepo.get();
       return { ...consentRepo.current(), showNsfw: s.showNsfw, policyRevision: s.policyRevision };
     },
-    'consent:enableNsfw': ({ acceptedWarning }) => policy.enable(acceptedWarning),
-    'consent:disableNsfw': () => policy.disable(),
     'content:setHideWomenCovers': ({ on }) => policy.setHideWomenCovers(on),
     'content:setCoverStrictness': ({ strictness }) => {
       settingsRepo.setCoverStrictness(strictness);

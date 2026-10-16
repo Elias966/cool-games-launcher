@@ -23,11 +23,6 @@ export function coverVisible(score: number | null | undefined, policy: Pick<Visi
   return !policy.hideWomenCovers || (score !== null && score !== undefined && score < (policy.coverThreshold ?? COVER_THRESHOLD.strict));
 }
 
-export const ADULT_WARNING_TITLE = 'Adult content warning';
-export const ADULT_WARNING_TEXT =
-  'Enabling this setting allows the local AI to include games containing nudity or explicit sexual content in the Store. Only continue if you are 18 or older and want to see this content.';
-export const ADULT_ACCEPT_LABEL = 'I am 18+ — Enable NSFW';
-
 export function isVisible(rating: ContentRating, policy: Pick<VisibilityPolicy, 'showNsfw'>): boolean {
   if (rating === 'safe') return true;
   if (rating === 'adult') return policy.showNsfw;

@@ -13,6 +13,18 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.12
+
+- **Smaller updates**: an update now downloads only the parts of the AppImage that changed
+  (often a few MB instead of 480 MB) and rebuilds the new version from your installed
+  copy, checked against SHA256SUMS. This works from 0.2.12 on; updating to 0.2.12 itself
+  still downloads the whole file.
+- **Store**: an easy-to-grab scrollbar, a button back to the top, and the list no longer
+  re-sorts under you while you scroll (new games appear once you are back at the top).
+- **Adult content is always hidden**: the switch to show it is gone; the cover filter stays.
+- **Fixes**: the 3D background no longer flashes white noise when the window comes back,
+  and the block game's edges no longer shimmer while it moves.
+
 ## What's new in 0.2.11
 
 - **A game in the background**: the 3D scene's centrepiece is now a holographic
@@ -73,7 +85,7 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 | **Library** | Installed and imported games as floating cover panels, a large Play control, favourites, search, per-game runner (native, Wine, Proton via umu-launcher), launch arguments, executable choice, uninstall. |
 | **Store** | Catalog discovered from your websites, search, category/tag dropdowns, platform and website filters, cinematic game detail, Download, and a browser drawer showing the bundled Firefox. |
 | **Downloads** | Persistent queue with parallel connections, progress rings, live transfer map, speed/size/ETA, pause/resume/cancel, retries, re-ordering, link re-resolution and automatic extraction into the Library. |
-| **Settings** | Websites, content visibility (NSFW), folders, local-AI limits, Valve/GE/CachyOS Proton releases, automatic compatibility installation, Wine/umu paths, appearance (language, low effects, reduced motion), privacy, launcher updates and licences. |
+| **Settings** | Websites, content (cover filter), folders, local-AI limits, Valve/GE/CachyOS Proton releases, automatic compatibility installation, Wine/umu paths, appearance (language, low effects, reduced motion), privacy, launcher updates and licences. |
 
 ### How discovery works
 
@@ -219,12 +231,10 @@ for a minute, and **Roll back** returns to it with your newer saves.
 
 ### Adult content
 
-**Show NSFW games** is off by default. Turning it on shows an 18+ warning;
-Cancel leaves it off. Consent is stored locally and survives restarts; turning
-the setting off revokes it, so turning it on again asks again. Classification
-runs in both modes; the setting only changes visibility, and unclassified games
-stay hidden either way. See [docs/CLASSIFIER.md](docs/CLASSIFIER.md) for measured
-accuracy and limitations.
+Adult (NSFW) games are always hidden; there is no setting to show them. A local
+classifier checks every game before it appears, and unclassified games stay hidden.
+Settings → Content can also hide games with a woman on the cover. See
+[docs/CLASSIFIER.md](docs/CLASSIFIER.md) for measured accuracy and limitations.
 
 ## Requirements
 
@@ -262,11 +272,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.11-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.12-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.11-x86_64.AppImage
+./Cool-Games-Launcher-0.2.12-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

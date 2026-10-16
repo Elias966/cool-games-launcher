@@ -31,54 +31,32 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('NSFW consent', () => {
-  it('is disabled on a fresh installation', () => {
+describe('adult content', () => {
+  it('is hidden on a fresh installation', () => {
     const { policy, consent } = services(db);
     expect(policy.policy().showNsfw).toBe(false);
     expect(consent.current().accepted).toBe(false);
   });
 
-  it('cannot be enabled without accepting the warning', () => {
-    const { policy } = services(db);
-    expect(() => policy.enable(false as unknown as true)).toThrow();
-    expect(policy.policy().showNsfw).toBe(false);
-  });
-
-  it('persists accepted consent across restarts', () => {
-    const { policy } = services(db);
-    policy.enable(true);
+  it('is hidden again, and the old consent forgotten, where an earlier version showed it', () => {
+    const { settings, consent } = services(db);
+    consent.accept('earlier-warning');
+    settings.update({ showNsfw: true });
+    const before = settings.get().policyRevision;
     db.close();
     db = openDb(join(dir, 'launcher.db'));
     const again = services(db);
-    expect(again.policy.policy().showNsfw).toBe(true);
-    expect(again.consent.current().accepted).toBe(true);
+    expect(again.policy.policy().showNsfw).toBe(false);
+    expect(again.settings.get().showNsfw).toBe(false);
+    expect(again.consent.current().accepted).toBe(false);
+    // A new revision makes every cached Store list hide adult games right away.
+    expect(again.policy.policy().revision).toBe(before + 1);
   });
 
-  it('revokes consent on disable, so re-enabling needs a new acceptance', () => {
-    const { policy, consent } = services(db);
-    policy.enable(true);
-    policy.disable();
-    expect(consent.current().accepted).toBe(false);
-    expect(policy.policy().showNsfw).toBe(false);
-  });
-
-  it('turns NSFW off at startup if the setting exists without a consent record', () => {
-    const { settings } = services(db);
+  it('stays hidden even if the stored setting says otherwise', () => {
+    const { settings, policy } = services(db);
     settings.update({ showNsfw: true });
-    db.close();
-    db = openDb(join(dir, 'launcher.db'));
-    expect(services(db).policy.policy().showNsfw).toBe(false);
-  });
-
-  it('bumps the policy revision on every change', () => {
-    const { policy } = services(db);
-    const r0 = policy.policy().revision;
-    policy.enable(true);
-    const r1 = policy.policy().revision;
-    policy.disable();
-    const r2 = policy.policy().revision;
-    expect(r1).toBe(r0 + 1);
-    expect(r2).toBe(r1 + 1);
+    expect(policy.policy().showNsfw).toBe(false);
   });
 });
 
@@ -108,21 +86,10 @@ describe('catalog gating', () => {
     expect(s.catalog.get(ids.adult, s.policy.policy())).toBeNull();
   });
 
-  it('includes adult entries after consent, but never unknown ones', () => {
+  it('never shows adult or unclassified entries, or adult artwork', () => {
     const s = services(db);
     const ids = seed(s);
-    s.policy.enable(true);
-    const got = s.catalog.query(s.policy.policy(), {}).entries.map((e) => e.id).sort();
-    expect(got).toEqual([ids.safe, ids.adult].sort());
     expect(s.catalog.get(ids.unknown, s.policy.policy())).toBeNull();
-  });
-
-  it('hides adult artwork the moment NSFW is disabled', () => {
-    const s = services(db);
-    seed(s);
-    s.policy.enable(true);
-    expect(s.catalog.artworkVisible('b'.repeat(40) + '.png', s.policy.policy())).toBe(true);
-    s.policy.disable();
     expect(s.catalog.artworkVisible('b'.repeat(40) + '.png', s.policy.policy())).toBe(false);
     expect(s.catalog.artworkVisible('a'.repeat(40) + '.png', s.policy.policy())).toBe(true);
     expect(s.catalog.hiddenIds(s.policy.policy()).length).toBe(2);

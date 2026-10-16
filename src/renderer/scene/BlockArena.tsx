@@ -17,7 +17,7 @@ const gy = (y: number) => (y - (ROWS - 1) / 2) * CELL;
 // I O T S Z J L
 const COLORS = ['#3fe6ff', '#ffd447', '#b07cff', '#49ff9a', '#ff4f8b', '#4f7bff', '#ff9440'].map((c) => new THREE.Color(c));
 
-export interface ArenaPulse { activity: number; flow: number; focus: number; hue: number; shockAt: number }
+export interface ArenaPulse { activity: number; flow: number; focus: number; hue: number; shockAt: number; time: number; dt: number }
 
 const BLOCK_VERTEX = /* glsl */ `
   attribute vec3 aColor; attribute float aGlow;
@@ -38,8 +38,12 @@ const BLOCK_FRAGMENT = /* glsl */ `
   void main(){
     vec3 a=abs(vLocal)*2.0;
     float mx=max(a.x,max(a.y,a.z)); float mn=min(a.x,min(a.y,a.z)); float mid=a.x+a.y+a.z-mx-mn;
-    float edge=smoothstep(0.80,0.97,mid);
-    float inset=smoothstep(0.56,0.62,mid)*(1.0-smoothstep(0.64,0.70,mid));
+    // Line widths never drop below about a pixel and thin lines dim instead,
+    // so the edges do not shimmer as the board turns.
+    float aa=max(fwidth(mid),1e-4);
+    float edge=smoothstep(0.97-max(0.17,aa*2.5),0.97+aa,mid);
+    float insetW=max(0.04,aa*1.5);
+    float inset=(1.0-smoothstep(0.0,insetW,abs(mid-0.63)))*min(1.0,0.04/insetW);
     vec3 N=normalize(vN);
     vec3 V=normalize(cameraPosition-vW);
     float fres=pow(1.0-abs(dot(N,V)),2.0);
@@ -48,11 +52,12 @@ const BLOCK_FRAGMENT = /* glsl */ `
     // A soft glow in the middle of each face, like light inside the glass.
     vec2 f=a.x>0.99?a.yz:a.y>0.99?a.xz:a.xy;
     float inner=1.0-smoothstep(0.0,0.9,length(f));
-    float scan=pow(0.5+0.5*sin(vW.y*18.0-uTime*2.6),14.0);
-    vec3 c=vColor*(0.10+lit*0.20+inner*0.22+fres*0.35+scan*0.10)
+    float scan=pow(0.5+0.5*sin(vW.y*9.0-uTime*1.6),6.0);
+    vec3 c=vColor*(0.10+lit*0.20+inner*0.22+fres*0.35+scan*0.06)
       +vColor*edge*(1.6+uBoost*0.8)
       +vColor*inset*0.40
-      +vec3(1.0)*vGlow*(0.25+edge*1.1);
+      // Landing and clearing light, tinted by the block so it never flashes plain white.
+      +mix(vColor,vec3(1.0),0.45)*vGlow*(0.16+edge*0.75);
     gl_FragColor=vec4(c,1.0);
   }`;
 
@@ -62,9 +67,9 @@ const GHOST_FRAGMENT = /* glsl */ `
   void main(){
     vec3 a=abs(vLocal)*2.0;
     float mx=max(a.x,max(a.y,a.z)); float mn=min(a.x,min(a.y,a.z)); float mid=a.x+a.y+a.z-mx-mn;
-    float edge=smoothstep(0.84,0.98,mid);
-    float flicker=0.85+0.15*sin(uTime*9.0+vW.y*30.0);
-    gl_FragColor=vec4(vColor*1.3,(edge*0.55+0.04)*uAlpha*flicker);
+    float aa=max(fwidth(mid),1e-4);
+    float edge=smoothstep(0.98-max(0.14,aa*2.5),0.98+aa,mid);
+    gl_FragColor=vec4(vColor*1.3,(edge*0.5+0.04)*uAlpha);
   }`;
 
 function blockMaterial(ghost = false) {
@@ -121,7 +126,8 @@ function useSparks() {
         uniform float uTime; varying vec3 vColor; varying float vA;
         void main(){
           float t=uTime-aBirth;
-          float life=clamp(1.0-t/1.3,0.0,1.0)*step(0.0,t);
+          if(t<0.0) t=100.0;
+          float life=clamp(1.0-t/1.3,0.0,1.0);
           vec3 p=position+aVel*(1.0-exp(-t*2.4))/2.4;
           p.y-=t*t*0.45;
           vColor=aColor; vA=life*life;
@@ -183,11 +189,11 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
     g.setAttribute('aAlong', new THREE.Float32BufferAttribute(along, 1));
     return g;
   }, []);
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const p = pulse.current;
     for (const m of [back.current, rails.current]) {
       if (!m) continue;
-      m.uniforms.uTime.value = clock.elapsedTime;
+      m.uniforms.uTime.value = p.time;
       m.uniforms.uHue.value = p.hue;
       m.uniforms.uBoost.value = Math.min(1.5, p.activity + p.focus);
     }
@@ -205,12 +211,14 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
             uniform float uTime; uniform float uHue; uniform float uBoost; varying vec2 vUv;
             void main(){
               vec2 g=vUv*vec2(${COLS}.0,${ROWS}.0);
-              vec2 f=abs(fract(g)-0.5);
-              float line=smoothstep(0.47,0.5,max(f.x,f.y));
+              // Anti-aliased cell lines, about a pixel wide at any distance.
+              vec2 d=abs(fract(g)-0.5);
+              vec2 px=(0.5-d)/fwidth(g);
+              float line=1.0-min(min(px.x,px.y),1.0);
               float dot=smoothstep(0.12,0.0,length(fract(g)-0.5));
               float scan=exp(-pow((vUv.y-fract(uTime*0.11))*30.0,2.0));
               vec3 col=mix(vec3(0.25,0.85,1.0),vec3(0.65,0.5,1.0),vUv.y);
-              float a=line*0.10+dot*0.05+scan*(0.10+line*0.5)+0.025;
+              float a=line*0.08+dot*0.04+scan*(0.06+line*0.3)+0.025;
               a*=0.8+uBoost*0.4;
               gl_FragColor=vec4(col,a);
             }`}
@@ -228,7 +236,7 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
               // Light pulses travel along the rails.
               float run=pow(fract(vAlong*0.35-uTime*0.4),10.0);
               vec3 col=mix(vec3(0.3,0.9,1.0),vec3(0.75,0.55,1.0),fract(vAlong*0.08));
-              gl_FragColor=vec4(col*(1.2+run*3.0+uBoost),0.75);
+              gl_FragColor=vec4(col*(0.7+run*1.4+uBoost*0.5),0.6);
             }`}
         />
       </lineSegments>
@@ -298,10 +306,10 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
     }
   }), [game, low, pulse, sparks]);
 
-  useFrame(({ clock }, dt) => {
-    const t = clock.elapsedTime;
-    now.current = t;
+  useFrame(() => {
     const p = pulse.current;
+    const { time: t, dt } = p;
+    now.current = t;
     const before = game.phase;
     game.update(dt, 1 + p.activity * 1.2 + p.flow * 0.8 + p.focus * 0.4);
     // A slam leaves light trails in the piece's columns.
@@ -313,8 +321,9 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
     const g = group.current;
     if (g) {
       bump.current = Math.max(0, bump.current - dt * 6);
-      g.rotation.y = Math.sin(t * 0.13) * 0.24;
-      g.rotation.x = -0.06 + Math.sin(t * 0.09) * 0.04;
+      // A slow, small turn shows the blocks are solid without making edges crawl.
+      g.rotation.y = Math.sin(t * 0.08) * 0.12;
+      g.rotation.x = -0.05;
       g.position.y = -bump.current * bump.current * 0.05;
     }
 
@@ -366,11 +375,11 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
       const f = flashState.current[i];
       if (!m) return;
       const age = f ? t - f.at : 10;
-      m.visible = age < 0.55;
+      m.visible = age >= 0 && age < 0.55;
       if (!m.visible || !f) return;
       m.position.y = gy(f.y);
       m.scale.set(0.2 + Math.min(1, age / 0.18) * 1.15, 1 - age * 0.8, 1);
-      (m.material as THREE.MeshBasicMaterial).opacity = Math.pow(1 - age / 0.55, 1.6) * 0.95;
+      (m.material as THREE.MeshBasicMaterial).opacity = Math.pow(1 - age / 0.55, 1.6) * 0.45;
     });
 
     // Slam trails: columns of light from where the piece started falling.
@@ -379,7 +388,7 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
       if (!m) return;
       const x = tr?.xs[i];
       const age = tr && tr.at >= 0 ? t - tr.at : 0;
-      m.visible = !!tr && x !== undefined && age < 0.35;
+      m.visible = !!tr && x !== undefined && age >= 0 && age < 0.35;
       if (!m.visible || !tr || x === undefined) return;
       // Follows the piece down until it lands, then fades where it stopped.
       if (tr.at < 0 && piece) tr.bottom = gy(game.view.y);
@@ -388,7 +397,7 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
       m.scale.set(CELL * 0.75, len, 1);
       const mat = m.material as THREE.ShaderMaterial;
       mat.uniforms.uColor.value.copy(tr.color);
-      mat.uniforms.uAlpha.value = tr.at < 0 ? 0.9 : Math.pow(1 - age / 0.35, 2) * 0.9;
+      mat.uniforms.uAlpha.value = tr.at < 0 ? 0.7 : Math.pow(1 - age / 0.35, 2) * 0.7;
     });
 
     sparks.flush(t);
@@ -414,7 +423,7 @@ export function BlockArena({ pulse, low }: { pulse: React.RefObject<ArenaPulse>;
       {[0, 1, 2, 3].map((i) => (
         <mesh key={`f${i}`} ref={(el) => { flashes.current[i] = el; }} visible={false} position={[0, 0, CELL * 0.55]}>
           <planeGeometry args={[W * 1.1, CELL * 1.15]} />
-          <meshBasicMaterial color="#e6fbff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial color="#8fe9ff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
         </mesh>
       ))}
       {[0, 1, 2, 3].map((i) => (

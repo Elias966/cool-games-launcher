@@ -104,9 +104,6 @@ export const requests = {
   'sounds:reset': z.object({ sound: z.enum(CUSTOM_SOUNDS) }).strict(),
   'sounds:read': z.object({ sound: z.enum(CUSTOM_SOUNDS) }).strict(),
   'consent:get': z.undefined(),
-  /** Enabling requires the explicit acceptance flag that only the consent dialog sends. */
-  'consent:enableNsfw': z.object({ acceptedWarning: z.literal(true) }).strict(),
-  'consent:disableNsfw': z.undefined(),
   'content:setHideWomenCovers': z.object({ on: z.boolean() }).strict(),
   'content:coverStatus': z.undefined(),
   'content:setCoverStrictness': z.object({ strictness: z.enum(['strict', 'balanced']) }).strict(),
@@ -260,8 +257,6 @@ export interface Responses {
   /** The file's bytes, or null when the sound has no file of its own. */
   'sounds:read': Uint8Array | null;
   'consent:get': ConsentRecord & { showNsfw: boolean; policyRevision: number };
-  'consent:enableNsfw': Settings;
-  'consent:disableNsfw': Settings;
   'content:setHideWomenCovers': Settings;
   'content:coverStatus': { checked: number; women: number; pending: number; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
   'content:setCoverStrictness': Settings;

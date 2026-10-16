@@ -1,6 +1,6 @@
 import { KineticTitle } from '../components/KineticTitle';
 import { latestCatalogDownload } from '@shared/download-state';
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from '../api';
 import { attempt, setState, setStoreView, setTab, useApp } from '../state';
@@ -59,6 +59,10 @@ export function StoreTab() {
   const restoreScroll = useRef(view.scrollTop);
   const wanted = useRef(Math.max(PAGE, view.loaded));
   const loadingMore = useRef(false);
+  /** Scrolled far enough down to offer the way back to the top. */
+  const [farDown, setFarDown] = useState(false);
+  /** Newly indexed games are waiting: they are applied at the top, never under the reader's eyes. */
+  const [stale, setStale] = useState(false);
 
   const setSort = (v: CatalogSort) => setStoreView({ sort: v, scrollTop: 0 });
   const setCategory = (v: string) => setStoreView({ category: v, scrollTop: 0 });
@@ -159,28 +163,54 @@ export function StoreTab() {
     });
   }, [fetchWindow]);
 
-  // While indexing adds games, refresh what is loaded at most every few seconds.
+  // While indexing adds games, refresh what is loaded at most every few seconds,
+  // but only near the top: re-sorting the list while someone scrolls through it
+  // moves the games under their eyes. Further down the refresh waits.
+  const NEAR_TOP = 300;
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRefresh = useRef(0);
+  const refresh = useCallback(() => {
+    lastRefresh.current = Date.now();
+    setStale(false);
+    void fetchWindow(Math.max(PAGE, wanted.current), false);
+  }, [fetchWindow]);
   useEffect(() => {
     if (firstLoad.current) return;
     if (refreshTimer.current) return;
     const wait = Math.max(0, 4000 - (Date.now() - lastRefresh.current));
     refreshTimer.current = setTimeout(() => {
       refreshTimer.current = null;
-      lastRefresh.current = Date.now();
-      void fetchWindow(Math.max(PAGE, wanted.current), false);
+      if (scrollTop.current > NEAR_TOP) setStale(true);
+      else refresh();
     }, wait);
   }, [catalogVersion]);
   useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  const onScroll = (top: number) => {
+    scrollTop.current = top;
+    if ((top > 900) !== farDown) setFarDown(top > 900);
+    if (stale && top <= NEAR_TOP) refresh();
+  };
 
   // Endless scrolling: the next page loads before the bottom comes into view.
+  // It only appends, so the games already on screen never move.
   const loadMore = useCallback(() => {
     if (loadingMore.current || entries.length >= total) return;
     loadingMore.current = true;
-    wanted.current = entries.length + PAGE;
-    void fetchWindow(wanted.current, false).finally(() => { loadingMore.current = false; });
-  }, [entries.length, total, fetchWindow]);
+    const gen = generation.current;
+    const revision = policy.revision;
+    const offset = entries.length;
+    wanted.current = offset + PAGE;
+    void api.invoke('catalog:list', { ...query, limit: PAGE, offset }).then((page) => {
+      if (gen !== generation.current || page.policyRevision !== revision) return;
+      setEntries((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        const next = [...prev, ...page.entries.filter((e) => !seen.has(e.id))];
+        setStoreView({ loaded: next.length });
+        return next;
+      });
+      setTotal(page.total);
+    }).catch(() => undefined).finally(() => { loadingMore.current = false; });
+  }, [entries.length, total, query, policy.revision]);
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -285,7 +315,7 @@ export function StoreTab() {
   const blocked = sources.filter((s) => s.enabled && (s.status === 'blocked' || s.status === 'unsupported' || s.status === 'error'));
   return (
     <div className={`page page--store ${browserOpen ? 'has-drawer' : ''}`}>
-      <div className="page__scroll" ref={scrollRef} onScroll={(e) => { scrollTop.current = e.currentTarget.scrollTop; }}>
+      <div className="page__scroll" ref={scrollRef} onScroll={(e) => onScroll(e.currentTarget.scrollTop)}>
         <header className="page__header">
           <div className="page__titles">
             <p className="eyebrow">{t('Discovery')}</p>
@@ -466,6 +496,21 @@ export function StoreTab() {
           </>
         )}
       </div>
+      <AnimatePresence>
+        {farDown && (
+          <motion.button
+            key="to-top"
+            className={`to-top ${stale ? 'to-top--news' : ''}`}
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
+            onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            aria-label={stale ? t('Back to top — new games are waiting') : t('Back to top')}
+            title={stale ? t('Back to top — new games are waiting') : t('Back to top')}
+          >
+            <Icon name="up" size={20} />
+            {stale && <span>{t('New games')}</span>}
+          </motion.button>
+        )}
+      </AnimatePresence>
       <AnimatePresence>{browserOpen && <BrowserDrawer />}</AnimatePresence>
     </div>
   );

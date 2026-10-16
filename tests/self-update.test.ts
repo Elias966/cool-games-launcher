@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SelfUpdater, compareVersions, expectedSum, looksLikeAppImage, readRelease } from '../src/main/self-update';
 import type { LauncherUpdate } from '../src/shared/types';
+import { makeIndex } from '../scripts/block-delta.mjs';
+import { randomBytes } from 'node:crypto';
 
 const cleanup: Array<() => void> = [];
 afterEach(() => cleanup.splice(0).forEach((f) => f()));
@@ -46,7 +48,7 @@ const release = (version = 'v0.2.7') => ({
   ],
 });
 
-function updater(appImage: string | null, fetch: (url: string) => Promise<Response>) {
+function updater(appImage: string | null, fetch: (url: string, init?: { headers?: Record<string, string> }) => Promise<Response>) {
   const states: LauncherUpdate[] = [];
   const announced: string[] = [];
   const restarts: string[] = [];
@@ -146,5 +148,93 @@ describe('launcher self-update', () => {
     u.installFile(chosen);
     expect(readFileSync(current).equals(fakeAppImage('manual'))).toBe(true);
     expect(restarts).toEqual([current]);
+  });
+
+  describe('downloading only what changed', () => {
+    /** An AppImage-like file of random blocks, so nothing matches by accident. */
+    function images() {
+      const head = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0x41, 0x49, 0x02, 0, 0, 0, 0, 0]);
+      const body = randomBytes(4 * 1024 * 1024);
+      const old = Buffer.concat([head, body]);
+      // The new version: 300 KB changed in the middle, and 5 bytes inserted near the start (everything after shifts).
+      const changed = Buffer.from(body);
+      randomBytes(300 * 1024).copy(changed, 2 * 1024 * 1024);
+      const next = Buffer.concat([head, changed.subarray(0, 1000), Buffer.from('12345'), changed.subarray(1000)]);
+      return { old, next };
+    }
+
+    function server(next: Buffer, blocks: Buffer | null, ranges = true) {
+      const served = { whole: 0, ranged: 0 };
+      const files: Record<string, Buffer | string> = { SHA256SUMS: `${sha(next)}  ${NAME}\n` };
+      const rel = release();
+      if (blocks) {
+        files[`${NAME}.blocks`] = blocks;
+        rel.assets.push({ name: `${NAME}.blocks`, browser_download_url: `https://github.com/Elias966/cool-games-launcher/releases/download/v0.2.7/${NAME}.blocks`, size: blocks.length });
+      }
+      rel.assets[0].size = next.length;
+      const fetch = async (url: string, init?: { headers?: Record<string, string> }) => {
+        if (url.includes('/releases/latest')) return new Response(JSON.stringify(rel), { status: 200 });
+        const name = url.split('/').pop()!;
+        if (name === NAME) {
+          const range = init?.headers?.Range;
+          const m = range && ranges ? /^bytes=(\d+)-(\d+)$/.exec(range) : null;
+          if (m) {
+            const part = next.subarray(Number(m[1]), Number(m[2]) + 1);
+            served.ranged += part.length;
+            return new Response(new Uint8Array(part), { status: 206, headers: { 'content-length': String(part.length) } });
+          }
+          served.whole += next.length;
+          return new Response(new Uint8Array(next), { status: 200, headers: { 'content-length': String(next.length) } });
+        }
+        const body = files[name];
+        return body === undefined ? new Response('missing', { status: 404 }) : new Response(typeof body === 'string' ? body : new Uint8Array(body), { status: 200 });
+      };
+      return { fetch, served };
+    }
+
+    function setup(blocksFor: (newFile: string) => Buffer | null, ranges = true) {
+      const d = dir();
+      const { old, next } = images();
+      const current = join(d, 'Cool-Games-Launcher.AppImage');
+      writeFileSync(current, old, { mode: 0o755 });
+      const newFile = join(d, 'new.AppImage');
+      writeFileSync(newFile, next);
+      const srv = server(next, blocksFor(newFile), ranges);
+      return { current, next, ...srv, ...updater(current, srv.fetch) };
+    }
+
+    it('downloads only the changed parts and rebuilds the new version exactly', async () => {
+      const t = setup((f) => makeIndex(f));
+      await t.u.check();
+      const done = await t.u.download();
+      expect(done.state).toBe('ready');
+      expect(t.served.whole).toBe(0);
+      // About the 300 KB that changed plus the blocks around the edits, not the 4 MB file.
+      expect(t.served.ranged).toBeGreaterThan(300 * 1024);
+      expect(t.served.ranged).toBeLessThan(800 * 1024);
+      expect(t.states.some((s) => s.phase === 'changed' && s.fullSize === t.next.length)).toBe(true);
+      t.u.install();
+      expect(readFileSync(t.current).equals(t.next)).toBe(true);
+    });
+
+    it('downloads the whole file when the server ignores range requests', async () => {
+      const t = setup((f) => makeIndex(f), false);
+      await t.u.check();
+      expect((await t.u.download()).state).toBe('ready');
+      expect(t.served.whole).toBeGreaterThan(0);
+      t.u.install();
+      expect(readFileSync(t.current).equals(t.next)).toBe(true);
+    });
+
+    it('downloads the whole file when the block index is broken or missing', async () => {
+      for (const blocks of [() => Buffer.from('not an index'), () => null]) {
+        const t = setup(blocks);
+        await t.u.check();
+        expect((await t.u.download()).state).toBe('ready');
+        expect(t.served.whole).toBe(t.next.length);
+        t.u.install();
+        expect(readFileSync(t.current).equals(t.next)).toBe(true);
+      }
+    });
   });
 });

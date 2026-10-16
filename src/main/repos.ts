@@ -114,7 +114,8 @@ export class SettingsRepo {
 
   policy(): VisibilityPolicy {
     const s = this.get();
-    return { showNsfw: s.showNsfw, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers, coverThreshold: COVER_THRESHOLD[s.coverStrictness] ?? COVER_THRESHOLD.strict };
+    // Adult games are always hidden.
+    return { showNsfw: false, revision: s.policyRevision, hideWomenCovers: s.hideWomenCovers, coverThreshold: COVER_THRESHOLD[s.coverStrictness] ?? COVER_THRESHOLD.strict };
   }
 
   /** Turns the cover filter on or off and bumps the policy revision. */
@@ -131,7 +132,7 @@ export class SettingsRepo {
     return this.update({ coverStrictness: strictness, policyRevision: cur.policyRevision + 1 });
   }
 
-  /** Changes NSFW visibility and bumps the policy revision atomically. */
+  /** Changes the stored NSFW flag (only ever switched off now) and bumps the policy revision atomically. */
   setShowNsfw(show: boolean): Settings {
     const cur = this.get();
     if (cur.showNsfw === show) return cur;

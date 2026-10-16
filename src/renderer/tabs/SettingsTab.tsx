@@ -7,7 +7,6 @@ import { formatBytes } from '@shared/format';
 import { api } from '../api';
 import { attempt, pushToast, useApp } from '../state';
 import { Button, Dialog, IconButton } from '../components/ui';
-import { ConsentDialog } from '../components/ConsentDialog';
 import { Icon, type IconName } from '../components/Icon';
 import { sound, type SoundName } from '../sound';
 import { MAX_CLIP_SECONDS } from '../sound-clip';
@@ -23,7 +22,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
-  { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('Adult-content visibility'), keywords: 'nsfw adult content consent classifier safe mature woman women female girl anime cover filter' },
+  { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('What the Store hides'), keywords: 'nsfw adult content classifier safe mature woman women female girl anime cover filter' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
   { id: 'sound', label: tk('Sound'), icon: 'volume', blurb: tk('Interface sounds'), keywords: 'sound audio volume hover click navigation funny fart close mute alerts downloads' },
   { id: 'privacy', label: tk('Privacy & data'), icon: 'lock', blurb: tk('Tracking and stored data'), keywords: 'privacy tracking do not track cookies clear cache browser data forget catalog' },
@@ -150,7 +149,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
     compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
-    content: `${settings.showNsfw ? t('Adult content shown') : t('Adult content hidden')}${settings.hideWomenCovers ? ` · ${t('cover filter on')}` : ''}`,
+    content: `${t('Adult content hidden')}${settings.hideWomenCovers ? ` · ${t('cover filter on')}` : ''}`,
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
     sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
@@ -643,24 +642,16 @@ function CoverFilterRow({ settings }: { settings: Settings }) {
 }
 
 function ContentSection({ settings }: { settings: Settings }) {
-  const [dialog, setDialog] = useState(false);
-  const [consentAt, setConsentAt] = useState<string | null>(null);
-  useEffect(() => { void api.invoke('consent:get').then((c) => setConsentAt(c.acceptedAt)); }, [settings.showNsfw]);
   return (
     <>
       <Group>
-        <Row label={t('Show adult (NSFW) games')} desc={settings.showNsfw ? `${t('Shown with an NSFW badge.')}${consentAt ? ` ${t('You confirmed you are 18+ on {when}.', { when: new Date(consentAt).toLocaleString(locale()) })}` : ''}` : t('Hidden. Browser previews of adult pages are masked too.')}>
-          <Switch checked={settings.showNsfw} label={t('Show adult games')} onChange={(v) => { if (v) setDialog(true); else void attempt(() => api.invoke('consent:disableNsfw'), t('Adult content is hidden again.')); }} />
-        </Row>
         <CoverFilterRow settings={settings} />
       </Group>
       <ul className="st-facts">
+        <li>{t('Adult (NSFW) games are always hidden, and browser previews of adult pages are masked.')}</li>
         <li>{t('Every game’s artwork and text is checked by a local classifier (on your GPU) before it appears. Unchecked games stay hidden.')}</li>
-        <li>{t('Turning this off applies immediately, including to cached results.')}</li>
-        <li>{t('Turning it on again asks for confirmation again. It never starts downloads.')}</li>
         <li>{t('Automatic classification is good but not perfect.')}</li>
       </ul>
-      <ConsentDialog open={dialog} onCancel={() => setDialog(false)} onAccept={() => { setDialog(false); void attempt(() => api.invoke('consent:enableNsfw', { acceptedWarning: true })); }} />
     </>
   );
 }
@@ -822,7 +813,9 @@ function LauncherUpdates() {
       </div>
     );
   } else if (u.state === 'downloading') {
-    desc = u.size ? t('Downloading version {version} · {done} of {total}', { version: u.latest, done: formatBytes(u.received), total: formatBytes(u.size) }) : t('Downloading version {version} · {done}', { version: u.latest, done: formatBytes(u.received) });
+    if (u.phase === 'scanning') desc = t('Finding what changed in version {version} · {p}%', { version: u.latest, p: Math.round((u.received / (u.size || 1)) * 100) });
+    else if (u.phase === 'changed' && u.size && u.fullSize) desc = t('Downloading only the changed parts of version {version} · {done} of {total} (the full file is {full})', { version: u.latest, done: formatBytes(u.received), total: formatBytes(u.size), full: formatBytes(u.fullSize) });
+    else desc = u.size ? t('Downloading version {version} · {done} of {total}', { version: u.latest, done: formatBytes(u.received), total: formatBytes(u.size) }) : t('Downloading version {version} · {done}', { version: u.latest, done: formatBytes(u.received) });
     action = <Button size="sm" variant="ghost" onClick={() => void attempt(() => api.invoke('launcher:cancelUpdate'))}>{t('Cancel')}</Button>;
   } else if (u.state === 'ready') {
     desc = t('Version {version} is downloaded and verified. Restarting takes a few seconds; downloads resume afterwards.', { version: u.latest });

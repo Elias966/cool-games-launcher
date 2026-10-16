@@ -2,11 +2,21 @@
 // carries the AppImage and a SHA256SUMS file; the new AppImage is downloaded
 // next to the running one, checked against SHA256SUMS, and swapped in with a
 // rename (atomic on the same filesystem) before the launcher restarts.
+// When the release also has a block index ("<AppImage>.blocks"), only the parts
+// of the new AppImage that the installed one lacks are downloaded (HTTP range
+// requests) and the rest is copied from the installed file; see
+// scripts/block-delta.mjs. Anything unexpected falls back to the whole file.
+
+/** Below this share of the whole file, downloading only the changed parts is worth it. */
+const CHANGED_PARTS_LIMIT = 0.7;
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, closeSync, constants, copyFileSync, createWriteStream, existsSync, openSync, readSync, renameSync, rmSync } from 'node:fs';
+import { accessSync, chmodSync, closeSync, constants, copyFileSync, createReadStream, createWriteStream, existsSync, openSync, readSync, renameSync, rmSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { basename, dirname, join } from 'node:path';
 import type { LauncherUpdate } from '@shared/types';
 import { tm } from './i18n';
+import { findLocalBlocks, missingRanges, parseIndex } from '../../scripts/block-delta.mjs';
 
 export const UPDATE_REPO = 'Elias966/cool-games-launcher';
 // CGL_UPDATE_TEST_ORIGIN points the updater at a local stand-in for GitHub (tests only).
@@ -30,6 +40,8 @@ export interface ReleaseInfo {
   pageUrl: string;
   asset: { name: string; url: string; size: number };
   sumsUrl: string | null;
+  /** The block index of the AppImage, for downloading only what changed. */
+  blocksUrl: string | null;
 }
 
 interface GithubRelease {
@@ -48,12 +60,14 @@ export function readRelease(r: GithubRelease): ReleaseInfo | null {
   const image = assets.find((a) => /x86_64\.AppImage$/i.test(a.name!)) ?? assets.find((a) => /\.AppImage$/i.test(a.name!));
   if (!image) return null;
   const sums = assets.find((a) => a.name === 'SHA256SUMS');
+  const blocks = assets.find((a) => a.name === `${image.name}.blocks`);
   return {
     version: r.tag_name.replace(/^v/i, ''),
     notes: r.body?.trim() || null,
     pageUrl: r.html_url ?? `https://github.com/${UPDATE_REPO}/releases`,
     asset: { name: image.name!, url: image.browser_download_url!, size: image.size ?? 0 },
     sumsUrl: sums?.browser_download_url ?? null,
+    blocksUrl: blocks?.browser_download_url ?? null,
   };
 }
 
@@ -102,7 +116,7 @@ export class SelfUpdater {
   constructor(private readonly deps: SelfUpdateDeps) {
     this.state = {
       current: deps.version, state: 'idle', latest: null, notes: null, pageUrl: `https://github.com/${UPDATE_REPO}/releases`,
-      size: null, received: 0, error: null, checkedAt: null, canInstall: this.canInstall(),
+      size: null, received: 0, error: null, checkedAt: null, canInstall: this.canInstall(), phase: null, fullSize: null,
     };
     this.cleanup();
   }
@@ -167,7 +181,7 @@ export class SelfUpdater {
     if (!part || !this.canInstall()) { this.set({ state: 'error', error: tm('This copy cannot replace itself. Download the new version from the release page.') }); return this.status(); }
     this.abort = new AbortController();
     const signal = this.abort.signal;
-    this.set({ state: 'downloading', received: 0, size: release.asset.size || null, error: null });
+    this.set({ state: 'downloading', received: 0, size: release.asset.size || null, error: null, phase: null, fullSize: null });
     try {
       if (!release.sumsUrl) throw new Error(tm('The release has no SHA256SUMS file, so the download cannot be verified.'));
       const sumsRes = await this.deps.fetch(release.sumsUrl, { signal });
@@ -175,38 +189,132 @@ export class SelfUpdater {
       const want = expectedSum(await sumsRes.text(), release.asset.name);
       if (!want) throw new Error(tm('SHA256SUMS does not list {file}.', { file: release.asset.name }));
 
-      const res = await this.deps.fetch(release.asset.url, { signal });
-      if (!res.ok || !res.body) throw new Error(tm('The download failed (HTTP {code}).', { code: res.status }));
-      const size = Number(res.headers.get('content-length')) || release.asset.size || null;
-      const hash = createHash('sha256');
-      const out = createWriteStream(part, { mode: 0o755 });
-      let received = 0;
-      let last = 0;
-      const reader = res.body.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          hash.update(value);
-          received += value.length;
-          if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()));
-          const now = Date.now();
-          if (now - last > 250) { last = now; this.set({ received, size }); }
+      let ok = false;
+      if (release.blocksUrl) {
+        try {
+          ok = await this.downloadChanged(release, want, part, signal);
+        } catch (e) {
+          if (signal.aborted) throw e;
+          // Anything unexpected: the whole file instead.
+          rmSync(part, { force: true });
         }
-      } finally {
-        await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
       }
-      if (hash.digest('hex') !== want) throw new Error(tm('The downloaded file does not match its checksum. Nothing was changed.'));
+      if (!ok) await this.downloadWhole(release, want, part, signal);
       chmodSync(part, 0o755);
       if (!looksLikeAppImage(part)) throw new Error(tm('The downloaded file is not an AppImage. Nothing was changed.'));
-      this.set({ state: 'ready', received, size: size ?? received });
+      this.set({ state: 'ready' });
     } catch (e) {
       rmSync(part, { force: true });
-      this.set({ state: signal.aborted ? 'available' : 'error', error: signal.aborted ? null : (e as Error).message, received: 0 });
+      this.set({ state: signal.aborted ? 'available' : 'error', error: signal.aborted ? null : (e as Error).message, received: 0, phase: null, fullSize: null });
     } finally {
       this.abort = null;
     }
     return this.status();
+  }
+
+  private async downloadWhole(release: ReleaseInfo, want: string, part: string, signal: AbortSignal) {
+    const res = await this.deps.fetch(release.asset.url, { signal });
+    if (!res.ok || !res.body) throw new Error(tm('The download failed (HTTP {code}).', { code: res.status }));
+    const size = Number(res.headers.get('content-length')) || release.asset.size || null;
+    this.set({ phase: 'whole', size, received: 0, fullSize: null });
+    const hash = createHash('sha256');
+    const out = createWriteStream(part, { mode: 0o755 });
+    let received = 0;
+    let last = 0;
+    const reader = res.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        hash.update(value);
+        received += value.length;
+        if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()));
+        const now = Date.now();
+        if (now - last > 250) { last = now; this.set({ received, size }); }
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+    }
+    this.set({ received, size: size ?? received });
+    if (hash.digest('hex') !== want) throw new Error(tm('The downloaded file does not match its checksum. Nothing was changed.'));
+  }
+
+  /**
+   * Builds the new AppImage from the parts the installed one already has plus
+   * the changed parts, downloaded with range requests. False when that would
+   * not save much; throws when anything does not add up (the caller then
+   * downloads the whole file).
+   */
+  private async downloadChanged(release: ReleaseInfo, want: string, part: string, signal: AbortSignal): Promise<boolean> {
+    const current = this.deps.appImage!;
+    const res = await this.deps.fetch(release.blocksUrl!, { signal });
+    if (!res.ok) return false;
+    const index = parseIndex(Buffer.from(await res.arrayBuffer()));
+    if (release.asset.size && index.size !== release.asset.size) return false;
+
+    this.set({ phase: 'scanning', received: 0, size: index.size, fullSize: index.size });
+    let lastScan = 0;
+    const found = await findLocalBlocks(current, index, (f) => {
+      if (signal.aborted) throw new Error('aborted');
+      const now = Date.now();
+      if (now - lastScan > 250) { lastScan = now; this.set({ received: Math.round(f * index.size) }); }
+    });
+    const ranges = missingRanges(found, index);
+    const needed = ranges.reduce((n, [a, b]) => n + b - a, 0);
+    if (needed > index.size * CHANGED_PARTS_LIMIT) return false;
+
+    const out = await open(part, 'w', 0o755);
+    try {
+      await out.truncate(index.size);
+      // The parts this copy already has.
+      const old = await open(current, 'r');
+      try {
+        const buf = Buffer.allocUnsafe(index.blockSize);
+        for (let i = 0; i < index.count; i++) {
+          if (found[i] < 0) continue;
+          if (signal.aborted) throw new Error('aborted');
+          const len = Math.min(index.blockSize, index.size - i * index.blockSize);
+          const { bytesRead } = await old.read(buf, 0, len, found[i]);
+          if (bytesRead !== len) throw new Error('short read');
+          await out.write(buf, 0, len, i * index.blockSize);
+        }
+      } finally {
+        await old.close();
+      }
+      // The changed parts, a few ranges at a time.
+      this.set({ phase: 'changed', received: 0, size: needed, fullSize: index.size });
+      let received = 0;
+      let last = 0;
+      const queue = [...ranges];
+      const worker = async () => {
+        for (let r = queue.shift(); r; r = queue.shift()) {
+          const [start, end] = r;
+          const got = await this.deps.fetch(release.asset.url, { signal, headers: { Range: `bytes=${start}-${end - 1}` } });
+          if (got.status !== 206 || !got.body) throw new Error(`range request answered ${got.status}`);
+          let pos = start;
+          const reader = got.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (pos + value.length > end) throw new Error('range longer than asked');
+            await out.write(value, 0, value.length, pos);
+            pos += value.length;
+            received += value.length;
+            const now = Date.now();
+            if (now - last > 250) { last = now; this.set({ received }); }
+          }
+          if (pos !== end) throw new Error('range shorter than asked');
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      this.set({ received: needed });
+    } finally {
+      await out.close();
+    }
+    const hash = createHash('sha256');
+    await pipeline(createReadStream(part), hash);
+    if (hash.digest('hex') !== want) throw new Error('rebuilt file does not match its checksum');
+    return true;
   }
 
   cancel() {

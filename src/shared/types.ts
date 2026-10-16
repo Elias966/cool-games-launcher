@@ -482,6 +482,14 @@ export interface LauncherUpdate {
   checkedAt: string | null;
   /** Running from an AppImage that this user may replace. */
   canInstall: boolean;
+  /**
+   * How the download goes: 'scanning' looks for the parts the installed copy
+   * already has (`received`/`size` count scanned bytes), 'changed' downloads only
+   * the rest, 'whole' downloads the full file.
+   */
+  phase?: 'scanning' | 'changed' | 'whole' | null;
+  /** Size of the whole new AppImage while only its changed parts download. */
+  fullSize?: number | null;
 }
 
 /** Play time of the last seven days. */

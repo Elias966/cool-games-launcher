@@ -1,46 +1,30 @@
-// NSFW consent and visibility policy. Enabling requires the warning to have
-// been accepted in this request; disabling revokes consent so re-enabling
-// asks again. Every change bumps the policy revision.
+// Visibility policy. Adult (NSFW) games are always hidden: there is no switch
+// to show them. A launcher that had them shown (versions before 0.2.12) hides
+// them again on start and forgets the old consent. Every change bumps the
+// policy revision.
 import { EventEmitter } from 'node:events';
-import { ADULT_WARNING_TEXT, type VisibilityPolicy } from '@shared/policy';
+import type { VisibilityPolicy } from '@shared/policy';
 import type { ConsentRepo, SettingsRepo } from './repos';
-import { warningHash } from './repos';
 import type { Settings } from '@shared/types';
 
 export class PolicyService extends EventEmitter {
   constructor(
     private settings: SettingsRepo,
-    private consent: ConsentRepo,
+    consent: ConsentRepo,
   ) {
     super();
-    // Self-heal: NSFW may only be on while a consent record exists.
-    const s = settings.get();
-    if (s.showNsfw && !consent.current().accepted) settings.setShowNsfw(false);
+    if (settings.get().showNsfw) settings.setShowNsfw(false);
+    if (consent.current().accepted) consent.revoke();
   }
 
   policy(): VisibilityPolicy {
     return this.settings.policy();
   }
 
-  enable(acceptedWarning: true): Settings {
-    if (acceptedWarning !== true) throw new Error('The adult content warning must be accepted');
-    this.consent.accept(warningHash(ADULT_WARNING_TEXT));
-    const s = this.settings.setShowNsfw(true);
-    this.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
-    return s;
-  }
-
   /** Hides or shows Store games whose cover's main subject is a woman. */
   setHideWomenCovers(on: boolean): Settings {
     const s = this.settings.setHideWomenCovers(on);
-    this.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
-    return s;
-  }
-
-  disable(): Settings {
-    this.consent.revoke();
-    const s = this.settings.setShowNsfw(false);
-    this.emit('changed', { showNsfw: s.showNsfw, revision: s.policyRevision });
+    this.emit('changed', { showNsfw: false, revision: s.policyRevision });
     return s;
   }
 }

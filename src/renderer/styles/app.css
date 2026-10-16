@@ -655,6 +655,33 @@
   padding-inline-end: 24px;
 }
 
+/* Back to the top of a long Store list. */
+.to-top {
+  position: absolute;
+  inset-inline-end: calc(var(--page-pad) + 6px);
+  bottom: calc(var(--dock-h) + 30px);
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  min-width: 48px;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 172, 214, 0.28);
+  background: rgba(14, 19, 30, 0.82);
+  backdrop-filter: blur(12px);
+  color: var(--text, #e8eefc);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.to-top:hover { border-color: rgba(72, 225, 255, 0.6); background: rgba(20, 28, 44, 0.92); }
+.to-top:focus-visible { outline: 2px solid rgba(72, 225, 255, 0.8); outline-offset: 2px; }
+.to-top--news { border-color: rgba(72, 225, 255, 0.55); color: #bff4ff; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));

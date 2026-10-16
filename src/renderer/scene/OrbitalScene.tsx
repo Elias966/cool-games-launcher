@@ -33,7 +33,23 @@ const CAMERA_TARGETS: Record<TabId, { pos: [number, number, number]; look: [numb
 };
 
 /** Shared animated state: one place the frame loop writes, every shader reads. */
-interface Pulse { activity: number; flow: number; warp: number; hue: number; shockAt: number; focus: number; shake: number }
+interface Pulse {
+  activity: number; flow: number; warp: number; hue: number; shockAt: number; focus: number; shake: number;
+  /** Scene time in seconds. Unlike three's clock it never restarts (it does when the window is hidden and shown). */
+  time: number;
+  /** This frame's step, 0..0.1 s. */
+  dt: number;
+}
+
+/** Advances the scene's own clock; first in the tree so every other frame callback sees this frame's time. */
+function Timebase({ pulse }: { pulse: React.RefObject<Pulse> }) {
+  useFrame((_, dt) => {
+    const p = pulse.current;
+    p.dt = Math.min(0.1, Math.max(0, dt));
+    p.time += p.dt;
+  });
+  return null;
+}
 
 // Ashima Arts 3D simplex noise (MIT) and fractal sum; used by core and nebula.
 const NOISE = /* glsl */ `
@@ -72,9 +88,9 @@ vec3 palette(float t,float hue){
 /** Volumetric-looking nebula on a large inward sphere, slowly evolving. */
 function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
   const mat = useRef<THREE.ShaderMaterial>(null);
-  useFrame(({ clock }) => {
+  useFrame(() => {
     if (!mat.current) return;
-    mat.current.uniforms.uTime.value = clock.elapsedTime;
+    mat.current.uniforms.uTime.value = pulse.current.time;
     mat.current.uniforms.uHue.value = pulse.current.hue;
     mat.current.uniforms.uActivity.value = pulse.current.activity;
   });
@@ -153,9 +169,9 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
     lines.setAttribute('tail', new THREE.BufferAttribute(tail, 1));
     return { points, lines };
   }, [count]);
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const warp = pulse.current.warp;
-    if (pointsMat.current) { pointsMat.current.uniforms.uTime.value = clock.elapsedTime; pointsMat.current.uniforms.uWarp.value = warp; }
+    if (pointsMat.current) { pointsMat.current.uniforms.uTime.value = pulse.current.time; pointsMat.current.uniforms.uWarp.value = warp; }
     if (linesMat.current) linesMat.current.uniforms.uWarp.value = warp;
   });
   return (
@@ -204,9 +220,9 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
 /** Grid floor with shockwave pulses rolling out from under the core. */
 function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: React.RefObject<THREE.Group | null> }) {
   const mat = useRef<THREE.ShaderMaterial>(null);
-  useFrame(({ clock }) => {
+  useFrame(() => {
     if (!mat.current) return;
-    mat.current.uniforms.uTime.value = clock.elapsedTime;
+    mat.current.uniforms.uTime.value = pulse.current.time;
     mat.current.uniforms.uHue.value = pulse.current.hue;
     mat.current.uniforms.uActivity.value = pulse.current.activity;
     const c = center.current?.position;
@@ -245,20 +261,22 @@ function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: R
 /** Eases the shared pulse toward live values and fires a warp on tab change. */
 function Driver({ tab, activity, flow, animate, pulse }: { tab: TabId; activity: number; flow: number; animate: boolean; pulse: React.RefObject<Pulse> }) {
   const warpStart = useRef(-10);
-  const clock = useThree((s) => s.clock);
-  const first = useRef(true);
+  const shownTab = useRef(tab);
+  // Only a change of tab warps (not the window being shown again).
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    if (animate) warpStart.current = clock.elapsedTime;
-  }, [tab, animate, clock]);
+    if (shownTab.current === tab) return;
+    shownTab.current = tab;
+    if (animate) warpStart.current = pulse.current.time;
+  }, [tab, animate, pulse]);
   useEffect(() => onScene((e) => {
     const p = pulse.current;
-    if (e === 'shockwave' || e === 'burst') { p.shockAt = clock.elapsedTime; p.shake = Math.max(p.shake, e === 'burst' ? 1 : 0.6); }
+    if (e === 'shockwave' || e === 'burst') { p.shockAt = p.time; p.shake = Math.max(p.shake, e === 'burst' ? 1 : 0.6); }
     // A gentle glow per hovered card; sweeping across many cards must not wash the scene out.
     if (e === 'focus') p.focus = Math.min(0.45, p.focus + 0.15);
-  }), [clock]);
-  useFrame(({ clock }, dt) => {
+  }), [pulse]);
+  useFrame(() => {
     const p = pulse.current;
+    const dt = p.dt;
     p.focus = Math.max(0, p.focus - dt * 1.4);
     p.shake = Math.max(0, p.shake - dt * 1.8);
     const k = animate ? Math.min(1, dt * 2) : 1;
@@ -266,7 +284,7 @@ function Driver({ tab, activity, flow, animate, pulse }: { tab: TabId; activity:
     p.flow += (flow - p.flow) * Math.min(1, dt);
     p.hue += (CAMERA_TARGETS[tab].hue - p.hue) * (animate ? Math.min(1, dt * 1.2) : 1);
     // Warp: fast rise, slower fall, ~0.9 s total.
-    const w = clock.elapsedTime - warpStart.current;
+    const w = p.time - warpStart.current;
     p.warp = w < 0 || w > 0.9 ? 0 : w < 0.18 ? w / 0.18 : 1 - (w - 0.18) / 0.72;
   });
   return null;
@@ -284,9 +302,9 @@ function Rig({ tab, animate, pulse }: { tab: TabId; animate: boolean; pulse: Rea
     window.addEventListener('pointermove', onMove, { passive: true });
     return () => window.removeEventListener('pointermove', onMove);
   }, []);
-  useFrame(({ clock }, dt) => {
+  useFrame(() => {
     const target = CAMERA_TARGETS[tab];
-    const t = clock.elapsedTime;
+    const { time: t, dt } = pulse.current;
     const drift = animate ? 1 : 0;
     const k = animate ? Math.min(1, dt * 1.6) : 1;
     const px = target.pos[0] + Math.sin(t * 0.07) * 0.8 * drift + pointer.current.x * 1.1 * drift;
@@ -326,8 +344,8 @@ function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
     g.setAttribute('dir', new THREE.BufferAttribute(dir, 4));
     return g;
   }, []);
-  useFrame(({ clock }) => {
-    const age = clock.elapsedTime - pulse.current.shockAt;
+  useFrame(() => {
+    const age = pulse.current.time - pulse.current.shockAt;
     const live = age >= 0 && age < 1.6;
     const e = 1 - Math.pow(1 - Math.min(1, age / 1.4), 3);
     if (shell.current && shellMat.current) {
@@ -383,7 +401,7 @@ function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
 }
 
 /** Occasional comets streaking across the deep background. */
-function Comets() {
+function Comets({ pulse }: { pulse: React.RefObject<Pulse> }) {
   const COUNT = 7;
   const mat = useRef<THREE.ShaderMaterial>(null);
   const geo = useMemo(() => {
@@ -398,7 +416,7 @@ function Comets() {
     g.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
     return g;
   }, []);
-  useFrame(({ clock }) => { if (mat.current) mat.current.uniforms.uTime.value = clock.elapsedTime; });
+  useFrame(() => { if (mat.current) mat.current.uniforms.uTime.value = pulse.current.time; });
   return (
     <lineSegments geometry={geo} frustumCulled={false}>
       <shaderMaterial
@@ -501,7 +519,7 @@ function AdaptiveQuality({ tier, onTier }: { tier: number; onTier: (tier: number
 export function OrbitalScene(props: SceneProps) {
   const { tab, activity, flow, animate, low, visible } = props;
   const frameloop = !visible ? 'never' : animate ? 'always' : 'demand';
-  const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0 });
+  const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0, time: 0, dt: 0 });
   const structure = useRef<THREE.Group | null>(null);
   const [tier, setTier] = useState(2);
   return (
@@ -514,12 +532,13 @@ export function OrbitalScene(props: SceneProps) {
         gl={{ antialias: !low, alpha: false, preserveDrawingBuffer: true, powerPreference: low ? 'low-power' : 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
         camera={{ fov: 46, near: 0.1, far: 160, position: CAMERA_TARGETS[tab].pos }}
       >
+        <Timebase pulse={pulse} />
         <color attach="background" args={['#05070c']} />
         <fog attach="fog" args={['#070a12', 18, 80]} />
         {!low && <Nebula pulse={pulse} />}
         <Stars count={low ? 700 : 2800} pulse={pulse} />
         {!low && <GridFloor pulse={pulse} center={structure} />}
-        {!low && <Comets />}
+        {!low && <Comets pulse={pulse} />}
         <Structure tab={tab} low={low} animate={animate} pulse={pulse} groupRef={structure} />
         <Driver tab={tab} activity={activity} flow={flow} animate={animate} pulse={pulse} />
         <Rig tab={tab} animate={animate} pulse={pulse} />
