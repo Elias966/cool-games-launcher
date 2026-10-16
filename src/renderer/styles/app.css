@@ -1874,15 +1874,24 @@
   display: block;
   position: relative;
   border-radius: 14px;
-  animation: float 7s ease-in-out infinite;
-  animation-delay: var(--float-delay, 0s);
   transform-style: preserve-3d;
   transition: transform var(--dur-slow) var(--ease-out);
+}
+
+/* Only the chosen or hovered card floats: dozens of cards animating at once
+   kept the GPU busy (an integrated GPU especially) and made scrolling sluggish. */
+.cover.is-selected .cover__float,
+.cover:hover .cover__float {
+  animation: float 7s ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
 }
 
 :root[data-motion='reduced'] .cover__float {
   animation: none;
 }
+
+/* Cards out of view are not laid out or painted until they scroll in. */
+.covers > .cover { content-visibility: auto; contain-intrinsic-size: auto 260px; }
 
 .cover__art {
   aspect-ratio: 315 / 250;
@@ -1915,12 +1924,11 @@
   border-radius: 50%;
   background: radial-gradient(ellipse, rgba(72, 225, 255, 0.45), transparent 70%);
   filter: blur(6px);
-  opacity: 0;
-  transition: opacity var(--dur);
+  display: none;
 }
 
 .cover.is-selected .cover__edge {
-  opacity: 1;
+  display: block;
 }
 
 .cover__title {
@@ -3392,8 +3400,7 @@ kbd {
 .cover__store {
   position: absolute; top: 10px; inset-inline-start: 10px; z-index: 3;
   padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
-  color: #e9eef7; background: rgba(10, 13, 20, 0.72); border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(6px);
+  color: #e9eef7; background: rgba(10, 13, 20, 0.86); border: 1px solid rgba(255, 255, 255, 0.14);
 }
 .cover__store--gog { color: #e7d4ff; border-color: rgba(168, 120, 255, 0.55); }
 .cover__store--epic { color: #f2f2f2; border-color: rgba(255, 255, 255, 0.45); }
@@ -3417,3 +3424,6 @@ kbd {
 .library-popup__card { position: relative; width: min(1180px, 100%); max-height: 100%; overflow-y: auto; border-radius: 26px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
 .library-popup__card .hero { margin: 0; }
 .library-popup__close { position: absolute; top: 14px; inset-inline-end: 14px; z-index: 5; width: 38px; height: 38px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(10, 13, 20, 0.75); color: var(--text); display: grid; place-items: center; cursor: pointer; }
+
+/* Store cards out of view are not laid out or painted until they scroll in. */
+.grid > .grid__cell { content-visibility: auto; contain-intrinsic-size: auto 340px; }
