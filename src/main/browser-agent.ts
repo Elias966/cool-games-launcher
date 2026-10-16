@@ -22,7 +22,8 @@ const browserKeys=['Enter','Tab','Escape','Backspace','ArrowUp','ArrowDown','Pag
 // protocol also describes desktop shortcuts, web search and other unavailable
 // actions; promising those caused otherwise valid runs to end in tool errors.
 const tool:AgentTool={type:'function',function:{name:'computer_use',description:"Use a mouse and keyboard to interact with the current Firefox page. Coordinates are normalized to 0–1000 on each axis. Inspect the current screenshot before acting.",parameters:{...protocol.parameters,properties:{...protocol.parameters.properties,
-  action:{type:'string',enum:protocol.parameters.properties.action.enum.filter(a=>!['web_search','read_page_answer_question'].includes(a)),description:'Choose one of the supported browser actions. key presses exactly one key per turn; type enters text; wait waits up to five seconds.'},
+  action:{type:'string',enum:protocol.parameters.properties.action.enum.filter(a=>!['web_search','read_page_answer_question'].includes(a)),description:'Choose one of the supported browser actions. key presses exactly one key per turn; type enters text; wait waits up to 30 seconds (use it to let a download countdown finish).'},
+  time:{type:'number',minimum:0,maximum:30,description:'Seconds to wait, up to 30. Required only by action=wait. When a page counts down before its download link or button appears, wait for the time it shows.'},
   keys:{type:'array',items:{type:'string',enum:browserKeys},minItems:1,maxItems:1,description:'For key: exactly one supported key. To press Tab then Enter, use two separate turns.'},
   coordinate:{type:'array',items:{type:'number',minimum:0,maximum:1000},minItems:2,maxItems:2,description:'Target x and y normalized to 0–1000, not screenshot pixels.'},
 }}}};
@@ -32,7 +33,7 @@ const holoTools=[
   nativeTool('type_text','Type into the currently focused non-password field.',{text:{type:'string'}}),
   nativeTool('press_key','Press one browser key.',{key:{type:'string',enum:['Enter','Tab','Escape','Backspace','ArrowUp','ArrowDown','PageUp','PageDown','Home','End']}}),
   nativeTool('scroll','Scroll the current page.',{direction:{type:'string',enum:['up','down']},pixels:{type:'integer',minimum:1,maximum:1500}}),
-  nativeTool('wait','Wait for an ongoing page load or file transfer.',{seconds:{type:'number',minimum:0,maximum:5}}),
+  nativeTool('wait','Wait for a page load, a file transfer, or a download countdown to finish (up to 30 seconds).',{seconds:{type:'number',minimum:0,maximum:30}}),
   nativeTool('answer','Finish the task with the observed outcome.',{content:{type:'string'}}),
 ];
 function holoAction(name:string,raw:string):ComputerAction{
@@ -42,7 +43,7 @@ function holoAction(name:string,raw:string):ComputerAction{
   if(name==='type_text'){const a=z.object({text:z.string().max(2000)}).parse(args);return {action:'type',text:a.text};}
   if(name==='press_key'){const a=z.object({key:z.string()}).parse(args);return {action:'key',keys:[a.key]};}
   if(name==='scroll'){const a=z.object({direction:z.enum(['up','down']),pixels:z.number().int().min(1).max(1500)}).parse(args);return {action:'scroll',pixels:a.direction==='down'?-a.pixels:a.pixels};}
-  if(name==='wait'){const a=z.object({seconds:z.number().min(0).max(5)}).parse(args);return {action:'wait',time:a.seconds};}
+  if(name==='wait'){const a=z.object({seconds:z.number().min(0).max(30)}).parse(args);return {action:'wait',time:a.seconds};}
   if(name==='answer'){const a=z.object({content:z.string().max(2000)}).parse(args);return {action:'terminate',answer:a.content};}
   throw Error('The local AI returned an unsupported computer tool');
 }
@@ -177,7 +178,7 @@ export class BrowserAgent {
         const mods=keys.filter(k=>/^(?:control|ctrl|alt|meta)$/i.test(k));
         if(!keys.length||mods.length&&keys.some(k=>/^[wqtnr]$|^f4$/i.test(k)))throw new BrowserActionRejectedError('Browser tool rejected that keyboard shortcut. Nothing was pressed.');
         await this.browser.type(context,keys.length===1&&browserKeys.includes(keys[0])?{key:keys[0]}:{keys},token.signal);
-      }else if(a.action==='wait')await this.wait(Math.min(a.time??1,5)*1000,token.signal);
+      }else if(a.action==='wait')await this.wait(Math.min(a.time??1,30)*1000,token.signal);
       else if(a.action==='terminate'){this.result(step,'Task ended: '+(a.answer??''));return 'done';}
       else if(a.action==='ask_user_question'){this.result(step,'Human interaction is required: '+(a.question??''));return 'human';}
       else if(a.action==='pause_and_memorize_fact'){this.result(step,'I memorized the following fact: '+(a.fact??''));return 'continue';}

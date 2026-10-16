@@ -21,6 +21,9 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
   names, works out the title and picks the game among Steam's results (the next time
   the Store is open, like all AI work). The search button next to an imported game lets
   you type a name and pick the right game yourself.
+- **Download countdowns**: when a download host counts down before its button appears
+  ("Your download starts in 15 seconds"), the AI waits it out (up to 30 seconds at a
+  time) instead of giving up or clicking elsewhere.
 
 ## What's new in 0.2.14
 

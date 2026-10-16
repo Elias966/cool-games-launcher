@@ -5,6 +5,7 @@
 // payment, age gates and ambiguous file choices.
 import type { ForegroundWork } from './foreground';
 import { setTimeout as delay } from 'node:timers/promises';
+import { waitMs } from '@shared/countdown';
 import {BrowserActionRejectedError} from './browser-agent';
 import type { PageExtract } from '@shared/page-extract';
 import type { DownloadCandidate, Platform, UserPrompt } from '@shared/types';
@@ -296,7 +297,8 @@ export class Resolver {
         if (result === 'handed-off') return;
         if (result === 'unavailable') rejected.add(`${ex.url}|${selected.url}`);
       } else if (action.kind === 'wait') {
-        await delay(1500,undefined,{signal:token.signal});
+        // A countdown on the page ("starts in 15 seconds") sets how long.
+        await delay(waitMs(ex.text ?? ''),undefined,{signal:token.signal});
       } else if (action.kind === 'click') {
         ai.setStatus({ phase: 'navigating', detail: tm('Opening “{label}”', { label: action.label }), context: 'interactive' });
         // Click the observed control so host scripts, tokens and popups work
