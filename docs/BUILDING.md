@@ -81,7 +81,7 @@ manifest digest.
 
 ## Icons
 
-`build/icon.svg` is the source. Re-render the PNGs with:
+`build/icon-source.png` (1024 px, transparent corners) is the source. Re-create the PNGs with:
 
 ```bash
 npm run icons

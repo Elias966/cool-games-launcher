@@ -2,7 +2,7 @@
 // that starts the game through the launcher (`--launch-game=<id>`).
 import { app } from 'electron';
 import { execFile, execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { extname, join } from 'node:path';
 
@@ -65,4 +65,45 @@ export function removeShortcuts(id: number) {
 export function gameFromArgs(argv: string[]): number | null {
   const m = argv.map((a) => /^--launch-game=(\d+)$/.exec(a)).find(Boolean);
   return m ? Number(m[1]) : null;
+}
+
+/**
+ * The launcher's own applications-menu entry, so the desktop (GNOME and
+ * others) finds its name and icon for the taskbar instead of a generic one:
+ * the window's class, cool-games-launcher, matches the entry's file name. Only
+ * for the AppImage, kept up to date with where it lives, and skipped when
+ * AppImageLauncher has already integrated it.
+ */
+export function ensureLauncherEntry(p: { appImage: string | undefined; icon: string; dataDir?: string }): string | null {
+  if (!p.appImage || !existsSync(p.icon)) return null;
+  const data = p.dataDir ?? (process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'));
+  const apps = join(data, 'applications');
+  try {
+    if (readdirSync(apps).some((f) => /^appimagekit_.*cool[-_ ]?games[-_ ]?launcher.*\.desktop$/i.test(f))) return null;
+  } catch { /* no applications folder yet */ }
+  const iconDir = join(data, 'icons', 'hicolor', '256x256', 'apps');
+  const icon = join(iconDir, 'cool-games-launcher.png');
+  mkdirSync(iconDir, { recursive: true });
+  const fresh = readFileSync(p.icon);
+  if (!existsSync(icon) || !readFileSync(icon).equals(fresh)) writeFileSync(icon, fresh);
+  const entry = [
+    '[Desktop Entry]',
+    'Type=Application',
+    'Name=Cool Games Launcher',
+    'Comment=Discover, download and play games with a local AI',
+    `Exec=${desktopExec([p.appImage])} %U`,
+    `Icon=${icon}`,
+    'StartupWMClass=cool-games-launcher',
+    'Categories=Game;',
+    'Terminal=false',
+    'StartupNotify=true',
+    '',
+  ].join('\n');
+  const target = join(apps, 'cool-games-launcher.desktop');
+  mkdirSync(apps, { recursive: true });
+  if (!existsSync(target) || readFileSync(target, 'utf8') !== entry) {
+    writeFileSync(target, entry);
+    chmodSync(target, 0o755);
+  }
+  return target;
 }

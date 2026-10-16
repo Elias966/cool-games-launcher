@@ -216,7 +216,7 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
               vec2 px=(0.5-d)/fwidth(g);
               float line=1.0-min(min(px.x,px.y),1.0);
               float dot=smoothstep(0.12,0.0,length(fract(g)-0.5));
-              float scan=exp(-pow((vUv.y-fract(uTime*0.11))*30.0,2.0));
+              float sq=(vUv.y-fract(uTime*0.11))*30.0; float scan=exp(-sq*sq);
               vec3 col=mix(vec3(0.25,0.85,1.0),vec3(0.65,0.5,1.0),vUv.y);
               float a=line*0.08+dot*0.04+scan*(0.06+line*0.3)+0.025;
               a*=0.8+uBoost*0.4;

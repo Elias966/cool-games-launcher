@@ -13,6 +13,14 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.14
+
+- **New app icon**: a glowing planet with a game controller, now also shown in the taskbar
+  and window switcher (they showed a generic gear before). The AppImage adds its own
+  applications-menu entry so the desktop can find its name and icon.
+- **Fix**: the 3D background no longer blacks out for a moment when switching tabs (it
+  renders at one fixed resolution instead of switching resolution with the frame rate).
+
 ## What's new in 0.2.13
 
 - **One content switch**: Settings → Content → *Hide games with a woman on the cover*.
@@ -280,11 +288,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.13-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.14-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.13-x86_64.AppImage
+./Cool-Games-Launcher-0.2.14-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

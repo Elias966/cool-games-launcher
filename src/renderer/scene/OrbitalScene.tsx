@@ -7,7 +7,7 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bloom, ChromaticAberration, EffectComposer, Noise, Vignette } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { TabId } from '@shared/types';
 import { BlockArena } from './BlockArena';
@@ -115,7 +115,7 @@ function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
             // Domain-warped clouds, densest toward a band across the view.
             vec3 q=vec3(fbm(d*1.6+t),fbm(d*1.6-t+3.1),0.0);
             float n=fbm(d*2.4+q*1.4+vec3(0.0,t*2.0,0.0));
-            float band=exp(-pow(d.y*2.2-0.15,2.0));
+            float by=d.y*2.2-0.15; float band=exp(-by*by);
             // Dark voids between clouds keep it cosmic rather than smoky.
             float dens=pow(smoothstep(0.0,0.9,n),1.7)*(0.3+0.7*band);
             vec3 deep=vec3(0.10,0.04,0.28);
@@ -249,7 +249,7 @@ function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: R
             // Expanding rings every few seconds; faster while the AI works.
             float period=mix(5.0,2.2,uActivity);
             float wave=fract(uTime/period);
-            float ring=exp(-pow((dist-wave*24.0)*0.9,2.0))*(1.0-wave);
+            float rq=(dist-wave*24.0)*0.9; float ring=exp(-rq*rq)*(1.0-wave);
             vec3 col=palette(dist*0.03-uTime*0.02,uHue);
             gl_FragColor=vec4(col,(g*0.12+g*ring*0.9+ring*0.05)*fade);
           }`}
@@ -471,12 +471,11 @@ function Invalidator({ deps }: { deps: unknown[] }) {
   return null;
 }
 
-/** Cinematic finish: bloom makes the energy actually glow. Skipped in low-power mode; trimmed when frames run long. */
 /**
- * The same effects at every quality tier: switching effects on and off changes
- * the picture's brightness (the film grain alone lightens it a lot), which
- * read as a white layer flickering whenever the tier changed. Tiers only change
- * the render resolution.
+ * Cinematic finish: bloom makes the energy actually glow. Skipped in low-power
+ * mode. Always the same effects: switching effects on and off changes the
+ * picture's brightness (the film grain alone lightens it a lot), which read as
+ * a white layer flickering.
  */
 function Effects() {
   const offset = useMemo(() => new THREE.Vector2(0.0006, 0.0009), []);
@@ -490,43 +489,24 @@ function Effects() {
   );
 }
 
-const DPR_TIERS = [0.8, 0.9, Math.min(1.5, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)];
-
 /**
- * Keeps the whole interface smooth: when frames run long (a busy Store grid,
- * a slower GPU) the scene renders at a lower resolution with lighter effects,
- * and climbs back once there is headroom again.
+ * One fixed render resolution. The scene used to lower and raise it with the
+ * frame rate, but every change resizes the canvas, which can show an empty
+ * (black) frame before the next one is drawn; tab switches dip the frame rate
+ * long enough to trigger that, so the background blacked out while switching.
  */
-function AdaptiveQuality({ tier, onTier }: { tier: number; onTier: (tier: number) => void }) {
-  const s = useRef({ acc: 0, frames: 0, good: 0, bad: 0 });
-  useFrame((_, dt) => {
-    const st = s.current;
-    st.acc += Math.min(dt, 0.25);
-    st.frames++;
-    if (st.acc < 1.5) return;
-    const fps = st.frames / st.acc;
-    st.acc = 0;
-    st.frames = 0;
-    // Only a sustained slowdown (three windows, ~4.5 s) lowers the tier: hovering
-    // cards and switching tabs dip for a moment and must not change anything.
-    if (fps < 45) { st.good = 0; if (++st.bad >= 3 && tier > 0) { st.bad = 0; onTier(tier - 1); } }
-    else if (fps > 57) { st.bad = 0; if (++st.good >= 8 && tier < DPR_TIERS.length - 1) { st.good = 0; onTier(tier + 1); } }
-    else { st.good = 0; st.bad = 0; }
-  });
-  return null;
-}
+const DPR = Math.min(1.25, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
 
 export function OrbitalScene(props: SceneProps) {
   const { tab, activity, flow, animate, low, visible } = props;
   const frameloop = !visible ? 'never' : animate ? 'always' : 'demand';
   const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0, time: 0, dt: 0 });
   const structure = useRef<THREE.Group | null>(null);
-  const [tier, setTier] = useState(2);
   return (
     <div className="scene" aria-hidden="true">
       <Canvas
         frameloop={frameloop}
-        dpr={low ? 1 : DPR_TIERS[tier]}
+        dpr={low ? 1 : DPR}
         // preserveDrawingBuffer: the compositor can always show the last frame, so
         // layer changes elsewhere on the page (card hover, page transitions) do not flash.
         gl={{ antialias: !low, alpha: false, preserveDrawingBuffer: true, powerPreference: low ? 'low-power' : 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
@@ -543,7 +523,6 @@ export function OrbitalScene(props: SceneProps) {
         <Driver tab={tab} activity={activity} flow={flow} animate={animate} pulse={pulse} />
         <Rig tab={tab} animate={animate} pulse={pulse} />
         <Invalidator deps={[tab, low, visible]} />
-        {!low && animate && <AdaptiveQuality tier={tier} onTier={setTier} />}
         {!low && <Effects />}
       </Canvas>
     </div>

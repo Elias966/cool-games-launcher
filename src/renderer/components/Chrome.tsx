@@ -7,6 +7,7 @@ import type { TabId } from '@shared/types';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { sound } from '../sound';
 import { t, tk } from '../i18n';
+import appIcon from '../assets/app-icon.png';
 
 export const TABS: Array<{ id: TabId; label: string; icon: IconName; key: string }> = [
   { id: 'library', label: tk('Library'), icon: 'library', key: '1' },
@@ -51,16 +52,7 @@ export function TitleBar() {
   return (
     <header className="titlebar">
       <div className="titlebar__brand">
-        <svg className="titlebar__logo" viewBox="0 0 32 32" aria-hidden="true">
-          <defs>
-            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#48e1ff" />
-              <stop offset="1" stopColor="#a084ff" />
-            </linearGradient>
-          </defs>
-          <circle cx="16" cy="16" r="5" fill="url(#lg)" />
-          <ellipse cx="16" cy="16" rx="13" ry="5.5" fill="none" stroke="url(#lg)" strokeWidth="1.6" transform="rotate(-24 16 16)" />
-        </svg>
+        <img className="titlebar__logo" src={appIcon} alt="" aria-hidden="true" draggable={false} />
         <span className="titlebar__name">{t('Cool Games Launcher')}</span>
       </div>
       <AiStatusChip />

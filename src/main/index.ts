@@ -35,7 +35,7 @@ import { Library, detectProton, detectWine, detectTools } from './library';
 import { GameInfoService } from './descriptions';
 import { WishlistService } from './wishlist';
 import { LauncherTray } from './tray';
-import { gameFromArgs } from './shortcuts';
+import { ensureLauncherEntry, gameFromArgs } from './shortcuts';
 import { writeDiagnostics } from './diagnostics';
 import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
@@ -90,7 +90,8 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#0a0c11',
     title: 'Cool Games Launcher',
-    icon: join(app.getAppPath(), 'build', 'icon.png'),
+    // The taskbar and window switcher show this (resources/icons in the AppImage).
+    icon: appIcon(),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
       sandbox: true,
@@ -751,6 +752,8 @@ async function main() {
 
   mainWindow = createWindow();
   attach(mainWindow.webContents);
+  // Name and icon for the taskbar (see ensureLauncherEntry).
+  try { ensureLauncherEntry({ appImage: process.env.APPIMAGE, icon: appIcon() }); } catch (e) { console.warn('[main] menu entry:', (e as Error).message); }
   if (process.env.CGL_DEBUG) {
     mainWindow.webContents.on('console-message', (e) => console.log(`[renderer:${e.level}] ${e.message} (${e.sourceId}:${e.lineNumber})`));
   }
