@@ -3,7 +3,7 @@
 // Leaving the Store never touches transfers that already started.
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { existsSync, rmSync, mkdirSync, renameSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { shell } from 'electron';
 import type { WorkerHost } from './worker-host';
 import type { DownloadsRepo, DownloadRecord, SettingsRepo, CatalogRepo } from './repos';
@@ -351,6 +351,36 @@ export class DownloadManager extends EventEmitter {
     if (d.partPath) removePartial(d.partPath);
     this.repo.remove(id);
     this.broadcastList();
+  }
+
+  /**
+   * Finished entries the history can drop: completed downloads whose game is
+   * installed (and Proton downloads), or failed ones. AI model
+   * downloads stay (their file is the model itself), and so do completed
+   * downloads that are not prepared yet.
+   */
+  private clearable(which: 'completed' | 'failed'): DownloadRecord[] {
+    return this.repo.list().filter((d) => {
+      if (d.modelAsset) return false;
+      if (which === 'failed') return d.state === 'failed';
+      return d.state === 'completed' && (d.catalogId === null || d.installState === 'installed');
+    });
+  }
+
+  /** How many entries Clear would drop, and the size of their files still on disk. */
+  historySize(which: 'completed' | 'failed'): { entries: number; bytes: number } {
+    const list = this.clearable(which);
+    const bytes = list.reduce((n, d) => {
+      try { return n + (d.finalPath && existsSync(d.finalPath) ? statSync(d.finalPath).size : 0); } catch { return n; }
+    }, 0);
+    return { entries: list.length, bytes };
+  }
+
+  /** Drops finished entries from the history; with deleteFiles, also their files in the downloads folder. */
+  async clearHistory(which: 'completed' | 'failed', deleteFiles: boolean): Promise<{ removed: number }> {
+    const list = this.clearable(which);
+    for (const d of list) await this.remove(d.id, deleteFiles);
+    return { removed: list.length };
   }
 
   reveal(id: number) {

@@ -152,6 +152,8 @@ export const requests = {
   'download:remove': z.object({ id, deleteFile: z.boolean() }).strict(),
   'download:move': z.object({ id, direction: z.enum(['up', 'down']) }).strict(),
   'download:list': z.undefined(),
+  'download:historySize': z.object({ which: z.enum(['completed', 'failed']) }).strict(),
+  'download:clearHistory': z.object({ which: z.enum(['completed', 'failed']), deleteFiles: z.boolean() }).strict(),
   'download:chooseFile': z.object({ id, url: httpUrl }).strict(),
   'download:continueResolution': z.object({ id }).strict(),
   'download:resolveAgain': z.object({ id }).strict(),
@@ -276,6 +278,8 @@ export interface Responses {
   'download:remove': void;
   'download:move': void;
   'download:list': DownloadItem[];
+  'download:historySize': { entries: number; bytes: number };
+  'download:clearHistory': { removed: number };
   'download:chooseFile': void;
   'download:continueResolution': void;
   'download:resolveAgain': void;

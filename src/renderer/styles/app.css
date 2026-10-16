@@ -3295,3 +3295,7 @@ kbd {
 .proton-chip--cachyos { color: #7fd4ff; border-color: rgba(127, 212, 255, 0.35); }
 .proton-chip--valve { color: #c9b8ff; border-color: rgba(201, 184, 255, 0.35); }
 .launch-proton-note { margin-top: 6px; }
+
+/* Section heading with an action on the right (Downloads → Clear). */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 30px 0 14px; }
+.section-head .section-title { margin: 0; }

@@ -603,6 +603,8 @@ async function main() {
       downloads.pump();
     },
     'download:list': () => downloads.items(),
+    'download:historySize': ({ which }) => downloads.historySize(which),
+    'download:clearHistory': ({ which, deleteFiles }) => downloads.clearHistory(which, deleteFiles),
     'download:chooseFile': ({ id, url }) => resolver.chooseFile(id, url),
     'download:continueResolution': async ({ id }) => {
       if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }

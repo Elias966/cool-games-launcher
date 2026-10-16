@@ -1,6 +1,6 @@
 import { KineticTitle } from '../components/KineticTitle';
 import { AnimatePresence, motion } from 'motion/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { attempt, setState, setTab, useApp } from '../state';
 import { Button, Dialog, EmptyState, IconButton, ProgressRing } from '../components/ui';
@@ -61,8 +61,8 @@ export function DownloadsTab() {
             <TransferMap items={[...groups.live, ...groups.attention]} />
             {groups.attention.length > 0 && <Section title={t('Needs attention')} items={groups.attention} />}
             {groups.live.length > 0 && <Section title={t('Queue')} items={groups.live} reorder />}
-            {groups.failed.length > 0 && <Section title={t('Failed')} items={groups.failed} />}
-            {groups.done.length > 0 && <Section title={t('Completed')} items={groups.done} />}
+            {groups.failed.length > 0 && <Section title={t('Failed')} items={groups.failed} clear="failed" />}
+            {groups.done.length > 0 && <Section title={t('Completed')} items={groups.done} clear="completed" />}
           </>
         )}
       </div>
@@ -129,12 +129,17 @@ function TransferMap({ items }: { items: DownloadItem[] }) {
   );
 }
 
-function Section({ title, items, reorder }: { title: string; items: DownloadItem[]; reorder?: boolean }) {
+function Section({ title, items, reorder, clear }: { title: string; items: DownloadItem[]; reorder?: boolean; clear?: 'completed' | 'failed' }) {
+  const [clearing, setClearing] = useState(false);
   return (
     <section className="dl-section" aria-label={title}>
-      <h2 className="section-title">
-        {title} <span className="section-title__count">{items.length}</span>
-      </h2>
+      <div className="section-head">
+        <h2 className="section-title">
+          {title} <span className="section-title__count">{items.length}</span>
+        </h2>
+        {clear && <Button size="sm" variant="ghost" icon="trash" onClick={() => setClearing(true)}>{t('Clear')}</Button>}
+      </div>
+      {clear && <ClearHistoryDialog which={clear} open={clearing} onClose={() => setClearing(false)} />}
       <ul className="dl-list">
         <AnimatePresence initial={false}>
           {items.map((d, i) => (
@@ -143,6 +148,53 @@ function Section({ title, items, reorder }: { title: string; items: DownloadItem
         </AnimatePresence>
       </ul>
     </section>
+  );
+}
+
+/** Clears finished downloads from the list in one go, optionally with their files. */
+function ClearHistoryDialog({ which, open, onClose }: { which: 'completed' | 'failed'; open: boolean; onClose: () => void }) {
+  const [size, setSize] = useState<{ entries: number; bytes: number } | null>(null);
+  const [deleteFiles, setDeleteFiles] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setSize(null);
+    setDeleteFiles(false);
+    void api.invoke('download:historySize', { which }).then(setSize).catch(() => setSize({ entries: 0, bytes: 0 }));
+  }, [open, which]);
+  const n = size?.entries ?? 0;
+  const clear = () => {
+    onClose();
+    void attempt(async () => {
+      const r = await api.invoke('download:clearHistory', { which, deleteFiles });
+      return r;
+    }, n === 1 ? t('1 download cleared from the list.') : t('{n} downloads cleared from the list.', { n }));
+  };
+  return (
+    <Dialog
+      open={open}
+      title={which === 'completed' ? t('Clear completed downloads?') : t('Clear failed downloads?')}
+      onClose={onClose}
+      actions={<>
+        <Button variant="secondary" onClick={onClose}>{t('Cancel')}</Button>
+        <Button variant={deleteFiles ? 'danger' : 'primary'} icon="trash" disabled={!n} onClick={clear}>{t('Clear')}</Button>
+      </>}
+    >
+      {size === null ? <p>{t('Loading…')}</p> : !n ? (
+        <p>{t('Nothing to clear yet. Downloads that are still being prepared, and the AI model, stay in the list.')}</p>
+      ) : (
+        <>
+          <p>{which === 'completed'
+            ? (n === 1 ? t('1 finished download leaves the list. Installed games are not affected.') : t('{n} finished downloads leave the list. Installed games are not affected.', { n }))
+            : (n === 1 ? t('1 failed download leaves the list.') : t('{n} failed downloads leave the list.', { n }))}</p>
+          {which === 'completed' && size.bytes > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
+              <span>{t('Also delete their downloaded files ({size}) from the downloads folder. Otherwise the files stay there.', { size: formatBytes(size.bytes) })}</span>
+            </label>
+          )}
+        </>
+      )}
+    </Dialog>
   );
 }
 
