@@ -13,6 +13,15 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.17
+
+- **Reopens where you left off**: after closing the launcher completely it opens on the
+  page you were last on (the Store the very first time).
+- **Rename a game**: the pencil button next to a Library game changes its name; its cover
+  and background stay as they are, and automatic naming never changes a name you typed.
+- **Better automatic names**: the AI now sees the game's current name, and no longer
+  replaces a real title with an unrelated guess when the files say nothing.
+
 ## What's new in 0.2.16
 
 - **Choose a game's images**: the palette button next to a Library game lets you pick its
@@ -312,11 +321,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.16-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.17-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.16-x86_64.AppImage
+./Cool-Games-Launcher-0.2.17-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

@@ -80,6 +80,7 @@ export function setStoreView(patch: Partial<StoreView>) {
 }
 
 let state: AppState = {
+  // The page the app was last on comes with the settings at start (see init).
   tab: 'store',
   settings: null,
   info: null,
@@ -148,6 +149,8 @@ export function setTab(tab: TabId) {
   const prev = state.tab;
   if (prev === tab) return;
   setState({ tab, detailId: tab === 'store' ? state.detailId : null });
+  // Remembered in the launcher's database right away: it reopens on this page after a restart.
+  void api.invoke('app:setLastTab', { tab }).catch(() => undefined);
   // Leaving the Store pauses indexing (download work continues); entering starts it.
   if (prev === 'store' || tab === 'store') void api.invoke('store:setActive', { active: tab === 'store' }).then((ai) => setState({ ai })).catch(() => undefined);
   if (tab !== 'store') setState((s) => ({ browser: { ...s.browser, open: false, snapshot: null } }));
@@ -162,7 +165,7 @@ export async function boot() {
     api.invoke('library:list'),
     api.invoke('consent:get'),
   ]);
-  setState({ settings, info, sources, downloads, library, policy: { showNsfw: consent.showNsfw, revision: consent.policyRevision } });
+  setState({ settings, info, sources, downloads, library, policy: { showNsfw: consent.showNsfw, revision: consent.policyRevision }, tab: settings.lastTab ?? 'store' });
 
   api.on('settings:changed', (s) => setState({ settings: s }));
   api.on('policy:changed', ({ showNsfw, policyRevision }) => {

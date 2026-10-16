@@ -373,6 +373,8 @@ export interface Settings {
   coverStrictness: 'strict' | 'balanced';
   /** Look for new launcher versions on GitHub. */
   checkLauncherUpdates: boolean;
+  /** The page the app was on when it closed; it opens there again (the Store the very first time). */
+  lastTab: TabId;
   /** Interface language (Arabic lays the interface out right to left). */
   language: 'en' | 'ar';
   clearBrowserDataOnExit: boolean;

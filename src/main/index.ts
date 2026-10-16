@@ -747,6 +747,12 @@ async function main() {
     },
     'library:searchCover': ({ term }) => identifier.search(term),
     'library:imageOptions': ({ id }) => gameImages.options(id),
+    // Quietly: no settings broadcast on every tab switch.
+    'app:setLastTab': ({ tab }) => { settingsRepo.update({ lastTab: tab }); },
+    'library:rename': ({ id, title }) => {
+      identifier.rename(id, title);
+      return library.list().find((g) => g.id === id) ?? null;
+    },
     'app:sceneEvent': ({ event, detail }) => { console.log(`[scene] ${event} ${detail}`); },
     'library:setImage': ({ id, which, url }) => {
       gameImages.set(id, which, url);

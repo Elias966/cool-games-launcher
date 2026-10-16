@@ -586,6 +586,7 @@ function LibraryHero({ game }: { game: Game }) {
   const [args, setArgs] = useState(game.args);
   const [coverOpen, setCoverOpen] = useState(false);
   const [imagesOpen, setImagesOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
   const argsRef = useRef(game.args);
   useEffect(() => {
@@ -621,6 +622,7 @@ function LibraryHero({ game }: { game: Game }) {
             <IconButton icon="heart" label={game.favorite ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={game.favorite} className={`icon-btn ${game.favorite ? 'is-on' : ''}`} onClick={() => void attempt(() => api.invoke('library:favorite', { id: game.id, favorite: !game.favorite }))} />
             <IconButton icon="folder" label={t('Show files')} onClick={() => void attempt(() => api.invoke('library:reveal', { id: game.id }))} />
             <IconButton icon="trash" label={t('Uninstall')} onClick={() => setUninstallOpen(true)} disabled={game.running} />
+            <IconButton icon="edit" label={t('Rename')} onClick={() => setRenameOpen(true)} />
             <IconButton icon="palette" label={t('Change cover and background')} onClick={() => setImagesOpen(true)} />
             {game.catalogId === null && <IconButton icon="search" label={t('Find the cover by name')} onClick={() => setCoverOpen(true)} />}
           </div>
@@ -776,6 +778,7 @@ function LibraryHero({ game }: { game: Game }) {
 
       <CoverSearch game={game} open={coverOpen} onClose={() => setCoverOpen(false)} />
       <ImagePicker game={game} open={imagesOpen} onClose={() => setImagesOpen(false)} />
+      <RenameGame game={game} open={renameOpen} onClose={() => setRenameOpen(false)} />
       <Dialog
         open={uninstallOpen}
         title={t('Uninstall {title}?', { title: game.title })}
@@ -901,6 +904,30 @@ function ImagePicker({ game, open, onClose }: { game: Game; open: boolean; onClo
         <Button size="sm" variant="ghost" icon="folder" onClick={() => void attempt(() => api.invoke('library:imageFromFile', { id: game.id, which }))}>{t('Use an image file…')}</Button>
         {(which === 'cover' ? game.images.cover : game.images.hero) && <Button size="sm" variant="ghost" icon="retry" onClick={() => set(null)}>{t('Back to the default')}</Button>}
       </div>
+    </Dialog>
+  );
+}
+
+/** Type the game's name; its cover and background stay as they are. */
+function RenameGame({ game, open, onClose }: { game: Game; open: boolean; onClose: () => void }) {
+  const [name, setName] = useState(game.title);
+  useEffect(() => { if (open) setName(game.title); }, [open, game.title]);
+  const save = () => {
+    const title = name.trim();
+    if (!title || title === game.title) { onClose(); return; }
+    onClose();
+    void attempt(() => api.invoke('library:rename', { id: game.id, title }));
+  };
+  return (
+    <Dialog open={open} title={t('Rename {title}', { title: game.title })} onClose={onClose}
+      actions={<>
+        <Button variant="secondary" onClick={onClose}>{t('Cancel')}</Button>
+        <Button variant="primary" icon="check" disabled={!name.trim()} onClick={save}>{t('Save')}</Button>
+      </>}>
+      <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+        <input className="input" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} aria-label={t('Game name')} autoFocus />
+      </form>
+      <p className="muted">{t('Only the name changes; the cover and background stay as they are.')}</p>
     </Dialog>
   );
 }

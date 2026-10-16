@@ -207,6 +207,9 @@ export const requests = {
   'library:chooseCover': z.object({ id, appid: z.number().int().positive(), name: z.string().min(1).max(200) }).strict(),
   /** The cover and background images a Library game can be switched to. */
   'library:imageOptions': z.object({ id }).strict(),
+  /** A name the person typed; the game's images stay as they are. */
+  'library:rename': z.object({ id, title: z.string().trim().min(1).max(200) }).strict(),
+  'app:setLastTab': z.object({ tab: z.enum(['library', 'store', 'downloads', 'settings']) }).strict(),
   /** Something worth knowing about the 3D background (lost graphics context, resize, stall), for the log. */
   'app:sceneEvent': z.object({ event: z.enum(['context-lost', 'context-restored', 'resize', 'stall', 'tab']), detail: z.string().max(200) }).strict(),
   'library:setImage': z.object({ id, which: z.enum(['cover', 'hero']), url: z.string().max(2100).nullable() }).strict(),
@@ -326,6 +329,8 @@ export interface Responses {
   'library:searchCover': Array<{ appid: number; name: string; image: string | null }>;
   'library:chooseCover': Game | null;
   'library:imageOptions': ImageOptions;
+  'library:rename': Game | null;
+  'app:setLastTab': void;
   'app:sceneEvent': void;
   'library:setImage': Game | null;
   /** Null when no file was chosen. */

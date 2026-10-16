@@ -204,6 +204,8 @@ export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) =>
   { id: 'games.art_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'art_json', 'TEXT') },
   // The cover and background image the person chose for a game ({cover, hero}: image URLs).
   { id: 'games.images_json TEXT if missing', run: (db) => addColumnIfMissing(db, 'games', 'images_json', 'TEXT') },
+  // The person typed the game's name: automatic naming leaves it alone.
+  { id: 'games.named_by_user INTEGER if missing', run: (db) => addColumnIfMissing(db, 'games', 'named_by_user', 'INTEGER NOT NULL DEFAULT 0') },
 ];
 
 /** Adds a column unless the table already has it. */

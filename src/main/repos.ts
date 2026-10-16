@@ -70,6 +70,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     uiVolume: 0.5,
     uiSoundGroups: { hover: true, click: true, navigation: true, downloads: true, alerts: true, funny: true },
     customSounds: {},
+    lastTab: 'store',
     crawlRefreshHours: 3,
     gameUpdates: 'notify',
     afterInstall: 'ask',
@@ -1158,6 +1159,7 @@ interface GameRow {
   catalog_steam?: string | null;
   art_json?: string | null;
   images_json?: string | null;
+  named_by_user?: number | null;
   installed_version_json: string | null;
   update_json: string | null;
   previous_json: string | null;
@@ -1179,6 +1181,8 @@ export interface PreviousBuild {
 }
 
 export interface GameRecord extends Omit<Game, 'running' | 'artwork' | 'executableCandidates' | 'version' | 'previousVersion' | 'canRollback' | 'archive' | 'launch' | 'art'> {
+  /** The person typed this name; automatic naming leaves it alone. */
+  namedByUser: boolean;
   downloadId: number | null;
   artworkFile: string | null;
   candidates: string[];
@@ -1230,12 +1234,13 @@ export class GamesRepo {
       launch: { ...DEFAULT_LAUNCH, ...json<Partial<LaunchOptions>>(r.launch_json ?? null, {}) },
       redistDone: json<string[] | null>(r.redist_json ?? null, null),
       images: { cover: null, hero: null, ...json<Partial<GameImages>>(r.images_json ?? null, {}) },
+      namedByUser: !!r.named_by_user,
       // A Store game's Steam artwork, or what was found for an imported game by its name.
       art: ((m: SteamMedia | null) => (m ? { hero: m.hero, logo: m.logo, capsule: m.capsule, appid: m.appid } : null))(json<SteamMedia | null>(r.catalog_steam ?? null, null)) ?? json<Game['art']>(r.art_json ?? null, null),
     };
   }
 
-  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'images' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
+  create(g: Omit<GameRecord, 'id' | 'addedAt' | 'lastPlayedAt' | 'playtimeSeconds' | 'favorite' | 'catalogRating' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'archiveKept' | 'launch' | 'art' | 'images' | 'namedByUser' | 'redistDone'> & { installedVersion?: InstalledVersion | null }): GameRecord {
     const r = this.st
       .get(
         `INSERT INTO games (catalog_id, download_id, title, kind, install_dir, executable, args, runner, prefix_dir, managed, artwork_file, source_host, status, candidates_json, installed_version_json, update_checked_at)
@@ -1274,7 +1279,7 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images' | 'namedByUser'>>) {
     const cols: Record<string, string> = {
       title: 'title',
       executable: 'executable',
@@ -1297,6 +1302,7 @@ export class GamesRepo {
       redistDone: 'redist_json',
       art: 'art_json',
       images: 'images_json',
+      namedByUser: 'named_by_user',
     };
     const jsonCols = new Set(['candidates', 'installedVersion', 'update', 'previous', 'launch', 'redistDone', 'art', 'images']);
     const sets: string[] = [];
