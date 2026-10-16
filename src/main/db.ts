@@ -1,7 +1,8 @@
 // SQLite persistence (node:sqlite, built into Electron's Node runtime).
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
-export const MIGRATIONS: string[] = [
+/** Append-only: a shipped entry is never edited, reordered or removed. */
+export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) => void }> = [
   `
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
@@ -194,9 +195,18 @@ export const MIGRATIONS: string[] = [
   // One row per play session, for play statistics.
   `CREATE TABLE play_sessions (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, started_at TEXT NOT NULL, seconds INTEGER NOT NULL);
    CREATE INDEX play_sessions_time ON play_sessions(started_at);`,
+  // What the local AI saw on a game's cover: 1 = a woman is the main subject, 0 = not; NULL = not checked.
+  `ALTER TABLE catalog ADD COLUMN cover_woman INTEGER;`,
   // Cover filter: how likely the cover shows a woman (0..1, from the CLIP image model); NULL = not checked.
-  `ALTER TABLE catalog ADD COLUMN cover_score REAL;`,
+  // Conditional: a test build created this column in place of the one above.
+  { id: 'catalog.cover_score REAL if missing', run: (db) => addColumnIfMissing(db, 'catalog', 'cover_score', 'REAL') },
 ];
+
+/** Adds a column unless the table already has it. */
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, type: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
 
 export type Db = DatabaseSync;
 
@@ -210,7 +220,9 @@ export function openDb(file: string): Db {
   while (version < MIGRATIONS.length) {
     db.exec('BEGIN');
     try {
-      db.exec(MIGRATIONS[version]);
+      const m = MIGRATIONS[version];
+      if (typeof m === 'string') db.exec(m);
+      else m.run(db);
       version++;
       db.prepare('UPDATE schema_version SET version = ?').run(version);
       db.exec('COMMIT');
