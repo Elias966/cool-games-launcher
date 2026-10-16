@@ -576,10 +576,12 @@ const SOUND_GROUPS: Array<{ id: SoundGroup; label: string; desc: string; preview
   { id: 'navigation', label: tk('Navigation'), desc: tk('Warp between tabs; opening and closing game details.'), preview: 'warp' },
   { id: 'downloads', label: tk('Downloads'), desc: tk('A download starting, and a game becoming ready to play.'), preview: 'success' },
   { id: 'alerts', label: tk('Alerts'), desc: tk('Notices and errors.'), preview: 'notify' },
+  { id: 'funny', label: tk('Funny sounds'), desc: tk('A rude noise when you close the window. Off: the window closes silently.'), preview: 'quit' },
 ];
 
 function SoundSection({ settings }: { settings: Settings }) {
-  const groups: SoundGroups = settings.uiSoundGroups ?? { hover: true, click: true, navigation: true, downloads: true, alerts: true };
+  // Settings saved before a group existed lack its key: such a group is on.
+  const groups: SoundGroups = { ...{ hover: true, click: true, navigation: true, downloads: true, alerts: true, funny: true }, ...(settings.uiSoundGroups as Partial<SoundGroups>) };
   const on = settings.uiSounds;
   return (
     <>
@@ -602,7 +604,7 @@ function SoundSection({ settings }: { settings: Settings }) {
         ))}
       </Group>
       <Group title={t('Ambience')}>
-        <Row label={t('Ambient soundscape')} desc={t('A soft evolving pad under the interface that brightens while the AI works. Paused when the window is hidden.')}>
+        <Row label={t('Ambient soundscape')} desc={t('A soft evolving pad under the interface that brightens while the AI works. Paused when the window is hidden or a game is running.')}>
           <Switch checked={settings.uiAmbient} disabled={!on} label={t('Ambient soundscape')} onChange={(v) => void update({ uiAmbient: v })} />
         </Row>
         <Row label={t('Ambience volume')}>

@@ -61,7 +61,7 @@ export const settingsPatch = z
     uiVolume: z.number().min(0).max(1),
     uiAmbient: z.boolean(),
     uiAmbientVolume: z.number().min(0).max(1),
-    uiSoundGroups: z.object({ hover: z.boolean(), click: z.boolean(), navigation: z.boolean(), downloads: z.boolean(), alerts: z.boolean() }).strict(),
+    uiSoundGroups: z.object({ hover: z.boolean(), click: z.boolean(), navigation: z.boolean(), downloads: z.boolean(), alerts: z.boolean(), funny: z.boolean().default(true) }).strict(),
     crawlRefreshHours: z.number().int().min(1).max(24 * 30),
     gameUpdates: z.enum(['notify', 'auto']),
     afterInstall: z.enum(['ask', 'delete', 'keep']),
@@ -357,5 +357,6 @@ export interface InvokeResult<T> {
 export interface CglApi {
   invoke<C extends Channel>(channel: C, ...payload: RequestOf<C> extends undefined ? [] : [RequestOf<C>]): Promise<Responses[C]>;
   on<E extends EventName>(event: E, listener: (payload: Events[E]) => void): () => void;
-  windowControl(action: 'minimize' | 'maximize' | 'close' | 'fullscreen-on' | 'fullscreen-off'): void;
+  /** `close-sound:<ms>`: hide at once, and keep running that long so the close sound can finish. */
+  windowControl(action: 'minimize' | 'maximize' | 'close' | 'fullscreen-on' | 'fullscreen-off' | `close-sound:${number}`): void;
 }

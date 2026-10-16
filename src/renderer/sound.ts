@@ -14,11 +14,12 @@ export type SoundName = 'hover' | 'click' | 'toggle' | 'tab' | 'open' | 'close' 
 export const SOUND_GROUP: Record<SoundName, SoundGroup> = {
   hover: 'hover',
   click: 'click', toggle: 'click',
-  tab: 'navigation', warp: 'navigation', open: 'navigation', close: 'navigation', quit: 'navigation',
+  tab: 'navigation', warp: 'navigation', open: 'navigation', close: 'navigation',
+  quit: 'funny',
   download: 'downloads', success: 'downloads',
   notify: 'alerts', error: 'alerts',
 };
-const ALL_GROUPS: SoundGroups = { hover: true, click: true, navigation: true, downloads: true, alerts: true };
+const ALL_GROUPS: SoundGroups = { hover: true, click: true, navigation: true, downloads: true, alerts: true, funny: true };
 
 interface PlayOptions {
   /** Play even when sounds are switched off (previewing the setting itself). */

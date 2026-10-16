@@ -305,7 +305,7 @@ export type EffectsLevel = 'full' | 'low';
 export type MotionPreference = 'system' | 'reduced' | 'full';
 export type AccelPreference = 'auto' | 'vulkan' | 'cpu';
 
-export type SoundGroup = 'hover' | 'click' | 'navigation' | 'downloads' | 'alerts';
+export type SoundGroup = 'hover' | 'click' | 'navigation' | 'downloads' | 'alerts' | 'funny';
 export type SoundGroups = Record<SoundGroup, boolean>;
 
 export interface Settings {

@@ -56,6 +56,8 @@ let mainWindow: BrowserWindow | null = null;
 let appQuitting = false;
 /** After a launcher update: the AppImage to start once this instance has exited. */
 let relaunchInto: string | null = null;
+/** The close button's sound plays until then (ms timestamp); quitting waits for it with the window already hidden. */
+let closeSoundUntil = 0;
 
 /** Starts `appImage` as soon as this process is gone (the launcher ends itself with SIGKILL, so app.relaunch never runs). */
 function startAfterExit(appImage: string) {
@@ -750,6 +752,15 @@ async function main() {
     if (action === 'minimize') mainWindow.minimize();
     else if (action === 'maximize') (mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
     else if (action === 'close') mainWindow.close();
+    else if (typeof action === 'string' && /^close-sound:\d{1,4}$/.test(action)) {
+      closeSoundUntil = Date.now() + Number(action.slice('close-sound:'.length));
+      // To the tray: the hidden window finishes the sound. Quitting: hide now, quit when the sound ends.
+      if (tray.active && settingsRepo.get().closeToTray) mainWindow.close();
+      else {
+        mainWindow.hide();
+        app.quit();
+      }
+    }
     else if (action === 'fullscreen-on') mainWindow.setFullScreen(true);
     else if (action === 'fullscreen-off') mainWindow.setFullScreen(false);
   });
@@ -780,6 +791,8 @@ async function main() {
   // intermittently deadlocks here after the utility processes stop, so the process ends itself;
   // its Chromium children exit with it.
   const terminate = () => {
+    const left = closeSoundUntil - Date.now();
+    if (left > 0) { setTimeout(terminate, left); return; }
     if (relaunchInto) startAfterExit(relaunchInto);
     process.kill(process.pid, 'SIGKILL');
   };

@@ -41,10 +41,10 @@ export function AiStatusChip() {
   );
 }
 
-/** The close button plays its sound first, then closes once the sound has played. */
+/** Closes at once; with the close sound on, the launcher stays alive (hidden) until the sound ends. */
 function closeWindow() {
-  const played = sound.play('quit', { pan: 0.6 });
-  setTimeout(() => api.windowControl('close'), played ? Math.min(3000, sound.closeSoundMs()) : 0);
+  if (sound.play('quit', { pan: 0.6 })) api.windowControl(`close-sound:${Math.min(3000, sound.closeSoundMs())}`);
+  else api.windowControl('close');
 }
 
 export function TitleBar() {

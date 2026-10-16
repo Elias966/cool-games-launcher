@@ -26,7 +26,7 @@ const api: CglApi = {
     set.add(listener as (payload: unknown) => void);
     return () => set!.delete(listener as (payload: unknown) => void);
   },
-  windowControl(action: 'minimize' | 'maximize' | 'close' | 'fullscreen-on' | 'fullscreen-off') {
+  windowControl(action: 'minimize' | 'maximize' | 'close' | 'fullscreen-on' | 'fullscreen-off' | `close-sound:${number}`) {
     ipcRenderer.send('cgl:window', action);
   },
 } as CglApi;
