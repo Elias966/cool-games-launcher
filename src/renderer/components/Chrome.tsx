@@ -41,10 +41,10 @@ export function AiStatusChip() {
   );
 }
 
-/** The close button plays its sound first, then closes once the sound has mostly played. */
+/** The close button plays its sound first, then closes once the sound has played. */
 function closeWindow() {
   const played = sound.play('quit', { pan: 0.6 });
-  setTimeout(() => api.windowControl('close'), played ? 750 : 0);
+  setTimeout(() => api.windowControl('close'), played ? Math.min(3000, sound.closeSoundMs()) : 0);
 }
 
 export function TitleBar() {

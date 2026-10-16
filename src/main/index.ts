@@ -269,6 +269,12 @@ async function main() {
   const library = new Library(installWorker, gamesRepo, downloadsRepo, downloads, catalogRepo, settingsRepo, policy, () => mainWindow, compat, {agent: gameAgent, session, foreground});
   libraryRef = library;
   // While a game runs: the model is unloaded, AI requests wait, and indexing pauses.
+  // The model and classifier leave the GPU before the game process starts.
+  library.setBeforeGame(async () => {
+    if (!settingsRepo.get().freeGpuWhilePlaying) return;
+    foreground.hold('gaming', true);
+    await ai.pauseForGame(true);
+  });
   library.onPlaying((playing) => {
     const free = playing && settingsRepo.get().freeGpuWhilePlaying;
     foreground.hold('gaming', free);

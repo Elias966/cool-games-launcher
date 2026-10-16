@@ -476,6 +476,10 @@ serve({
   classify,
   async unload() {
     await stopAndWait();loadedModelId=null;
+    // The image classifier's GPU memory goes too; it loads again on its next use.
+    const c = classifier;
+    classifier = null;
+    if (c) await c.then((x) => x.release()).catch(() => undefined);
     return { ok: true };
   },
   status() {

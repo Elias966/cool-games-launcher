@@ -389,6 +389,13 @@ export class Library {
   private listener: ((games: Game[]) => void) | null = null;
   private playingListener: ((playing: boolean) => void) | null = null;
   /** Told when the first game starts and when the last one closes. */
+  private beforeGame: (() => Promise<void>) | null = null;
+
+  /** Runs before a game process starts (the launcher frees the GPU there). */
+  setBeforeGame(fn: () => Promise<void>) {
+    this.beforeGame = fn;
+  }
+
   onPlaying(fn: (playing: boolean) => void) {
     this.playingListener = fn;
   }
@@ -838,6 +845,8 @@ export class Library {
     }
     if (runner === 'proton') this.compat.notifyRuntime();
     if (g.kind === 'windows' && g.redistDone === null && g.managed && g.installDir) await this.installRuntimes(g, runner, env);
+    // Free the GPU (AI model and classifier) before the game starts, not after.
+    await this.beforeGame?.().catch(() => undefined);
     await this.worker.call('launch', {
       gameId: id,
       executable: g.executable,
@@ -850,6 +859,10 @@ export class Library {
       extras: this.extras(g.launch),
       // The Steam id lets umu apply this game's known fixes (protonfixes).
       umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
+    }).catch((e) => {
+      // The game never started: give the GPU back to the AI.
+      if (this.runningIds.size === 0) this.playingListener?.(false);
+      throw e;
     });
   }
 

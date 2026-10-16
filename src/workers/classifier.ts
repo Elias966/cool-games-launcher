@@ -14,6 +14,8 @@ export interface Region {
 export interface Classifier {
   /** NSFW probabilities: one per region, or one for the whole image when no regions are given. */
   score(image: Buffer, regions?: Region[], includeWhole?: boolean, signal?: AbortSignal): Promise<number[]>;
+  /** Frees the model and its GPU memory; the classifier cannot be used afterwards. */
+  release(): Promise<void>;
 }
 
 export async function createClassifier(modelPath: string, threads: number, log: (...a: unknown[]) => void = () => undefined): Promise<Classifier & { device: 'gpu' | 'cpu' }> {
@@ -72,6 +74,7 @@ export async function createClassifier(modelPath: string, threads: number, log: 
 
   return {
     device,
+    release: () => exclusive(() => session.release()),
     async score(buf, regions, includeWhole, signal) {
       if (buf.length > 40 * 1024 * 1024) throw new Error('Image too large to classify');
       const temps: any[] = [];

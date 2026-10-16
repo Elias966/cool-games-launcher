@@ -1,11 +1,12 @@
-// Interface sound design, synthesized live with the Web Audio API (no audio
-// files to ship or license). Voices are FM synths, filtered noise and sub
+// Interface sound design, synthesized live with the Web Audio API; only the
+// window's close sound is a recorded clip (assets/sounds/close.mp3). Voices are FM synths, filtered noise and sub
 // thumps routed through a compressor, a stereo convolution reverb and a
 // ping-pong delay. Hover/click sounds follow the cursor in the stereo field,
 // and hover pitches walk a pentatonic scale across the screen. An optional
 // ambient pad breathes underneath and brightens while the AI works.
 
 import type { SoundGroup, SoundGroups } from '@shared/types';
+import closeClipUrl from './assets/sounds/close.mp3';
 
 export type SoundName = 'hover' | 'click' | 'toggle' | 'tab' | 'open' | 'close' | 'download' | 'success' | 'error' | 'notify' | 'warp' | 'quit';
 
@@ -42,6 +43,11 @@ class SoundEngine {
   private groups: SoundGroups = ALL_GROUPS;
   private ambient: { gain: GainNode; filter: BiquadFilterNode; stop: () => void } | null = null;
   private last = new Map<SoundName, number>();
+  /** Why the ambient pad is silent right now (window hidden, a game running). */
+  private quiet = new Set<string>();
+  /** The close sound, with its leading and trailing silence trimmed (seconds). */
+  private closeClip: { buffer: AudioBuffer; start: number; end: number } | null = null;
+  private closeClipLoading = false;
   pointer = { x: 0.5, y: 0.5 };
 
   configure(enabled: boolean, volume: number, ambient: boolean, ambientVolume = 0.5, groups: SoundGroups = ALL_GROUPS) {
@@ -52,8 +58,39 @@ class SoundEngine {
     if (this.master) this.master.gain.value = volume;
     if (this.ambient && this.ctx) this.ambient.gain.gain.setTargetAtTime(0.1 * ambientVolume, this.ctx.currentTime, 0.4);
     this.ambientOn = enabled && ambient;
-    if (this.ambientOn) this.startAmbient();
+    this.updateAmbient();
+    if (enabled) void this.loadCloseClip();
+  }
+
+  private updateAmbient() {
+    if (this.ambientOn && !this.quiet.size) this.startAmbient();
     else this.stopAmbient();
+  }
+
+  /** Decodes the close sound once, ahead of time, so it plays without delay. */
+  private async loadCloseClip() {
+    if (this.closeClip || this.closeClipLoading) return;
+    const ctx = this.context();
+    if (!ctx) return;
+    this.closeClipLoading = true;
+    try {
+      const buffer = await ctx.decodeAudioData(await (await fetch(closeClipUrl)).arrayBuffer());
+      const data = buffer.getChannelData(0);
+      const loud = (i: number) => Math.abs(data[i]) > 0.004;
+      let first = 0, last = data.length - 1;
+      while (first < last && !loud(first)) first++;
+      while (last > first && !loud(last)) last--;
+      this.closeClip = { buffer, start: Math.max(0, first / buffer.sampleRate - 0.005), end: Math.min(buffer.duration, last / buffer.sampleRate + 0.08) };
+    } catch {
+      // The synthesized fallback plays instead.
+    } finally {
+      this.closeClipLoading = false;
+    }
+  }
+
+  /** How long the close sound lasts, in milliseconds. */
+  closeSoundMs(): number {
+    return this.closeClip ? Math.round((this.closeClip.end - this.closeClip.start) * 1000) : 750;
   }
 
   private context(): AudioContext | null {
@@ -293,7 +330,14 @@ class SoundEngine {
         break;
       }
       case 'quit': {
-        // Closing the launcher: a quick, wet raspberry in a big hall. A buzzy
+        if (this.closeClip) {
+          const src = ctx.createBufferSource();
+          src.buffer = this.closeClip.buffer;
+          src.connect(out);
+          src.start(t, this.closeClip.start, this.closeClip.end - this.closeClip.start);
+          break;
+        }
+        // Fallback while the clip is not decoded: closing the launcher: a quick, wet raspberry in a big hall. A buzzy
         // low tone drops in pitch while a flutter makes it sputter.
         const dur = 0.62;
         const lp = ctx.createBiquadFilter();
@@ -390,11 +434,11 @@ class SoundEngine {
     this.ambient = null;
   }
 
-  /** Pauses the pad while the window is hidden. */
-  setVisible(visible: boolean) {
-    if (!this.ambientOn) return;
-    if (visible) this.startAmbient();
-    else this.stopAmbient();
+  /** Silences the ambient pad for a reason (window hidden, a game running) until it is lifted. */
+  setQuiet(reason: string, on: boolean) {
+    if (on) this.quiet.add(reason);
+    else this.quiet.delete(reason);
+    this.updateAmbient();
   }
 }
 

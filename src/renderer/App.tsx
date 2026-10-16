@@ -79,7 +79,10 @@ export function App() {
   const uiAmbientVolume = useApp((s) => s.settings?.uiAmbientVolume ?? 0.5);
   const uiSoundGroups = useApp((s) => s.settings?.uiSoundGroups);
   useEffect(() => sound.configure(uiSounds, uiVolume, uiAmbient, uiAmbientVolume, uiSoundGroups), [uiSounds, uiVolume, uiAmbient, uiAmbientVolume, uiSoundGroups]);
-  useEffect(() => sound.setVisible(appVisible), [appVisible]);
+  useEffect(() => sound.setQuiet('hidden', !appVisible), [appVisible]);
+  // While a game runs, the launcher stays quiet and its 3D scene stops drawing.
+  const gaming = useApp((s) => s.library.some((g) => g.running));
+  useEffect(() => sound.setQuiet('gaming', gaming), [gaming]);
   useEffect(() => attachInterfaceSounds(), []);
   const firstTab = useRef(true);
   useEffect(() => {
@@ -167,7 +170,7 @@ export function App() {
         {WEBGL && (
           <SceneBoundary>
             <Suspense fallback={null}>
-              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible} />
+              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible && !gaming} />
             </Suspense>
           </SceneBoundary>
         )}
