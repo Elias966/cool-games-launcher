@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { CUSTOM_SOUNDS } from './types';
 import type {
   AiStatus,
+  DateCheckPhase,
   ImageOptions,
   StoresState,
   StoreSearchResult,
@@ -127,6 +128,7 @@ export const requests = {
   'store:searchFocus': z.object({ focused:z.boolean() }).strict(),
   'store:searchCancel': z.undefined(),
   'store:search': z.object({ query:z.string().trim().min(1).max(200),sourceIds:z.array(id).max(100).optional() }).strict(),
+  'store:dateStatus': z.undefined(),
   'store:setActive': z.object({ active: z.boolean(), sort: z.enum(['popular','trending','new','title','title-desc']).optional() }).strict(),
   'catalog:facets': z.undefined(),
   'catalog:list': z
@@ -299,6 +301,7 @@ export interface Responses {
   'store:searchFocus': void;
   'store:searchCancel': void;
   'store:search': StoreSearchResult;
+  'store:dateStatus': DateCheckPhase;
   'store:setActive': AiStatus;
   'catalog:facets': CatalogFacets;
   'catalog:list': CatalogPage;
@@ -398,6 +401,7 @@ export interface Events {
   'catalog:hidden': { policyRevision: number; ids: number[] };
   'sources:changed': Source[];
   'crawl:progress': CrawlProgress;
+  'store:dateStatus': DateCheckPhase;
   'downloads:changed': DownloadItem[];
   'download:progress': Pick<DownloadItem, 'id' | 'receivedBytes' | 'totalBytes' | 'speedBps' | 'etaSeconds' | 'state' | 'connections'>;
   'library:changed': Game[];

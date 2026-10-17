@@ -60,10 +60,13 @@ export class ArtworkCache {
 
   private async download(url: string, referer: string | null, signal?: AbortSignal): Promise<string> {
     if (!/^https?:\/\//i.test(url)) throw new Error('Unsupported image URL');
-    await this.limiter.wait(`img:${hostOf(url)}`, 400, signal);
+    // Assets load concurrently like a normal listing page (the caller bounds
+    // classification to eight games). Do not serialize all new covers at 2/s.
+    await this.limiter.wait(`img:${hostOf(url)}`, 100, signal);
     const cached = this.fileFor(url);
     if (cached) return cached;
-    const res = await fetch(url, {
+    const send: typeof fetch = process.versions.electron ? require('electron').net.fetch : globalThis.fetch;
+    const res = await send(url, {
       headers: { 'User-Agent': BROWSER_UA, Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8', ...(referer ? { Referer: referer } : {}) },
       redirect: 'follow',
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),

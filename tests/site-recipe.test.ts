@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { catalogLinks, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recipeCards, recipeRoutes, type SiteRecipe } from '@shared/site-recipe';
+import { catalogLinks, isListingRoute, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recipeCards, recipeRoutes, type SiteRecipe } from '@shared/site-recipe';
 import type { PageExtract } from '@shared/page-extract';
 
 const recipe = (game: string[], more: string[] = []): SiteRecipe => ({
@@ -27,6 +27,16 @@ describe('site recipes', () => {
     const p = inducePatterns(['https://g.test/games/12/orbit', 'https://g.test/games/987/space']);
     expect(matchesAny('https://g.test/games/5/new', p)).toBe(true);
     expect(matchesAny('https://g.test/news/5/new', p)).toBe(false);
+  });
+  it('does not let a stray category example turn every two-segment page into a game',()=>{
+    const patterns=inducePatterns(['https://g.test/game/orbit','https://g.test/game/space','https://g.test/genre/action']);
+    expect(matchesAny('https://g.test/game/new-game',patterns)).toBe(true);
+    expect(matchesAny('https://g.test/genre/adventure',patterns)).toBe(false);
+    expect(matchesAny('https://g.test/account/settings',patterns)).toBe(false);
+  });
+  it('keeps catalog links out of game cards even with an older broad recipe',()=>{
+    const ex={url:'https://g.test/',cards:[],links:[{href:'https://g.test/game/orbit',text:'Orbit',inContent:true},{href:'https://g.test/genre/action',text:'Action',inContent:true}]} as unknown as PageExtract;
+    expect(recipeCards(ex,recipe(['https://g.test/game/orbit','https://g.test/game/space','https://g.test/genre/action'])) .map(c=>c.href)).toEqual(['https://g.test/game/orbit']);
   });
 
   it('induces pagination from a single example', () => {
@@ -62,6 +72,15 @@ describe('site recipes', () => {
       link(6, 'https://s.test/game-2', '2'), link(7, 'https://s.test/about', 'About'), link(8, 'https://other.test/page/2/', '2'),
     ] } as unknown as PageExtract;
     expect(paginationLinks(ex).sort()).toEqual(['https://s.test/?paged=2', 'https://s.test/games?page=2', 'https://s.test/older', 'https://s.test/page/2/', 'https://s.test/page/3/']);
+  });
+
+  it('excludes random-post actions even when they look like next pages or match a learned route',()=>{
+    const action='https://s.test/category/action/page/4?random-post=1';
+    const ex={url:'https://s.test/category/action/',links:[{href:action,text:'Next 4',inContent:true},{href:'https://s.test/category/action/page/4',text:'4',inContent:true}],nextPage:action} as PageExtract;
+    expect(isListingRoute(action)).toBe(false);expect(isListingRoute('https://s.test/?page=4')).toBe(true);
+    expect(paginationLinks(ex)).toEqual(['https://s.test/category/action/page/4']);
+    expect(recipeRoutes(ex,recipe([], [action]))).toEqual(['https://s.test/category/action/page/4']);
+    expect(catalogLinks({...ex,links:[{href:action,text:'All games'}]} as PageExtract)).toEqual([]);
   });
 
   it('finds catalog links (all games, A–Z, categories) in menus', () => {

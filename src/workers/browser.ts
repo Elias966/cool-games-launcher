@@ -181,10 +181,11 @@ async function useContext(ctx: ContextName): Promise<WebDriver> {
     await restorePage(d, ctx);
     return d;
   }
-  if (current !== ctx) {
-    await d.switchTo().window(handle);
-    current = ctx;
-  }
+  // A tab may keep its handle while redirects or a human's tab selection
+  // discard Marionette's current browsing context. Re-select the live tab
+  // even when our logical context name did not change.
+  await d.switchTo().window(handle);
+  current = ctx;
   // Close stray popups the page may have opened in this session.
   if (handles.length > windows.size + 2) {
     const known = new Set(windows.values());

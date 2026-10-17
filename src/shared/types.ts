@@ -454,6 +454,8 @@ export interface AiStatus {
   accel: 'cpu' | 'vulkan' | null;
 }
 
+export type DateCheckPhase = 'idle' | 'checking' | 'paused' | 'needs-user';
+
 export interface CrawlProgress {
   sourceId: number;
   status: SourceStatus;

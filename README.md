@@ -13,6 +13,22 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.21
+
+- Faster website indexing uses Chromium's HTTP transport with parallel parsing,
+  avoiding unnecessary Firefox navigation on sites that refuse Node HTTP requests.
+- Website batches take turns and honor server retry times; all-games pagination
+  runs before overlapping category menus. Selecting New keeps indexing running.
+- Store sort changes discard obsolete results and scheduled refreshes. Pausing
+  website indexing keeps saved games visible; deleted website filters are cleared.
+- Recent/visible webpage date checks finish and show their actual state instead
+  of sweeping the entire catalog repeatedly. They yield Firefox to indexing and
+  resume automatically afterward. Old random-page crawl routes are repaired.
+- Firefox reselects live tabs after browsing-context changes, and returning from
+  human verification refreshes saved HTTP authentication. CAPTCHA control keeps
+  the same live Firefox page and session.
+- Opening an indexed Store no longer preloads the browsing model onto the GPU.
+
 ## What's new in 0.2.20
 
 - **All download mirrors**: includes host links outside the AI's limited control

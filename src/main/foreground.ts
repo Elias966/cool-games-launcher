@@ -8,13 +8,14 @@ export class ForegroundWork {
   private busy = false;
   private holds = new Set<string>();
   private handoffTimer: NodeJS.Timeout | null = null;
-  constructor(private session: StoreSession, private background: { setPaused(paused: boolean): Promise<void> }) {
+  constructor(private session: StoreSession, private background: { setPaused(paused: boolean): Promise<void> }, private changed?: () => void) {
     session.on('leave', () => {
       if(this.handoffTimer)clearTimeout(this.handoffTimer);
       this.handoffTimer=null;this.holds.delete('transfer-handoff');
       this.holds.delete('search-input'); this.sync();
     });
   }
+  get isBusy() { return this.busy || !!this.queue.length || !!this.holds.size; }
   /** Allow the transfer's completion event to queue preparation before restarting
    * background Qwen. Long downloads resume indexing after this bounded window. */
   transferHandoff() {
@@ -29,7 +30,10 @@ export class ForegroundWork {
     if (held) this.holds.add(key); else this.holds.delete(key);
     this.sync();
   }
-  private sync() { void this.background.setPaused(this.busy || !!this.queue.length || !!this.holds.size).catch(error => console.error('[foreground] background pause failed', error)); }
+  private sync() {
+    void this.background.setPaused(this.isBusy).catch(error => console.error('[foreground] background pause failed', error));
+    this.changed?.();
+  }
   run<T>(priority: number, run: (token: SessionToken) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const parent = this.session.token();
     if (!parent) return Promise.reject(new StaleResultError('foreground task'));

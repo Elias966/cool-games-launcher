@@ -11,6 +11,10 @@ import { hostOf, siteKey } from '@shared/urls';
 const AUTH_TTL_MS = 60_000;
 /** Cookie lookups go through the Firefox worker; never let a busy browser stall indexing. */
 const AUTH_WAIT_MS = 1500;
+const authKey = (url: string) => {
+  const u = new URL(url);
+  return u.origin + u.pathname;
+};
 
 export class PageFetcher {
   private auth = new Map<string, { cookie: string; userAgent: string; at: number }>();
@@ -24,15 +28,16 @@ export class PageFetcher {
   constructor(private workers: WorkerHost[], private browser: BrowserClient, private profileDir?: string) {}
 
   private async session(url: string) {
-    const key = siteKey(hostOf(url));
+    const key = authKey(url);
     const cached = this.auth.get(key);
     if (cached && Date.now() - cached.at < AUTH_TTL_MS) return cached;
     let lookup = this.pending.get(key);
     if (!lookup) {
       lookup = (async () => {
         try {
-          // The registrable domain's cookies cover its per-author subdomains too.
-          const r = await this.browser.cookieHeader('discovery', `https://${key}/`);
+          // Ask for this host/path: root-only queries lose protected game-page
+          // cookies, and sibling subdomains must not share an auth header.
+          const r = await this.browser.cookieHeader('discovery', url);
           const entry = { cookie: r.cookie, userAgent: r.userAgent, at: Date.now() };
           this.auth.set(key, entry);
           return entry;
@@ -62,7 +67,7 @@ export class PageFetcher {
    * JavaScript and HTTP challenges; it never uses an AI or the AI's page. */
   async fetchBackground(url: string, signal: AbortSignal, detail = false): Promise<FetchPageResult> {
     const worker = this.workers[this.next++ % this.workers.length];
-    const cached = this.auth.get(siteKey(hostOf(url)));
+    const cached = this.auth.get(authKey(url));
     const cookie = this.profileDir ? await worker.call<string>('storedCookies', {profileDir:this.profileDir,url},signal).catch(()=> '') : cached?.cookie ?? '';
     if (signal.aborted) throw Object.assign(new Error('Cancelled'), {code:'cancelled'});
     const r = await worker.call<FetchPageResult>('fetchPage',{url,cookie,userAgent:cached?.userAgent},signal);
@@ -89,7 +94,7 @@ export class PageFetcher {
 
   /** A completed website check changes the session cookies. */
   forget(url?: string) {
-    if (url) this.auth.delete(siteKey(hostOf(url)));
+    if (url) { const site = siteKey(hostOf(url)); for (const key of this.auth.keys()) if (siteKey(hostOf(key)) === site) this.auth.delete(key); }
     else this.auth.clear();
   }
 }

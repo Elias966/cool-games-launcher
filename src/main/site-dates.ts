@@ -1,6 +1,7 @@
 // Posting-date reads belong to the launcher, not a model or browser agent.
 import type { CatalogRepo, SourcesRepo } from './repos';
 import type { PageFetcher } from './page-fetcher';
+import type { DateCheckPhase } from '@shared/types';
 import type { PageExtract } from '@shared/page-extract';
 import type { HostRateLimiter } from './rate-limit';
 import { recipeCards, recentListingLinks } from '@shared/site-recipe';
@@ -8,6 +9,7 @@ import { titleKey, hostOf, siteKey } from '@shared/urls';
 
 export class SiteDates {
   private active = false;
+  private phase: DateCheckPhase = 'idle';
   private controller: AbortController | null = null;
   private task: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -23,30 +25,42 @@ export class SiteDates {
     limiter: HostRateLimiter; changed: () => void;
     classify?: (id: number, signal: AbortSignal) => Promise<unknown>;
     verify?: () => void;
+    status?: (phase: DateCheckPhase) => void;
   }) {}
 
   setActive(active: boolean) {
     active = active && !this.waitingForHuman;
+    const wasActive = this.active;
     this.active = active;
     if (!active) {
+      if (this.task) this.fronts.clear();
       this.controller?.abort();
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
+      if (this.waitingForHuman) this.setPhase('needs-user');
+      else if (this.task || this.priority.length) this.setPhase('paused');
     } else {
       if (!this.timer) {
         this.timer = setInterval(() => this.poke(), 5 * 60_000);
         this.timer.unref();
       }
-      this.poke();
+      if (!wasActive) this.poke();
     }
   }
 
   prioritize(ids: number[]) {
-    this.priority = [...new Set([...ids, ...this.priority])].slice(0, 1000);
+    const due = this.deps.catalog.datesNeedingCheck(ids, 1000);
+    if (!due.length) return;
+    this.priority = [...new Set([...due, ...this.priority])].slice(0, 1000);
+    if (!this.active) this.setPhase(this.waitingForHuman ? 'needs-user' : 'paused');
     this.poke();
   }
 
   stop() { this.setActive(false); }
+
+  getStatus() { return this.phase; }
+
+  private setPhase(phase: DateCheckPhase) { if (this.phase !== phase) { this.phase = phase; this.deps.status?.(phase); } }
 
   get needsVerification() { return this.waitingForHuman; }
 
@@ -57,10 +71,12 @@ export class SiteDates {
     if (this.task) { this.again = true; return; }
     const controller = new AbortController();
     this.controller = controller;
+    this.setPhase('checking');
     this.task = this.run(controller.signal).catch(error => {
       if (!controller.signal.aborted) console.warn('[site-dates]', (error as Error).message);
     }).finally(() => {
       this.task = null;
+      this.setPhase(this.waitingForHuman ? 'needs-user' : controller.signal.aborted ? 'paused' : 'idle');
       if (this.active && (this.priority.length || this.again)) {
         this.again = false;
         setTimeout(() => this.poke(), 0).unref();
@@ -96,7 +112,7 @@ export class SiteDates {
   /** Learned URL patterns identify recent links without model navigation.
    * New covers retain the normal content classification. */
   private async readFrontPages(signal: AbortSignal) {
-    for (const source of this.deps.sources.list().filter(s => s.enabled)) {
+    for (const source of this.deps.sources.list().filter(s => s.enabled && s.status !== 'blocked' && (this.deps.sources.cursor(s.id)?.retryAt ?? 0) <= Date.now())) {
       if (signal.aborted) return;
       const recipe = this.deps.sources.recipe(source.id);
       if (!recipe?.game.length || Date.now() - (this.fronts.get(source.id) ?? 0) < 5 * 60_000) continue;
@@ -137,18 +153,18 @@ export class SiteDates {
     for (;;) {
       if (signal.aborted || !this.active) return;
       await this.readFrontPages(signal);
-      const prioritized = this.deps.catalog.datesNeedingCheck(this.priority, 1000);
-      this.priority = [];
-      const ids = [...new Set([...prioritized, ...this.deps.catalog.dateCheckBatch(10000)])]
-        .filter(id => (this.retry.get(id) ?? 0) <= Date.now()).slice(0, 80);
+      // Only recent and requested visible games: never start a full-catalog sweep.
+      const prioritized = this.deps.catalog.datesNeedingCheck(this.priority, 1000).filter(id => (this.retry.get(id) ?? 0) <= Date.now());
+      const ids = [...new Set(prioritized)].slice(0, 80);
+      this.priority = prioritized.slice(80);
       if (!ids.length) return;
       let next = 0, changed = false;
-      await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+      try { await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
         while (next < ids.length && !signal.aborted) {
           const id = ids[next++], entry = this.deps.catalog.raw(id);
           if (!entry) continue;
           const source = this.deps.sources.get(entry.sourceId);
-          if (!source?.enabled) continue;
+          if (!source?.enabled || source.status === 'blocked' || (this.deps.sources.cursor(source.id)?.retryAt ?? 0) > Date.now()) continue;
           try {
             await this.deps.limiter.wait(siteKey(hostOf(entry.pageUrl)), source.rateLimitMs, signal);
             const r = await this.deps.fetcher.fetchBackground(entry.pageUrl, signal, true);
@@ -166,7 +182,9 @@ export class SiteDates {
             this.retry.set(id, Date.now() + 10 * 60_000);
           }
         }
-      }));
+      })); } finally {
+        if (signal.aborted) this.priority = [...new Set([...this.deps.catalog.datesNeedingCheck(ids,1000),...this.priority])].slice(0,1000);
+      }
       if (changed) this.deps.changed();
     }
   }

@@ -1,6 +1,8 @@
 // Arabic interface texts, keyed by the English text they replace (see i18n.ts).
 // Placeholders such as {n} must stay as they are.
 export const ar: Record<string, string> = {
+  'Indexing paused · {n} saved games': 'الفهرسة متوقفة مؤقتًا · {n} لعبة محفوظة',
+  'Date checks wait while indexing or another task runs.': 'ينتظر فحص التواريخ حتى تنتهي الفهرسة أو المهمة الأخرى.',
   '{n} unavailable or different files': '{n} مضيفين غير متاحين أو بملفات مختلفة',
   'Build available': 'نسخة متاحة',
   'Website build available': 'نسخة متاحة من الموقع',
@@ -979,4 +981,8 @@ export const ar: Record<string, string> = {
   'Return control to launcher': 'إعادة التحكم إلى المشغّل',
   'Take control of Firefox': 'التحكم في فايرفوكس',
   'Complete the website check so the launcher can read game addition dates.': 'أكمل التحقق من الموقع ليتمكن المشغّل من قراءة تواريخ إضافة الألعاب.',
+  'Checking webpage dates for recent and visible games…': 'جارٍ التحقق من تواريخ صفحات الألعاب الحديثة والمعروضة…',
+  'Date checks need a human website check. Open Browser to continue.': 'تحتاج قراءة التواريخ إلى تحقق بشري من الموقع. افتح المتصفح للمتابعة.',
+  'Date checks paused.': 'قراءة التواريخ متوقفة مؤقتًا.',
+  'Date checks finished. New uses saved webpage dates; undated games appear last.': 'انتهى التحقق من التواريخ. يستخدم ترتيب الجديد تواريخ الصفحات المحفوظة؛ تظهر الألعاب دون تاريخ في النهاية.',
 };

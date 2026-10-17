@@ -290,6 +290,8 @@ export class SourcesRepo {
 
   resetCrawl(id: number) {
     this.st.get('UPDATE sources SET last_crawl_at = NULL, cursor_json = NULL WHERE id = ?').run(id);
+    const recipe = this.recipe(id);
+    if (recipe?.fullCrawlAt) { delete recipe.fullCrawlAt; this.saveRecipe(id, recipe); }
   }
 
   recipe(id: number): SiteRecipe | null {

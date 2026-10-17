@@ -45,6 +45,76 @@ function source(s:ReturnType<typeof setup>) { const row=s.sources.add('https://g
 async function close(s:ReturnType<typeof setup>) { s.session.leave();await vi.advanceTimersByTimeAsync(1000);s.db.close(); }
 
 describe('durable incremental Store indexing',()=>{
+  it('keeps indexing ownership across batches and releases it when the catalog finishes, without a tab click',async()=>{
+    const working:boolean[]=[];
+    const s=setup(file(),{onWorkChanged:()=>working.push(s.discovery.isWorking)});source(s);
+    (s.discovery as any).start(s.session.enter());await vi.advanceTimersByTimeAsync(1000);
+    expect(s.catalog.query(s.policy.policy(),{}).total).toBe(6);
+    expect(working).toEqual([true,false]);
+    s.session.leave();await s.discovery.setPaused(true);
+  });
+  it('does not drain a large verification backlog before the next listing batch can run',async()=>{
+    const s=setup(file()),src=source(s);s.session.enter();
+    for(let n=10;n<70;n++){const id=s.catalog.upsertListing(src.id,{pageUrl:`https://games.test/game-1-${n}`,title:`Orbit 1-${n}`,titleKey:`orbit 1 ${n}`}).id;s.catalog.markListed([id]);s.catalog.setRating(id,'safe',0,[],CLASSIFIER_VERSION)}
+    await s.run();
+    expect(s.sources.cursor(src.id)?.pending).toContain('https://games.test/page/2');
+    expect(s.browser.navigate.mock.calls.filter(([,url])=>url.includes('/game-')).length).toBeLessThanOrEqual(8);
+  });
+  it('defers a rate-limited source without spending detail attempts or holding up the next website',async()=>{
+    const fetcher={stats:{fallbacks:0},fetch:vi.fn(async(url:string)=>({ok:false,status:429,reason:'http',detail:'HTTP 429',ms:1,url,retryAfterMs:45_000}))};
+    const s=setup(file(),{fetcher}),first=source(s),second=s.sources.add('https://second.test/');s.session.enter();
+    for(let i=0;i<60;i++){const id=s.catalog.upsertListing(first.id,{pageUrl:`https://games.test/game-${i}`,title:`Game ${i}`,titleKey:`game ${i}`}).id;s.catalog.markListed([id]);s.catalog.setRating(id,'safe',0,[],CLASSIFIER_VERSION)}
+    s.sources.saveCursor(first.id,{pending:[],visited:[],pagesDone:1,startedAt:new Date().toISOString()});
+    await s.run();
+    expect(s.sources.cursor(first.id)?.retryAt).toBe(Date.now()+45_000);
+    expect(s.sources.get(first.id)?.statusDetail).toContain('limiting requests');
+    expect(s.pick()?.id).toBe(second.id);expect(fetcher.fetch.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(s.db.prepare('SELECT max(detail_attempts) AS n FROM catalog').get()).toEqual({n:0});
+  });
+
+  it('follows pagination before walking a large category menu',async()=>{
+    const s=setup(file()),src=source(s);s.session.enter();
+    const original=s.browser.extract.getMockImplementation()!;
+    s.browser.extract.mockImplementation(async()=>{const ex=await original();return ex.url==='https://games.test/'?{...ex,links:[...ex.links,...['category/action','games'].map((p,i)=>({i:999+i,href:'https://games.test/'+p,text:i?'All games':'Action',img:null,inContent:false,download:false,rect:{x:0,y:0,w:0,h:0}}))]}:ex});
+    await s.run();expect(s.sources.cursor(src.id)?.pending).toEqual(['https://games.test/page/2','https://games.test/games','https://games.test/category/action']);
+  });
+  it('gives another website a turn while the first still has pending pages, retaining games when indexing is disabled',async()=>{
+    const s=setup(file()),first=source(s);s.session.enter();await s.run();
+    const second=s.sources.add('https://second.test/');
+    expect(s.sources.cursor(first.id)?.pending.length).toBeGreaterThan(0);
+    expect(s.pick()?.id).toBe(second.id);
+    const before=s.catalog.query(s.policy.policy(),{}).entries.map(e=>e.id);
+    s.sources.update(first.id,{enabled:false});
+    expect(s.catalog.query(s.policy.policy(),{}).entries.map(e=>e.id)).toEqual(before);
+    s.sources.update(first.id,{enabled:true});
+    expect(s.catalog.query(s.policy.policy(),{}).entries.map(e=>e.id)).toEqual(before);
+  });
+
+  it('checkpoints deferred verification instead of endlessly draining an unchanged backlog',async()=>{
+    const s=setup(file()),first=source(s),other=s.sources.add('https://other.test/');
+    s.session.enter();
+    for(let i=0;i<60;i++){const id=s.catalog.upsertListing(first.id,{pageUrl:`https://games.test/game-${i}`,title:`Game ${i}`,titleKey:`game ${i}`}).id;s.catalog.markListed([id]);s.catalog.setRating(id,'safe',0,[],CLASSIFIER_VERSION)}
+    s.sources.saveCursor(first.id,{pending:[],visited:[],pagesDone:1,startedAt:new Date().toISOString()});
+    (s.discovery as any).manualSourceId=other.id;
+    await s.run();
+    expect(s.sources.cursor(first.id)?.retryAt).toBeGreaterThan(Date.now());
+    expect(s.sources.get(first.id)?.statusDetail).toContain('Waiting for the browser');
+    expect(s.browser.navigate).not.toHaveBeenCalled();
+  });
+
+  it('recognizes repeated access failures across distinct games even when parallel successful checks finish between them',async()=>{
+    const s=setup(file()),src=source(s);s.session.enter();
+    const ids=[1,2,3].map(i=>s.catalog.upsertListing(src.id,{pageUrl:`https://games.test/game-1-${i}`,title:`Orbit 1-${i}`,titleKey:`orbit 1 ${i}`}).id);
+    const gated=page('<h1>Access denied</h1>','https://games.test/blocked');gated.gates.blocked=true;
+    const block=(id:number)=>(s.discovery as any).gatedDetail(s.sources.get(src.id),gated,s.catalog.raw(id)!.pageUrl,id);
+    block(ids[0]);block(ids[0]);
+    expect(s.sources.get(src.id)?.status).not.toBe('blocked');
+    let pending=s.discovery.fetchDetail(ids[0],s.session.token()!);await vi.advanceTimersByTimeAsync(31_000);await pending;
+    block(ids[1]);pending=s.discovery.fetchDetail(ids[1],s.session.token()!);await vi.advanceTimersByTimeAsync(31_000);await pending;block(ids[2]);
+    expect(s.sources.get(src.id)?.status).toBe('blocked');
+    expect(s.sources.cursor(src.id)?.verification?.entryId).toBe(ids[2]);
+  });
+
   it('keeps verified games, search, facets and links during rescan; only checks new games',async()=>{
     const path=file(),s=setup(path),src=source(s);s.session.enter();await s.run();await s.run();
     const before=s.catalog.query(s.policy.policy(),{}).entries.map(e=>s.catalog.raw(e.id));
@@ -80,6 +150,18 @@ describe('durable incremental Store indexing',()=>{
     expect(listings).toEqual(['https://games.test/','https://games.test/page/2','https://games.test/page/3']);
     expect(s.catalog.query(s.policy.policy(),{search:'Orbit new-1'}).total).toBe(1);
     expect(s.sources.cursor(src.id)).toBeNull();
+  });
+
+  it('repairs an old full-scan checkpoint, discards random actions and settles after known listings',async()=>{
+    const path=file(),s=setup(path),src=source(s);s.sources.update(src.id,{maxPages:20});s.session.enter();await s.run();await s.run();
+    // A completed catalog, but an older rescan lost lastCrawlAt and refresh mode.
+    const recipe=s.sources.recipe(src.id)!;s.sources.saveRecipe(src.id,{...recipe,fullCrawlAt:new Date().toISOString(),routesVersion:3});
+    s.db.prepare('UPDATE sources SET last_crawl_at=NULL WHERE id=?').run(src.id);
+    s.sources.saveCursor(src.id,{pending:['https://games.test/page/2?random-post=1','https://games.test/','https://games.test/page/2','https://games.test/page/3'],visited:[],pagesDone:0,startedAt:new Date().toISOString(),refresh:false});
+    s.browser.navigate.mockClear();await s.run();
+    const pages=s.browser.navigate.mock.calls.map(([,u])=>u);
+    expect(pages).toEqual(['https://games.test/','https://games.test/page/2']);expect(s.sources.cursor(src.id)).toBeNull();expect(s.pick()).toBeNull();
+    await close(s);const reopened=setup(path);expect(reopened.pick()).toBeNull();
   });
 
   it('a site learned with older instructions re-learns its listing routes once and walks the whole site', async () => {

@@ -22,6 +22,15 @@ afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();vi.useR
 const page=(html:string,url='https://games.test/')=>{const dom=new JSDOM(html,{url,runScripts:'outside-only'});const ex=dom.window.eval(`(${extractPage.toString()})({})`) as PageExtract;dom.window.close();return ex;};
 const game=()=>page('<script type="application/ld+json">'+JSON.stringify({'@type':'VideoGame',name:'Hidden Orbit',image:'/cover.png',operatingSystem:'Linux'})+'</script><main><a href="https://external.test/orbit.zip">Playable package</a></main>','https://games.test/hidden');
 const until=async(fn:()=>unknown)=>{for(let i=0;i<200;i++){if(fn())return;await new Promise(r=>setTimeout(r,5));}throw Error('Condition timed out');};
+it('notifies background date work about search/game holds and releases it after foreground work drains',async()=>{
+ const session=new StoreSession();session.enter();const states:boolean[]=[];
+ const work=new ForegroundWork(session,{setPaused:async()=>{}},()=>states.push(work.isBusy));
+ work.hold('search-input',true);work.hold('search-input',false);expect(states).toEqual([true,false]);
+ let finish:(value:string)=>void=()=>{};let started=false;
+ const pending=work.run(10,()=>new Promise<string>(resolve=>{finish=resolve;started=true}));
+ await until(()=>started);expect(work.isBusy).toBe(true);finish('done');await pending;await until(()=>!work.isBusy);
+ expect(states.at(-1)).toBe(false);session.leave();
+});
 function setup(){
  const dir=mkdtempSync(join(tmpdir(),'cgl-search-')),db=openDb(join(dir,'db')),session=new StoreSession();
  const settings=new SettingsRepo(db,defaultSettings({games:dir,downloads:dir})),sources=new SourcesRepo(db),catalog=new CatalogRepo(db),downloadsRepo=new DownloadsRepo(db),policy=new PolicyService(settings,new ConsentRepo(db));

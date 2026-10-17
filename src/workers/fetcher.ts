@@ -16,6 +16,27 @@ process.title = 'cgl-fetcher';
 const MAX_BYTES = 8 * 1024 * 1024;
 const quiet = new VirtualConsole();
 
+/** Chromium's network stack avoids the repeated browser fallbacks caused by
+ * sites refusing Node's TLS client. Keep parsing in these parallel workers.
+ * Follow redirects explicitly: Electron's fetch response URL is not reliable. */
+export async function requestPage(url: string, init: RequestInit = {}): Promise<{res: Response; url: string}> {
+  const send: typeof fetch = process.versions.electron ? require('electron').net.fetch : globalThis.fetch;
+  const headers = new Headers(init.headers);
+  for (let redirects = 0; ; redirects++) {
+    if (!/^https?:\/\//i.test(url)) throw new Error('Only HTTP(S) page requests are allowed');
+    const res = await send(url, {...init, headers, redirect: 'manual'});
+    const location = res.headers.get('location');
+    if (![301,302,303,307,308].includes(res.status) || !location) return {res,url};
+    await res.body?.cancel().catch(()=>undefined);
+    if (redirects >= 10) throw new Error('Too many page redirects');
+    const next = new URL(location,url).href;
+    if (new URL(next).origin !== new URL(url).origin) {
+      headers.delete('cookie'); headers.delete('authorization');
+    }
+    url = next;
+  }
+}
+
 export interface FetchPageParams {
   url: string;
   cookie?: string;
@@ -25,8 +46,8 @@ export interface FetchPageParams {
 }
 
 export type FetchPageResult =
-  | { ok: true; status: number; url: string; ms: number; extract: PageExtract }
-  | { ok: false; status: number; url: string; ms: number; reason: 'http' | 'not-html' | 'too-large' | 'network'; detail: string };
+  | { ok: true; status: number; url: string; ms: number; retryAfterMs?: number; extract: PageExtract }
+  | { ok: false; status: number; url: string; ms: number; retryAfterMs?: number; reason: 'http' | 'not-html' | 'too-large' | 'network'; detail: string };
 
 async function readCapped(res: Response, signal: AbortSignal): Promise<string | null> {
   const reader = res.body?.getReader();
@@ -75,13 +96,16 @@ async function fetchPage(p: FetchPageParams, signal: AbortSignal): Promise<Fetch
   if (p.cookie) headers.Cookie = p.cookie;
   if (p.referer) headers.Referer = p.referer;
   let res: Response;
+  let responseUrl = p.url;
   try {
-    res = await fetch(p.url, { headers, redirect: 'follow', signal: AbortSignal.any([signal, timeout]) });
+    ({res,url:responseUrl} = await requestPage(p.url, { headers, signal: AbortSignal.any([signal, timeout]) }));
   } catch (e) {
     if (signal.aborted) throw Object.assign(new Error('Cancelled'), { code: 'cancelled' });
     return { ok: false, status: 0, url: p.url, ms: Date.now() - started, reason: 'network', detail: (e as Error).message };
   }
-  const base = { status: res.status, url: res.url || p.url };
+  const retry = res.headers.get('retry-after');
+  const retryMs = retry ? /^\d+$/.test(retry) ? Number(retry)*1000 : Date.parse(retry)-Date.now() : NaN;
+  const base = { status: res.status, url: responseUrl, ...(Number.isFinite(retryMs) ? {retryAfterMs:Math.max(1000,Math.min(10*60_000,retryMs))} : {}) };
   const type = res.headers.get('content-type') ?? '';
   if (!/html|xml/i.test(type)) {
     await res.body?.cancel().catch(() => undefined);
@@ -103,13 +127,14 @@ async function fetchText(p: FetchPageParams, signal: AbortSignal): Promise<{ sta
   const headers: Record<string, string> = { 'User-Agent': p.userAgent || 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0', Accept: 'application/xml,text/xml,text/plain;q=0.9,*/*;q=0.5' };
   if (p.cookie) headers.Cookie = p.cookie;
   let res: Response;
+  let responseUrl = p.url;
   try {
-    res = await fetch(p.url, { headers, redirect: 'follow', signal: AbortSignal.any([signal, AbortSignal.timeout(p.timeoutMs ?? 20_000)]) });
+    ({res,url:responseUrl} = await requestPage(p.url, { headers, signal: AbortSignal.any([signal, AbortSignal.timeout(p.timeoutMs ?? 20_000)]) }));
   } catch (e) {
     if (signal.aborted) throw Object.assign(new Error('Cancelled'), { code: 'cancelled' });
     return { status: 0, url: p.url, text: null };
   }
-  if (!res.ok) { await res.body?.cancel().catch(() => undefined); return { status: res.status, url: res.url || p.url, text: null }; }
+  if (!res.ok) { await res.body?.cancel().catch(() => undefined); return { status: res.status, url: responseUrl, text: null }; }
   const reader = res.body?.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -117,12 +142,12 @@ async function fetchText(p: FetchPageParams, signal: AbortSignal): Promise<{ sta
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > 30 * 1024 * 1024) { await reader.cancel(); return { status: res.status, url: res.url, text: null }; }
+    if (total > 30 * 1024 * 1024) { await reader.cancel(); return { status: res.status, url: responseUrl, text: null }; }
     chunks.push(value);
   }
   let buf = Buffer.concat(chunks);
-  if (buf[0] === 0x1f && buf[1] === 0x8b) { try { buf = gunzipSync(buf, { maxOutputLength: 64 * 1024 * 1024 }); } catch { return { status: res.status, url: res.url, text: null }; } }
-  return { status: res.status, url: res.url || p.url, text: buf.toString('utf8') };
+  if (buf[0] === 0x1f && buf[1] === 0x8b) { try { buf = gunzipSync(buf, { maxOutputLength: 64 * 1024 * 1024 }); } catch { return { status: res.status, url: responseUrl, text: null }; } }
+  return { status: res.status, url: responseUrl, text: buf.toString('utf8') };
 }
 
 /** HTTP validators of a download file (HEAD, falling back to a 1-byte range GET). */

@@ -29,6 +29,7 @@ export function StoreTab() {
   const hiddenIds = useApp((s) => s.hiddenIds);
   const sources = useApp((s) => s.sources);
   const crawl = useApp((s) => s.crawl);
+  const datePhase = useApp((s) => s.datePhase);
   const detailId = useApp((s) => s.detailId);
   const browserOpen = useApp((s) => s.browser.open);
   const downloads = useApp((s) => s.downloads);
@@ -44,6 +45,7 @@ export function StoreTab() {
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [loadedQuery, setLoadedQuery] = useState('');
   const [search, setSearchText] = useState(view.search);
   const [debounced, setDebounced] = useState(view.search);
   const [searching,setSearching] = useState(false);
@@ -129,6 +131,15 @@ export function StoreTab() {
     search: debounced || undefined, sourceIds: sourceFilter.length ? sourceFilter : undefined, platforms: platformFilter.length ? platformFilter : undefined,
     categories: category ? [category] : undefined, tags: tag ? [tag] : undefined, sort, wishlist: wishOnly || undefined,
   }), [debounced, sourceFilter, platformFilter, category, tag, sort, wishOnly]);
+  const queryKey = JSON.stringify(query);
+
+  // Removing a source must not leave an invisible, persisted website filter.
+  // Disabling indexing keeps that website and its saved games selectable.
+  useEffect(() => {
+    const existing = new Set(sources.map(s => s.id));
+    const kept = sourceFilter.filter(id => existing.has(id));
+    if (kept.length !== sourceFilter.length) setStoreView({sources: kept, scrollTop: 0});
+  }, [sources, sourceFilter]);
 
   // Loads games [0, count) in pages of at most 500; responses from an older
   // query or policy revision are dropped.
@@ -152,8 +163,9 @@ export function StoreTab() {
     setTotal(sum);
     setFuzzy(!!lastFuzzy);
     setLoaded(true);
+    setLoadedQuery(queryKey);
     setStoreView({ loaded: out.length });
-  }, [query, policy.revision]);
+  }, [query, queryKey, policy.revision]);
 
   // A new query starts from the top (or from where the user left it, once).
   const firstLoad = useRef(true);
@@ -163,6 +175,11 @@ export function StoreTab() {
       if (firstLoad.current && restoreScroll.current) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: restoreScroll.current }));
       firstLoad.current = false;
     });
+    return () => {
+      generation.current++;
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    };
   }, [fetchWindow]);
 
   // While indexing adds games, refresh what is loaded at most every few seconds,
@@ -185,7 +202,7 @@ export function StoreTab() {
       if (scrollTop.current > NEAR_TOP) setStale(true);
       else refresh();
     }, wait);
-  }, [catalogVersion]);
+  }, [catalogVersion, refresh]);
   useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
   const onScroll = (top: number) => {
     scrollTop.current = top;
@@ -197,7 +214,7 @@ export function StoreTab() {
   // Endless scrolling: the next page loads before the bottom comes into view.
   // It only appends, so the games already on screen never move.
   const loadMore = useCallback(() => {
-    if (loadingMore.current || entries.length >= total) return;
+    if (loadedQuery !== queryKey || loadingMore.current || entries.length >= total) return;
     loadingMore.current = true;
     const gen = generation.current;
     const revision = policy.revision;
@@ -213,7 +230,7 @@ export function StoreTab() {
       });
       setTotal(page.total);
     }).catch(() => undefined).finally(() => { loadingMore.current = false; });
-  }, [entries.length, total, query, policy.revision]);
+  }, [entries.length, total, query, queryKey, loadedQuery, policy.revision]);
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -226,8 +243,8 @@ export function StoreTab() {
   const visible = useMemo(
     // Games hidden while someone scrolls further down keep their place as a
     // blank card until they are back at the top, so nothing shifts under them.
-    () => entries.filter((e) => (!nearTop || !hiddenIds.has(e.id)) && (policy.showNsfw || e.rating !== 'adult')),
-    [entries, hiddenIds, policy.showNsfw, nearTop],
+    () => loadedQuery === queryKey ? entries.filter((e) => (!nearTop || !hiddenIds.has(e.id)) && (policy.showNsfw || e.rating !== 'adult')) : [],
+    [entries, hiddenIds, policy.showNsfw, nearTop, loadedQuery, queryKey],
   );
 
   // Detail view follows the global detail id and is closed when its entry becomes hidden.
@@ -315,7 +332,7 @@ export function StoreTab() {
   const rankFor = (e: CatalogEntry) => (sort === 'popular' && e.rankPopular ? { kind: 'popular' as const, n: e.rankPopular } : sort === 'trending' && e.rankTrending ? { kind: 'trending' as const, n: e.rankTrending } : null);
   const filtered = !!(search || category || tag || platformFilter.length || sourceFilter.length);
 
-  const crawling = Object.values(crawl).filter((c) => c.status === 'crawling');
+  const crawling = Object.values(crawl).filter((c) => c.status === 'crawling' && sources.some(s => s.id === c.sourceId && s.enabled && s.status === 'crawling'));
   const enabledSources = sources.filter((s) => s.enabled);
   const blocked = sources.filter((s) => s.enabled && (s.status === 'blocked' || s.status === 'unsupported' || s.status === 'error'));
   return (
@@ -326,11 +343,12 @@ export function StoreTab() {
             <p className="eyebrow">{t('Discovery')}</p>
             <KineticTitle text={t('Store')} />
             <p className="page__subtitle">
-              {enabledSources.length === 0
+              {sources.length === 0
                 ? t('Add websites to start discovering games.')
+                : enabledSources.length === 0 ? t('Indexing paused · {n} saved games', {n:total})
                 : crawling.length
                   ? t('{detail} · {n} verified games', { detail: crawling[0].detail ?? t('Reading websites'), n: total })
-                  : t(enabledSources.length === 1 ? (total === 1 ? '{n} game from 1 website' : '{n} games from 1 website') : total === 1 ? '{n} game from {m} websites' : '{n} games from {m} websites', { n: total, m: enabledSources.length })}
+                  : t(sources.length === 1 ? (total === 1 ? '{n} game from 1 website' : '{n} games from 1 website') : total === 1 ? '{n} game from {m} websites' : '{n} games from {m} websites', { n: total, m: sources.length })}
               {!policy.showNsfw && <span className="page__subtle"> {t('· Games with a woman on the cover hidden')}</span>}
             </p>
           </div>
@@ -412,7 +430,7 @@ export function StoreTab() {
             <Icon name="heart" size={16} />
             {t('Wishlist')}{wishlist.length ? ` (${wishlist.length})` : ''}
           </button>
-          {sort === 'new' && <span className="sort-tabs__note">{t('The launcher checks added dates on game webpages in the background. No AI is used for this order.')}</span>}
+          {sort === 'new' && <span className="sort-tabs__note">{t(datePhase === 'checking' ? 'Checking webpage dates for recent and visible games…' : datePhase === 'needs-user' ? 'Date checks need a human website check. Open Browser to continue.' : datePhase === 'paused' ? 'Date checks wait while indexing or another task runs.' : 'Date checks finished. New uses saved webpage dates; undated games appear last.')}</span>}
           {(sort === 'popular' || sort === 'trending') && loaded && facets.gathering > 0 && (
             <span className="sort-tabs__note">
               {t('Collecting popularity for {n} more games from their Steam pages (players’ recommendations and release dates) — about {min} min left. The order gets better as it runs; games without data come last.', { n: facets.gathering.toLocaleString(locale()), min: Math.max(1, Math.round((facets.gathering * 1.8) / 60)) })}</span>
@@ -461,7 +479,7 @@ export function StoreTab() {
           </div>
         )}
 
-        {enabledSources.length === 0 ? (
+        {sources.length === 0 ? (
           <EmptyState
             icon="globe"
             title={t('Your orbit is empty')}
@@ -471,7 +489,7 @@ export function StoreTab() {
             }
           >
             {t('Add game websites in Settings. The local AI explores them while the Store is open, verifies game download links, checks artwork, and lists downloadable games here.')}</EmptyState>
-        ) : !loaded ? (
+        ) : !loaded || loadedQuery !== queryKey ? (
           <SkeletonGrid />
         ) : visible.length === 0 ? (
           crawling.length ? (

@@ -1,7 +1,7 @@
 // Minimal global state for the renderer, backed by main-process events.
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import type { AiStatus, BrowserSnapshot, CatalogSort, CrawlProgress, DownloadItem, Game, Platform, Settings, Source, StoresState, SystemInfo, TabId, WishItem } from '@shared/types';
+import type { AiStatus, DateCheckPhase, BrowserSnapshot, CatalogSort, CrawlProgress, DownloadItem, Game, Platform, Settings, Source, StoresState, SystemInfo, TabId, WishItem } from '@shared/types';
 
 export interface Toast {
   id: number;
@@ -29,6 +29,7 @@ export interface AppState {
   library: Game[];
   ai: AiStatus;
   crawl: Record<number, CrawlProgress>;
+  datePhase: DateCheckPhase;
   toasts: Toast[];
   appVisible: boolean;
   /** GOG and Epic accounts, the games they own, and installs in progress. */
@@ -93,6 +94,7 @@ let state: AppState = {
   library: [],
   ai: { phase: 'idle', detail: null, context: null, storeActive: false, modelLoaded: false, accel: null },
   crawl: {},
+  datePhase: 'idle',
   toasts: [],
   appVisible: true,
   stores: { accounts: { gog: { loggedIn: false, user: null, error: null }, epic: { loggedIn: false, user: null, error: null } }, owned: [], jobs: [], refreshing: false },
@@ -189,6 +191,8 @@ export async function boot() {
     setState((s) => ({ catalogVersion: s.catalogVersion + 1 }));
   });
   api.on('sources:changed', (sources) => setState({ sources }));
+  api.on('store:dateStatus', datePhase => setState({datePhase}));
+  void api.invoke('store:dateStatus').then(datePhase => setState({datePhase}));
   api.on('crawl:progress', (p) => setState((s) => ({ crawl: { ...s.crawl, [p.sourceId]: p } })));
   api.on('downloads:changed', (downloads) => setState({ downloads }));
   api.on('download:progress', (p) =>

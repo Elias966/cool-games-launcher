@@ -4,7 +4,7 @@
 import { canonicalUrl, hostOf, siteKey, titleKey } from '@shared/urls';
 import { textAdultSignals } from '@shared/policy';
 import { downloadEvidence } from '@shared/download-evidence';
-import { catalogLinks, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recentListingLinks, recipeCards, recipeRoutes, ROUTES_VERSION, type SiteRecipe } from '@shared/site-recipe';
+import { catalogLinks, isListingRoute, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recentListingLinks, recipeCards, recipeRoutes, ROUTES_VERSION, type SiteRecipe } from '@shared/site-recipe';
 import type { PageExtract, ExtractCard } from '@shared/page-extract';
 import type { Platform, Source } from '@shared/types';
 import type { SourcesRepo, CatalogRepo, SettingsRepo, CrawlCursor } from './repos';
@@ -57,6 +57,9 @@ class GoneError extends Error {
 class DeferredError extends Error {
   constructor() { super('Waiting for the browser'); }
 }
+class RateLimitedError extends Error {
+  constructor(readonly retryAt: number) { super('Website is limiting requests'); }
+}
 
 export class Discovery {
   private agent: LocalGameAgent;
@@ -64,6 +67,14 @@ export class Discovery {
   private paused = false;
   private controller: AbortController | null = null;
   private activeSourceId: number | null = null;
+  private lastSourceId: number | null = null;
+  private working = false;
+  get isWorking() { return this.working; }
+  private setWorking(working: boolean) {
+    if (working === this.working) return;
+    this.working = working;
+    this.deps.onWorkChanged?.();
+  }
   private forced = new Set<number>();
   private frontPage = new Map<number, PageExtract>();
   private manualSourceId: number | null = null;
@@ -73,6 +84,8 @@ export class Discovery {
   private wake: (() => void) | null = null;
   private browserLock: Promise<unknown> = Promise.resolve();
   private renderedDetailHits = new Map<number, number>();
+  private browserRequiredUntil = new Map<string, number>();
+  private cooldown = new Map<number, number>();
   private verificationCheckedAt = Date.now();
   private recheckFailures = 0;
 
@@ -92,6 +105,7 @@ export class Discovery {
       fetcher?: PageFetcher;
       onVerificationRequired?: (sourceId: number, message: string, captcha: boolean) => void;
       onVerificationResolved?: (sourceId: number) => void;
+      onWorkChanged?: () => void;
       /** A game page was re-verified: installed copies compare their build with it. */
       updates?: { afterDetail(catalogId: number): void };
       wishlist?: { afterDetail(catalogId: number): void };
@@ -249,6 +263,7 @@ export class Discovery {
       this.controller?.abort();
       this.wake?.();
       await this.running;
+      if (this.paused && this.deps.ai.getStatus?.()?.context === 'discovery') this.deps.ai.setStatus({phase:'idle',detail:null,context:null});
     } else {
       const token = this.deps.session.token();
       if (token) this.start(token);
@@ -263,6 +278,7 @@ export class Discovery {
     const token = { epoch: parent.epoch, signal: AbortSignal.any([parent.signal, this.controller.signal]) };
     this.running = this.loop(token).finally(() => {
       this.running = null;
+      this.setWorking(false);
       // Re-entering quickly may have created a new session while the old loop wound down.
       const t = this.deps.session.token();
       if (t && !this.paused) this.start(t);
@@ -290,11 +306,14 @@ export class Discovery {
       const cursor = this.deps.sources.cursor(s.id);
       return !cursor || ((cursor.failures ?? 0) < 3 && (cursor.retryAt ?? 0) <= Date.now());
     });
+    // Each checkpointed batch gives the next website a turn. A large first
+    // site's listing/detail backlog must not starve a newly added source.
+    const last = all.findIndex(s => s.id === this.lastSourceId);
+    if (last >= 0) all.push(...all.splice(0, last + 1));
     if (this.manualSourceId !== null && !all.some((s) => s.id === this.manualSourceId)) this.manualSourceId = null;
     for (const s of all) if (this.forced.has(s.id) && s.id !== this.manualSourceId) return s;
     return (
-      all.find((s) => s.status !== 'blocked' && s.id !== this.manualSourceId && this.deps.sources.cursor(s.id)) ??
-      all.find((s) => s.status !== 'blocked' && s.id !== this.manualSourceId && (!s.lastCrawlAt || Date.now() - Date.parse(s.lastCrawlAt) > refreshMs)) ??
+      all.find((s) => s.status !== 'blocked' && s.id !== this.manualSourceId && (this.deps.sources.cursor(s.id) || !s.lastCrawlAt || Date.now() - Date.parse(s.lastCrawlAt) > refreshMs)) ??
       // A site whose recipe predates route learning is not really finished.
       all.find((s) => { const r = this.deps.sources.recipe(s.id); return s.status !== 'blocked' && s.id !== this.manualSourceId && !!r && (r.routesVersion ?? 1) < ROUTES_VERSION; }) ??
       // Nor is one whose site map has never been read.
@@ -308,6 +327,7 @@ export class Discovery {
     while (session.isLive(token)) {
       try {
         if(this.deps.isModelReady&&!this.deps.isModelReady()){
+          this.setWorking(false);
           this.deps.ai.setStatus({phase:'paused',detail:tm('Download the browsing and analysis agents in Settings → Local AI'),context:'discovery'});
           await this.wait(60_000);continue;
         }
@@ -318,6 +338,7 @@ export class Discovery {
         }
         const source = this.pickSource();
         if (source) {
+          this.setWorking(true);
           this.forced.delete(source.id);
           await this.crawlSource(source, token);
           continue;
@@ -325,6 +346,7 @@ export class Discovery {
         // Nothing to crawl: work through classification and detail backlogs.
         if (await this.detailBacklog(token)) continue;
         if (this.manualSourceId === null && await this.classifyBacklog(token)) continue;
+        this.setWorking(false);
         this.deps.ai.setStatus({ phase: 'idle', detail: this.manualSourceId !== null ? tm('Waiting for human website verification') : null });
         const retryAt = this.deps.sources.list().map(s => this.deps.sources.cursor(s.id))
           .filter(c => c && (c.failures ?? 0) < 3 && (c.retryAt ?? 0) > Date.now())
@@ -368,26 +390,38 @@ export class Discovery {
    */
   private async load(source: Source, url: string, token: SessionToken, mode: 'http' | 'browser' = 'http', rendered?: (ex: PageExtract) => boolean): Promise<{ ex: PageExtract; via: 'http' | 'browser' }> {
     const { fetcher, limiter, session } = this.deps;
+    if ((this.cooldown.get(source.id) ?? 0) > Date.now()) throw new RateLimitedError(this.cooldown.get(source.id)!);
     const resumingCheck = this.verifiedPage && this.samePage(this.verifiedPage.url, url);
     const site = siteKey(hostOf(url));
-    if (fetcher && mode === 'http' && !resumingCheck) {
-      for (let attempt = 0; ; attempt++) {
+    const recipe = this.deps.sources.recipe(source.id);
+    const kind = `${source.id}:${recipe && matchesAny(url, recipe.game) ? 'game' : 'listing'}`;
+    // Older recipes may have learned "browser" from a temporary HTTP block.
+    // Probe the fast reader again, but avoid repeatedly probing script shells.
+    if (fetcher && !resumingCheck && (mode === 'http' || Date.now() >= (this.browserRequiredUntil.get(kind) ?? 0))) {
+      {
         await limiter.wait(site, this.spacing(source), token.signal);
         session.assertLive(token);
         const r = await fetcher.fetch(url, token.signal);
         session.assertLive(token, 'page read');
         if (process.env.CGL_DEBUG) console.log(`[index] http ${r.status} ${r.ms}ms ${r.ok ? `${r.extract.cards.length} cards` : r.reason} ${url.slice(0, 120)}`);
-        // Rate limiting is not a block: slow down and try again by ourselves.
-        if ((r.status === 429 || r.status === 503 && !(r.ok && r.extract.gates.captcha)) && attempt < 4) {
-          this.slowDown(source);
-          limiter.backoff(site, 4000 * 2 ** attempt);
-          continue;
+        // Defer this website instead of tying up every parallel worker (and
+        // all other sources) through repeated sleep/retry cycles.
+        if (r.status === 429 || r.status === 503 && !(r.ok && r.extract.gates.captcha)) {
+          if ((this.cooldown.get(source.id) ?? 0) <= Date.now()) this.slowDown(source);
+          const retryAt = Date.now() + (r.retryAfterMs ?? 30_000);
+          this.cooldown.set(source.id,retryAt);
+          limiter.backoff(site,retryAt-Date.now());
+          throw new RateLimitedError(retryAt);
         }
-        if (r.ok && !this.gated(r.extract)) { this.speedUp(source); return { ex: r.extract, via: 'http' }; }
+        if (r.ok && !this.gated(r.extract)) {
+          const complete = !rendered || rendered(r.extract);
+          if (!complete) this.browserRequiredUntil.set(kind, Date.now() + 5 * 60_000);
+          if (mode === 'http' || complete) { this.speedUp(source); return { ex: r.extract, via: 'http' }; }
+        }
         if (!r.ok && r.reason === 'not-html') throw new Error(`Not a web page (${r.detail})`);
         if (!r.ok && (r.status === 404 || r.status === 410)) throw new GoneError(url);
-        break;
       }
+      this.browserRequiredUntil.set(kind, Date.now() + 5 * 60_000);
       fetcher.stats.fallbacks++;
     }
     // The discovery window is parked on another site's human check; don't
@@ -419,7 +453,7 @@ export class Discovery {
   /** Re-check only the newest listings, unless a full walk is due. */
   private incremental(source: Source) {
     const full = this.deps.sources.recipe(source.id)?.fullCrawlAt;
-    return !!source.lastCrawlAt && !!full && Date.now() - Date.parse(full) < FULL_CRAWL_EVERY_MS;
+    return !!full && this.deps.catalog.count(source.id) > 0 && Date.now() - Date.parse(full) < FULL_CRAWL_EVERY_MS;
   }
 
   private status(source: Source, detail: string, pagesDone: number) {
@@ -429,9 +463,13 @@ export class Discovery {
 
   private async crawlSource(source: Source, token: SessionToken) {
     this.activeSourceId = source.id;
+    this.lastSourceId = source.id;
     const { sources, catalog, session } = this.deps;
     // A site indexed before is re-checked incrementally (see staleRun below).
     const cursor: CrawlCursor = sources.cursor(source.id) ?? { pending: [source.url], visited: [], pagesDone: 0, startedAt: new Date().toISOString(), refresh: this.incremental(source) };
+    cursor.pending = [...new Set(cursor.pending.filter(isListingRoute))];
+    // Older checkpoints lost lastCrawlAt while retaining a proven full crawl.
+    if (!cursor.refresh && this.incremental(source)) { cursor.refresh = true; cursor.staleRun = 0; }
     this.progress(source, 'crawling', 'Reading listing pages', cursor.pagesDone, catalog.count(source.id));
     this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Indexing {name}', { name: source.name }), context: 'discovery' });
     const host = hostOf(source.url);
@@ -449,6 +487,7 @@ export class Discovery {
       }
       while (cursor.pending.length && cursor.pagesDone - batchStart < source.maxPages) {
         session.assertLive(token);
+        if (!sources.get(source.id)?.enabled) return;
         const url = cursor.pending[0];
         let recipe = sources.recipe(source.id);
         const listed = (e: PageExtract) => e.cards.length >= 3 || !!e.game || !!recipe && recipeCards(e, recipe).length > 0;
@@ -510,14 +549,26 @@ export class Discovery {
           recipe = { ...recipe, recentPages: [...new Set([...(recipe.recentPages ?? []), ...recent])].slice(0, 6), siteDatesVersion: 1 };
           sources.saveRecipe(source.id, recipe);
         }
+        const pagination = new Set(paginationLinks(ex));
         for (const route of [...recipeRoutes(ex, recipe), ...catalogLinks(ex), ...extraRoutes]) {
           const next = canonicalUrl(route);
-          if (next && hostOf(next) === host && !cursor.visited.includes(next) && !cursor.pending.includes(next)) {
-            if (recent.includes(next)) cursor.pending.splice(1, 0, next);
+          if (next && isListingRoute(next) && hostOf(next) === host && !cursor.visited.includes(next) && !cursor.pending.includes(next)) {
+            if (recent.includes(next) || pagination.has(next)) cursor.pending.splice(1, 0, next);
             else cursor.pending.push(next);
           }
         }
         cursor.pending.shift();
+        // Exhaust the observed all-games listing before fanning out into
+        // overlapping genre menus. Pagination of that listing comes first.
+        const catalogStarts = new Set([...ex.links,...(ex.menuLinks ?? [])].filter(l=>/^(?:all games|games? list|browse(?: games)?|catalog(?:ue)?|a\s*[-–]\s*z|all titles|full list)$/i.test(l.text.trim())).map(l=>l.href));
+        const sourcePath = new URL(source.url).pathname.replace(/\/$/,'');
+        const priority = (url:string) => {
+          const u=new URL(url),path=u.pathname.replace(/\/$/,'');
+          const global=path===sourcePath || path.replace(/\/page\/\d+$/,'')===sourcePath || catalogStarts.has(url) || /^\/(?:games|games-list|game-list|all-games|browse|catalog)(?:\/page\/\d+)?$/i.test(path);
+          const paged=pagination.has(url) || /(?:\/page\/\d+$|[?&](?:page|paged|p|pg)=\d+)/i.test(path+u.search);
+          return recent.includes(url)?6:global?(paged?5:4):paged?2:0;
+        };
+        cursor.pending.sort((a,b)=>priority(b)-priority(a));
         cursor.visited.push(canonicalUrl(url) ?? url);
         cursor.pagesDone++;
         delete cursor.page; delete cursor.retryAt; delete cursor.failures;
@@ -546,7 +597,11 @@ export class Discovery {
       }
 
       await this.kickDetails(source, token);
-      await this.detailPass(source, token);
+      if (!sources.get(source.id)?.enabled) return;
+      // Prioritize finding the catalog while listing pages remain. Large
+      // detail backlogs must not consume the site's entire request budget
+      // before the next listing batch (or the next website) gets a turn.
+      if (!cursor.pending.length) await this.detailPass(source, token);
       if (sources.get(source.id)?.status === 'blocked') return;
       // Listings exhausted: the sitemap reaches the rest of the catalog.
       if (!cursor.pending.length && await this.sitemapPass(source, cursor, token)) {
@@ -578,12 +633,17 @@ export class Discovery {
     } catch (e) {
       if (isCancelled(e) || !session.isLive(token)) {
         // The checkpoint is saved; listing pages still pending resume next time the Store opens.
-        if (sources.cursor(source.id)) sources.setStatus(source.id, 'idle', this.paused ? 'Paused for your selected task — indexing will resume' : 'Paused — resumes when you return to the Store');
-        else sources.setStatus(source.id, 'ok', 'Up to date');
-        publish('sources:changed', sources.list());
+        const saved = sources.cursor(source.id);
+        this.progress(source, saved ? 'idle' : 'ok', saved ? (this.paused ? 'Paused for your selected task — indexing will resume' : 'Paused — resumes when you return to the Store') : 'Up to date', saved?.pagesDone ?? cursor.pagesDone, catalog.count(source.id));
         throw e;
       }
       const saved = sources.cursor(source.id) ?? cursor;
+      if (e instanceof RateLimitedError) {
+        saved.retryAt = e.retryAt;
+        sources.saveCursor(source.id,saved);
+        this.progress(source,'idle',`Website is limiting requests — retrying in ${Math.max(1,Math.ceil((e.retryAt-Date.now())/1000))} seconds`,cursor.pagesDone,catalog.count(source.id));
+        return;
+      }
       if (e instanceof DeferredError) {
         saved.retryAt = Date.now() + 60_000;
         sources.saveCursor(source.id, saved);
@@ -595,6 +655,7 @@ export class Discovery {
       sources.saveCursor(source.id, saved);
       this.progress(source, 'error', (e as Error).message.slice(0, 300), cursor.pagesDone, catalog.count(source.id));
     } finally {
+      if (this.detailRunner?.sourceId === source.id) await this.detailRunner.run.catch(() => undefined);
       if (this.activeSourceId === source.id) this.activeSourceId = null;
     }
   }
@@ -734,9 +795,10 @@ export class Discovery {
     const previous = this.deps.sources.recipe(source.id);
     const r = await this.agent.learnListing(ex, token);
     this.deps.session.assertLive(token, 'site recipe');
+    const listings = new Set([...r.more, ...catalogLinks(ex), ...paginationLinks(ex)]);
     const recipe: SiteRecipe = {
       version: 1,
-      game: inducePatterns(r.games),
+      game: inducePatterns(r.games.filter(url => !listings.has(url))),
       // The AI's listing routes plus structural pagination, so later pages
       // follow the same paths without another model call.
       more: moreFromExamples([...new Set([...r.more, ...paginationLinks(ex), ...catalogLinks(ex)])]),
@@ -848,6 +910,7 @@ export class Discovery {
     const { catalog, classification, session } = this.deps;
     const todo = catalog.needingClassification(CLASSIFIER_VERSION, limit, true);
     if (!todo.length) return false;
+    this.setWorking(true);
     this.deps.ai.setStatus({ phase: 'classifying', detail: tm('Checking artwork for {n} games', { n: todo.length }), context: 'discovery' });
     for (const e of todo) {
       session.assertLive(token);
@@ -859,8 +922,13 @@ export class Discovery {
 
   private async detailBacklog(token: SessionToken): Promise<boolean> {
     if (this.manualSourceId !== null) return false;
-    for (const s of this.deps.sources.list().filter((x) => x.enabled && x.status !== 'blocked' && x.status !== 'error')) {
+    const all = this.deps.sources.list().filter((x) => x.enabled && x.status !== 'blocked' && x.status !== 'error' && (this.deps.sources.cursor(x.id)?.retryAt ?? 0) <= Date.now());
+    const last = all.findIndex(s => s.id === this.lastSourceId);
+    if (last >= 0) all.push(...all.splice(0, last + 1));
+    for (const s of all) {
       if (this.deps.catalog.needingDetail(s.id, this.deps.policy.policy(), 1).length) {
+        this.setWorking(true);
+        this.lastSourceId = s.id;
         await this.detailPass(s, token);
         if (this.deps.sources.get(s.id)?.status === 'blocked') return true;
         const total = this.deps.catalog.query(this.deps.policy.policy(), { sourceIds: [s.id] }).total;
@@ -879,9 +947,10 @@ export class Discovery {
     const run = (async () => {
       await Promise.resolve();
       try {
-        // Keep draining while the listing crawl adds new games.
-        while (this.deps.catalog.needingDetail(source.id, this.deps.policy.policy(), 1).length && this.deps.sources.get(source.id)?.status !== 'blocked') {
-          await this.detailPass(source, token);
+        // A bounded pass lets other websites run. In particular, a deferred
+        // browser request must not retry the same unchanged backlog forever.
+        if (this.deps.sources.get(source.id)?.enabled && this.deps.sources.get(source.id)?.status !== 'blocked') {
+          await this.detailPass(source, token, this.deps.sources.cursor(source.id)?.pending.length ? 8 : DETAILS_PER_PASS);
         }
       } finally {
         if (this.detailRunner?.run === holder.run) this.detailRunner = null;
@@ -893,32 +962,37 @@ export class Discovery {
     return run;
   }
 
-  private gatedStreak = new Map<number, number>();
+  private gatedStreak = new Map<number, {at: number; ids: Set<number>}>();
   /**
    * One gated game page is skipped and retried later; the user is asked only
    * when the site gates page after page (then nothing else can proceed).
    */
   private gatedDetail(source: Source, ex: PageExtract, url: string, id: number) {
-    const streak = (this.gatedStreak.get(source.id) ?? 0) + 1;
-    this.gatedStreak.set(source.id, streak);
+    const recent = this.gatedStreak.get(source.id);
+    const gates = recent && Date.now() - recent.at < 5 * 60_000 ? recent : {at: Date.now(), ids: new Set<number>()};
+    gates.ids.add(id);
+    this.gatedStreak.set(source.id, gates);
+    const streak = gates.ids.size;
     console.warn('[discovery] game page gated', url, ex.title, `(${streak} in a row)`);
-    if (streak >= 3) { this.gatedStreak.set(source.id, 0); this.blockSource(source, ex, url, id, this.deps.sources.cursor(source.id)?.pagesDone ?? 0); return; }
+    if (streak >= 3) { this.gatedStreak.delete(source.id); this.blockSource(source, ex, url, id, this.deps.sources.cursor(source.id)?.pagesDone ?? 0); return; }
     this.deps.catalog.recordDetailFailure(id);
     if (ex.gates.blocked) this.deps.limiter.backoff(siteKey(hostOf(url)), 30_000);
   }
 
   /** Verifies game pages in parallel: description, artwork and download routes. */
-  private async detailPass(source: Source, token: SessionToken) {
+  private async detailPass(source: Source, token: SessionToken, limit = DETAILS_PER_PASS) {
     const { catalog, session, sources } = this.deps;
-    const todo = catalog.needingDetail(source.id, this.deps.policy.policy(), DETAILS_PER_PASS);
+    const todo = catalog.needingDetail(source.id, this.deps.policy.policy(), limit);
     if (!todo.length) return;
     let next = 0;
     let done = 0;
+    let deferred = 0;
+    let limited: RateLimitedError | null = null;
     const started = Date.now();
     const worker = async () => {
-      while (next < todo.length) {
+      while (next < todo.length && !limited) {
         session.assertLive(token);
-        if (sources.get(source.id)?.status === 'blocked') return;
+        if (!sources.get(source.id)?.enabled || sources.get(source.id)?.status === 'blocked') return;
         const entry = todo[next++];
         // The policy may have changed while we worked; re-check visibility rules for adult entries.
         if (entry.rating === 'adult' && !this.deps.policy.policy().showNsfw) continue;
@@ -926,18 +1000,22 @@ export class Discovery {
           await this.fetchDetail(entry.id, token);
         } catch (e) {
           if (isCancelled(e) || !session.isLive(token)) throw e;
-          if (e instanceof DeferredError) continue;
+          if (e instanceof DeferredError) { deferred++; continue; }
+          if (e instanceof RateLimitedError) { limited = e; return; }
           if (e instanceof GoneError) { catalog.setDetail(entry.id, { title: null, description: null, author: null, priceText: null, platforms: [], tags: [], categories: [], thumbnailUrl: null, screenshots: [], candidates: [], downloadStatus: 'unavailable' }); continue; }
           catalog.recordDetailFailure(entry.id);
           console.warn('[discovery] detail deferred', entry.pageUrl, (e as Error).message);
         }
         done++;
+        if (!sources.get(source.id)?.enabled || sources.get(source.id)?.status === 'blocked') return;
         const rate = done / Math.max(0.5, (Date.now() - started) / 1000);
         this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Verifying games {done}/{total} · {rate}/s', { done, total: todo.length, rate: rate.toFixed(1) }), context: 'discovery' });
         this.status(source, `Verifying games ${done}/${todo.length} · ${rate.toFixed(1)} per second`, sources.cursor(source.id)?.pagesDone ?? 0);
       }
     };
     await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, todo.length) }, worker));
+    if (limited) throw limited;
+    if (!done && deferred) throw new DeferredError();
   }
 
   async fetchDetail(id: number, token: SessionToken, options: { refresh?: boolean; foreground?: boolean } = {}) {
@@ -966,7 +1044,6 @@ export class Discovery {
     let { ex, via } = await this.load(source, entry.pageUrl, token, recipe?.detailMode, hasEvidence);
     session.assertLive(token, 'game page');
     if (this.gated(ex)) return this.gatedDetail(source, ex, entry.pageUrl, id);
-    this.gatedStreak.set(source.id, 0);
     let evidence = downloadEvidence(ex);
     // Download buttons rendered by scripts are invisible to the HTTP copy.
     if (!evidence.length && via === 'http') {

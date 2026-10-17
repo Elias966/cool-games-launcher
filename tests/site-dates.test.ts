@@ -21,12 +21,31 @@ function fixture(){
 }
 function response(url:string,html:string){return{ok:true as const,status:200,url,ms:1,extract:extractHtml(html,url)}}
 describe('launcher date service',()=>{
+ it('resumes every requested page after yielding to indexing mid-batch',async()=>{
+  const{catalog,sources,add}=fixture(),ids=Array.from({length:12},(_,i)=>add('Yield'+i));let hold=true,started=0;
+  const fetchBackground=vi.fn(async(url:string,signal:AbortSignal)=>{started++;if(hold)await new Promise<void>((_,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}));return response(url,'<article><time class="published" datetime="2026-10-16"></time></article>')});
+  const service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn()});cleanup.push(()=>service.stop());
+  service.prioritize(ids);service.setActive(true);await vi.waitFor(()=>expect(started).toBeGreaterThan(0));service.setActive(false);
+  await vi.waitFor(()=>expect(service.getStatus()).toBe('paused'));hold=false;service.setActive(true);
+  await vi.waitFor(()=>expect(ids.every(id=>catalog.get(id,policy)?.siteAddedAt)).toBe(true));
+ });
  it('orders saved game pages over HTTP without an AI session or browser',async()=>{
   const{catalog,sources,add}=fixture();const older=add('Older'),newer=add('Newer');
   const fetchBackground=vi.fn(async(url:string)=>response(url,`<article><time class="published" datetime="${url.endsWith('Newer')?'2026-10-16':'2026-10-15'}"></time></article>`));
   const service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn()});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(catalog.get(newer,policy)?.siteAddedAt).toBe('2026-10-16T00:00:00.000Z'));
+  service.prioritize([older,newer]);service.setActive(true);await vi.waitFor(()=>expect(catalog.get(newer,policy)?.siteAddedAt).toBe('2026-10-16T00:00:00.000Z'));
   expect(catalog.get(older,policy)?.siteAddedAt).toBe('2026-10-15T00:00:00.000Z');expect(fetchBackground).toHaveBeenCalledTimes(2);
+ });
+ it('finishes requested dates across multiple batches, without sweeping the remaining catalog or repeating completed work',async()=>{
+  const{catalog,sources,add}=fixture();const ids=Array.from({length:200},(_,i)=>add('Game'+i));const requested=ids.slice(0,90);
+  const extract=extractHtml('<article><time class="published" datetime="2026-10-16"></time></article>','https://games.test/');
+  const fetchBackground=vi.fn(async(url:string)=>({ok:true,status:200,url,ms:1,extract:{...extract,url}}));
+  const phases:string[]=[];
+  const service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn(),status:p=>phases.push(p)});cleanup.push(()=>service.stop());
+  service.prioritize(requested);service.setActive(true);
+  await vi.waitFor(()=>expect(catalog.get(requested.at(-1)!,policy)?.siteAddedAt).toBeTruthy());await vi.waitFor(()=>expect(service.getStatus()).toBe('idle'));
+  for(let i=0;i<3;i++){service.setActive(true);service.prioritize(requested)}
+  await new Promise(r=>setTimeout(r,30));expect(fetchBackground).toHaveBeenCalledTimes(90);expect(catalog.get(ids[90],policy)?.siteAddedAt).toBeNull();expect(phases).toEqual(['paused','checking','idle']);
  });
  it('finds new listings using saved site patterns and reads their own page date',async()=>{
   const{catalog,sources,source}=fixture();
@@ -50,30 +69,30 @@ describe('launcher date service',()=>{
   const{catalog,sources,add}=fixture();const gate=add('Gated'),redirect=add('Redirect');
   const fetchBackground=vi.fn(async(url:string)=>url.endsWith('Gated')?response(url,'<h1>Verify you are human</h1><div class="cf-turnstile"></div>'):response('https://games.test/','<time datetime="2026-10-16"></time>'));
   const service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn()});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(fetchBackground).toHaveBeenCalledTimes(2));service.prioritize([gate,redirect]);
+  service.prioritize([gate,redirect]);service.setActive(true);await vi.waitFor(()=>expect(fetchBackground).toHaveBeenCalledTimes(2));service.prioritize([gate,redirect]);
   await new Promise(r=>setTimeout(r,30));expect(fetchBackground).toHaveBeenCalledTimes(2);expect(catalog.get(gate,policy)?.siteAddedAt).toBeNull();expect(catalog.get(redirect,policy)?.siteAddedAt).toBeNull();
  });
  it('aborts date reads when the user leaves New',async()=>{
   const{catalog,sources,add}=fixture();const id=add('Pending');let signal:AbortSignal|undefined;
   const fetchBackground=vi.fn((_url:string,s:AbortSignal)=>{signal=s;return new Promise((_resolve,reject)=>s.addEventListener('abort',()=>reject(Error('cancelled'))))});
   const service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn()});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(signal).toBeDefined());service.setActive(false);expect(signal!.aborted).toBe(true);expect(catalog.get(id,policy)?.siteAddedAt).toBeNull();
+  service.prioritize([id]);service.setActive(true);await vi.waitFor(()=>expect(signal).toBeDefined());service.setActive(false);expect(signal!.aborted).toBe(true);expect(catalog.get(id,policy)?.siteAddedAt).toBeNull();
  });
  it('rechecks the live gated page before refreshing listings after human control',async()=>{
   const{catalog,sources,add}=fixture();const id=add('Gated');let solved=false;
   const fetchBackground=vi.fn(async(url:string)=>response(url,solved?'<article><time class="published" datetime="2026-10-16"></time></article>':'<h1>Verify you are human</h1><div class="cf-turnstile"></div>'));
   const verify=vi.fn(),service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn(),verify});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(verify).toHaveBeenCalledTimes(1));
+  service.prioritize([id]);service.setActive(true);await vi.waitFor(()=>expect(verify).toHaveBeenCalledTimes(1));
   service.setActive(true);service.prioritize([id]);await new Promise(r=>setTimeout(r,30));expect(fetchBackground).toHaveBeenCalledTimes(1);
   solved=true;service.continueAfterHuman();service.setActive(true);
   await vi.waitFor(()=>expect(catalog.get(id,policy)?.siteAddedAt).toBe('2026-10-16T00:00:00.000Z'));
   expect(fetchBackground.mock.calls.map(c=>c[0])).toEqual(['https://games.test/Gated','https://games.test/Gated']);
  });
  it('does not request human control for HTTP blocks or missing dates',async()=>{
-  const{catalog,sources,add}=fixture();add('Blocked');add('Undated');
+  const{catalog,sources,add}=fixture();const blocked=add('Blocked'),undated=add('Undated');
   const fetchBackground=vi.fn(async(url:string)=>response(url,url.endsWith('Blocked')?'<title>403 Forbidden</title>':'<article><h1>No date</h1></article>'));
   const verify=vi.fn(),service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn(),verify});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(fetchBackground).toHaveBeenCalledTimes(2));expect(verify).not.toHaveBeenCalled();
+  service.prioritize([blocked,undated]);service.setActive(true);await vi.waitFor(()=>expect(fetchBackground).toHaveBeenCalledTimes(2));expect(verify).not.toHaveBeenCalled();
  });
  it('uses a deterministic rendering tab for HTTP challenges and script dates',async()=>{
   const gated=response('https://games.test/game','<h1>Verify you are human</h1><div class="cf-turnstile"></div>');
@@ -91,6 +110,18 @@ describe('launcher date service',()=>{
  });
 });
 describe('saved Firefox cookies',()=>{
+ it('uses game-path cookies without sharing private headers across sibling websites',async()=>{
+  const cookieHeader=vi.fn(async(_context:string,url:string)=>({cookie:url.endsWith('alpha')?'session=alpha':url.endsWith('bravo')?'session=bravo':'session=b',userAgent:'Firefox'}));
+  const call=vi.fn(async(_method:string,p:any)=>response(p.url,'<article>Game</article>'));
+  const fetcher=new PageFetcher([{call} as any],{cookieHeader} as any);
+  await fetcher.fetch('https://a.games.test/game/alpha',new AbortController().signal);
+  await fetcher.fetch('https://a.games.test/game/bravo',new AbortController().signal);
+  await fetcher.fetch('https://b.games.test/game/charlie',new AbortController().signal);
+  expect(cookieHeader.mock.calls.map(c=>c[1])).toEqual(['https://a.games.test/game/alpha','https://a.games.test/game/bravo','https://b.games.test/game/charlie']);
+  expect(call.mock.calls.map(c=>c[1].cookie)).toEqual(['session=alpha','session=bravo','session=b']);
+  fetcher.forget('https://games.test/');await fetcher.fetch('https://a.games.test/game/alpha',new AbortController().signal);
+  expect(cookieHeader).toHaveBeenCalledTimes(4);
+ });
  it('restricts cookies by host, path, expiry, partition and HTTPS without modifying the profile',()=>{
   const dir=mkdtempSync(join(tmpdir(),'cgl-cookies-'));cleanup.push(()=>rmSync(dir,{recursive:true,force:true}));
   const db=new DatabaseSync(join(dir,'cookies.sqlite'));db.exec('CREATE TABLE moz_cookies(name TEXT,value TEXT,host TEXT,path TEXT,isSecure INTEGER,expiry INTEGER,originAttributes TEXT)');

@@ -224,7 +224,9 @@ async function main() {
   let wishlistService: WishlistService | null = null;
   let libraryRef: Library | null = null;
   let offerHumanBrowser: (context: 'interactive' | 'discovery' | 'dates') => void = () => undefined;
+  let syncDates: () => void = () => undefined;
   const discovery = new Discovery({ agent: gameAgent, fetcher, sources: sourcesRepo, catalog: catalogRepo, settings: settingsRepo, session, ai, classification, browser, limiter, policy,
+    onWorkChanged: () => syncDates(),
     updates: { afterDetail: (id) => updateService?.afterDetail(id) },
     wishlist: { afterDetail: (id) => wishlistService?.afterDetail(id) },
     onVerificationRequired: (sourceId, message, captcha) => {
@@ -235,7 +237,7 @@ async function main() {
     isModelReady:()=>models.readyAgents(['analysis','browsing']),
     onVerificationResolved: (sourceId) => publish('browser:verificationResolved', { sourceId }),
   });
-  const foreground = new ForegroundWork(session, discovery);
+  const foreground = new ForegroundWork(session, discovery, () => syncDates());
   const storeSearch = new StoreSearch({session,foreground,sources:sourcesRepo,catalog:catalogRepo,policy,browser,agent:gameAgent,discovery,ai,limiter,classification,isModelReady:()=>models.readyAgents(['analysis','browsing']),
     showBrowser:message=>{browserView.show('discovery');publish('browser:attention',{downloadId:0,message,requiresUser:true});},
   });
@@ -245,6 +247,7 @@ async function main() {
   const siteDates = new SiteDates({
     catalog: catalogRepo, sources: sourcesRepo, fetcher, limiter,
     classify: (id, signal) => classification.classifyEntry(id, signal),
+    status: phase => publish('store:dateStatus',phase),
     changed: () => publish('catalog:changed', {policyRevision: policy.policy().revision, sourceId: null}),
     verify: () => {
       browserView.show('dates');
@@ -258,10 +261,12 @@ async function main() {
   const aiWorkPending = () => downloadsRepo.list().some((d) => d.catalogId !== null && !d.modelAsset && !d.compatPackage &&
     (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')));
   let humanBrowserActive = false;
+  syncDates = () => siteDates.setActive(!shuttingDown && !humanBrowserActive && storeRequestedActive && storeSort === 'new' && !foreground.isBusy && !discovery.isWorking && !aiWorkPending());
   let humanContext: 'interactive' | 'discovery' | 'dates' = 'interactive';
   const restoreAfterHuman = () => {
     const wasActive = humanBrowserActive;
     humanBrowserActive = false;
+    if (wasActive) fetcher.forget();
     publish('browser:humanMode', { active: false });
     if (wasActive && humanContext === 'dates') siteDates.continueAfterHuman();
     if (wasActive && (storeRequestedActive || aiWorkPending())) {
@@ -322,11 +327,8 @@ async function main() {
     const active=session.active;session.leave();await ai.unload();await initInference(settingsRepo.get());
     if(active)session.enter();discovery.poke();
   }});
-  // Load the model and compile its GPU pipelines as soon as the Store opens,
-  // so the first real AI decision does not pay the cold-start cost.
-  session.on('enter', () => {
-    if (storeRequestedActive && storeSort !== 'new' && !ai.paused && models.readyAgents()) void inferenceWorker.call('warmup', { modelId: settingsRepo.get().aiAgents.analysis }).catch(() => undefined);
-  });
+  // Language models load when an actual AI decision is needed. Opening an
+  // already indexed Store must not load several GB onto the GPU just to idle.
   const compat = new CompatManager({ settings: settingsRepo, repo: downloadsRepo, downloads, worker: installWorker, dataDir: paths.data, pin: manifest.onDemand.find((p) => p.id === 'ge-proton')!, detectProton });
   const protonReleases = new ProtonReleases(join(paths.data, 'compat', 'releases.json'));
   void protonReleases.refresh();
@@ -521,8 +523,7 @@ async function main() {
   syncSession = () => {
     if (humanBrowserActive || shuttingDown) return;
     foreground.hold('outside-store', !storeRequestedActive);
-    foreground.hold('new-date-order', storeSort === 'new');
-    siteDates.setActive(storeRequestedActive && storeSort === 'new' && !aiWorkPending());
+    syncDates();
     const want = storeRequestedActive || aiWorkPending();
     if (want && !session.active) session.enter();
     else if (!want && session.active) session.leave();
@@ -671,6 +672,7 @@ async function main() {
     'sources:update': ({ id, ...patch }) => {
       const s = sourcesRepo.update(id, patch);
       publish('sources:changed', sourcesRepo.list());
+      discovery.poke();
       return s;
     },
     'sources:remove': ({ id }) => {
@@ -689,6 +691,7 @@ async function main() {
       if (humanBrowserActive) { await browser.endHuman(); restoreAfterHuman(); }
       requireStore();
       storeSearch.releaseCheck();
+      fetcher.forget();
       discovery.resumeVerification(id);
     },
     'sources:skipCheck': async ({ id }) => {
@@ -702,6 +705,7 @@ async function main() {
       requireStore();
       return storeSearch.search(query,sourceIds);
     },
+    'store:dateStatus': () => siteDates.getStatus(),
     'store:setActive': ({ active, sort }) => {
       if(sort)storeSort=sort;
       storeRequestedActive = active;

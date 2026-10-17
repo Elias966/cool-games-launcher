@@ -85,15 +85,19 @@ export function inducePatterns(urls: string[]): UrlPattern[] {
   const parsed = urls.flatMap((u) => {
     try { return [new URL(u)]; } catch { return []; }
   });
-  const byShape = new Map<number, URL[]>();
+  const byShape = new Map<string, URL[]>();
   for (const u of parsed) {
     const segs = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-    const list = byShape.get(segs.length) ?? [];
+    // Distinct namespaces are not interchangeable: /game/foo and
+    // /genre/action must never generalize to /anything/anything.
+    const shape = `${segs.length}:${segs.length > 1 ? segs[0] : ''}`;
+    const list = byShape.get(shape) ?? [];
     list.push(u);
-    byShape.set(segs.length, list);
+    byShape.set(shape, list);
   }
   const out: UrlPattern[] = [];
-  for (const [n, list] of byShape) {
+  for (const list of byShape.values()) {
+    const n = list[0].pathname.replace(/\/+$/, '').split('/').filter(Boolean).length;
     if (n === 0) continue;
     const segs = list.map((u) => u.pathname.replace(/\/+$/, '').split('/').filter(Boolean));
     const path = segs[0].map((_, i) => segmentPattern(segs.map((s) => s[i]))).join('/');
@@ -122,12 +126,13 @@ function sameDoc(a: string, b: string) {
 /** Game cards on a page per the recipe, enriched with the heuristic card data when available. */
 export function recipeCards(ex: PageExtract, recipe: SiteRecipe): ExtractCard[] {
   const out = new Map<string, ExtractCard>();
+  const listings = new Set(catalogLinks(ex));
   for (const card of ex.cards) {
-    if (matchesAny(card.href, recipe.game) && !sameDoc(card.href, ex.url)) out.set(card.href.split('#')[0], card);
+    if (!listings.has(card.href.split('#')[0]) && matchesAny(card.href, recipe.game) && !sameDoc(card.href, ex.url)) out.set(card.href.split('#')[0], card);
   }
   const byHref = new Map<string, ExtractLink[]>();
   for (const l of ex.links) {
-    if (l.inContent === false || sameDoc(l.href, ex.url) || !matchesAny(l.href, recipe.game)) continue;
+    if (l.inContent === false || listings.has(l.href.split('#')[0]) || sameDoc(l.href, ex.url) || !matchesAny(l.href, recipe.game)) continue;
     const key = l.href.split('#')[0];
     byHref.set(key, [...(byHref.get(key) ?? []), l]);
   }
@@ -145,6 +150,13 @@ export function recipeCards(ex: PageExtract, recipe: SiteRecipe): ExtractCard[] 
 const PAGE_TEXT = /^(?:\d{1,4}|next(?: page)?|older(?: posts| entries)?|more games|load more|[›»→>]{1,2}|next\s*[›»→>])$/i;
 const PAGE_HREF = /(?:\/page\/\d+\/?$|[?&](?:page|p|paged|pg|pagenum)=\d+)/i;
 
+/** WordPress random-post buttons can look like pagination but redirect to a
+ * random game. They must never expand the listing crawl. */
+export function isListingRoute(url: string): boolean {
+  try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.searchParams.has('random-post'); }
+  catch { return false; }
+}
+
 /** Pagination links any layout uses: numbered pages, "next", /page/N or ?page=N. */
 export function paginationLinks(ex: PageExtract): string[] {
   let origin: string;
@@ -153,7 +165,7 @@ export function paginationLinks(ex: PageExtract): string[] {
   for (const l of ex.links) {
     let u: URL;
     try { u = new URL(l.href); } catch { continue; }
-    if (u.origin !== origin || sameDoc(l.href, ex.url)) continue;
+    if (u.origin !== origin || sameDoc(l.href, ex.url) || !isListingRoute(l.href)) continue;
     const text = l.text.trim();
     if (PAGE_HREF.test(u.pathname + u.search) && (PAGE_TEXT.test(text) || !text || /\d/.test(text))) out.add(l.href.split('#')[0]);
     else if (PAGE_TEXT.test(text) && !/^\d+$/.test(text)) out.add(l.href.split('#')[0]);
@@ -175,7 +187,7 @@ export function catalogLinks(ex: PageExtract): string[] {
   for (const l of [...ex.links, ...(ex.menuLinks ?? [])]) {
     let u: URL;
     try { u = new URL(l.href); } catch { continue; }
-    if (u.origin !== origin || sameDoc(l.href, ex.url)) continue;
+    if (u.origin !== origin || sameDoc(l.href, ex.url) || !isListingRoute(l.href)) continue;
     const text = l.text.trim();
     if (CATALOG_TEXT.test(text) || CATALOG_HREF.test(u.pathname) && text.length > 0 && text.length <= 40) out.add(l.href.split('#')[0]);
   }
@@ -197,7 +209,7 @@ export function recipeRoutes(ex: PageExtract, recipe: SiteRecipe | null): string
       if (!sameDoc(l.href, ex.url) && matchesAny(l.href, recipe.more) && !matchesAny(l.href, recipe.game)) routes.add(l.href.split('#')[0]);
     }
   }
-  return [...routes];
+  return [...routes].filter(isListingRoute);
 }
 
 /** Pagination-style links (?page=2, /page/3/) induce better from one example each. */
