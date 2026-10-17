@@ -33,6 +33,13 @@ describe('installed evidence aggregation', () => {
   writeFileSync(game.executable!,'different game program');
   expect(inspectedInstalledVersion(game,d,result).version).toBeNull();
  });
+ it('migrates a proven legacy installation receipt but rejects merged/imported copies', () => {
+  const {game,result}=fixture(); result.inspectedPaths=[game.executable!];
+  game.installedVersion={version:'build 1234',updated:null,files:['game1234.zip'],sizes:[],at:game.addedAt,file:{url:'https://host/game1234.zip',name:'game1234.zip',bytes:10,etag:'old',lastModified:null}};
+  const d={gameId:7,state:'completed',installState:'installed',preparation:{installDir:game.installDir},url:'https://host/game1234.zip',fileName:'game1234.zip'} as unknown as DownloadRecord;
+  expect(inspectedInstalledVersion(game,d,result)).toMatchObject({version:'build 1234',scheme:'site-build'});
+  game.managed=false; expect(inspectedInstalledVersion(game,d,result).version).toBeNull();
+ });
  it('does not trust a current catalog title or an arbitrary old imported fingerprint', () => {
   const {game,result}=fixture(); game.installedVersion={version:'999.0',updated:null,files:[],sizes:[],at:game.addedAt};
   expect(inspectedInstalledVersion(game,null,result)).toMatchObject({version:null,inspection:{state:'unresolved'}});

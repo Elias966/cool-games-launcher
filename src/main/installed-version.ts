@@ -67,9 +67,10 @@ export function inspectedInstalledVersion(g: GameRecord, d: DownloadRecord | nul
   }
   const unchanged = !!previous?.evidenceIdentity?.length && JSON.stringify(previous.evidenceIdentity) === JSON.stringify(evidenceIdentity) && JSON.stringify(previous.executableIdentity) === JSON.stringify(executableIdentity);
   const linkedDownload = !!d && g.managed && d.gameId === g.id && d.state === 'completed' && d.installState === 'installed' && d.preparation?.installDir === g.installDir;
-  const trusted = linkedDownload && (newlyInstalled || unchanged) ? receipt ?? previous : null;
+  const legacyReceipt = linkedDownload && !previous?.inspection && previous?.file?.url === d?.url && previous?.file?.name === d?.fileName && Date.parse(previous!.at) <= Date.parse(g.addedAt);
+  const trusted = linkedDownload && (newlyInstalled || unchanged || legacyReceipt) ? receipt ?? previous : null;
   if (trusted?.version) {
-    const scheme = trusted.scheme ?? (/^build /.test(trusted.version) ? (/^(?:www\.)?steamrip\.com$/i.test(g.sourceHost ?? '') ? 'steam-build' : 'site-build') : 'semantic');
+    const scheme = trusted.scheme ?? (/^build /.test(trusted.version) ? 'site-build' : 'semantic');
     if (!result.evidence.some(e => e.scheme === scheme) && !identifiers.some(e => e.scheme === scheme)) identifiers.push({ scheme, version: trusted.version, source: 'download-time receipt' });
   }
   const preferred = identifiers.find(e => e.scheme === 'semantic') ?? identifiers.find(e => e.scheme === 'steam-build') ?? identifiers[0];
