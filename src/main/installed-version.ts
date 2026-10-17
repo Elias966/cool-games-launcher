@@ -43,3 +43,45 @@ export function localInstalledVersion(g: GameRecord, d: DownloadRecord | null): 
   const base = makeFingerprint({ titles: [], candidates: d?.fileName ? [{ fileName: d.fileName, label: d.fileName, sizeText: null }] : [], at: g.addedAt });
   return { ...base, version, file: d ? { url: d.url, name: d.fileName, bytes: d.totalBytes, etag: d.etag, lastModified: d.lastModified } : null };
 }
+
+
+/** Record only identifiers actually found in this installation. Competing values
+ * within a build system stay unresolved instead of choosing the first file. */
+export function inspectedInstalledVersion(g: GameRecord, d: DownloadRecord | null, result: import('../workers/version-evidence').VersionEvidenceResult, newlyInstalled = false): InstalledVersion {
+  const checkedAt = new Date().toISOString();
+  const identifiers: NonNullable<InstalledVersion['identifiers']> = [];
+  for (const scheme of ['semantic', 'steam-build', 'gog-build', 'epic-build', 'developer-build'] as const) {
+    const found = result.evidence.filter(e => e.scheme === scheme);
+    const values = [...new Set(found.map(e => e.version))];
+    if (values.length === 1) identifiers.push({ scheme, version: scheme.endsWith('-build') ? `build ${values[0]}` : values[0], source: found.map(e => e.path).join('; ') });
+  }
+  let executableIdentity: InstalledVersion['executableIdentity'];
+  try { const stat = statSync(g.executable!); executableIdentity = { path: g.executable!, bytes: stat.size, modified: stat.mtimeMs }; } catch { /* vanished installation */ }
+  // A download-time receipt is separate evidence. A fresh website page is never
+  // used as a substitute for the bytes that were installed.
+  const previous = g.installedVersion;
+  const receipt = d?.resolution?.buildVersion;
+  const evidenceIdentity: NonNullable<InstalledVersion['evidenceIdentity']> = [];
+  for (const path of [...new Set([...result.evidence.filter(e => e.kind !== 'game-log').map(e => e.path.split('::')[0]), ...result.inspectedPaths.filter(p => /\.(?:exe|pak)$/i.test(p))])].sort()) {
+    try { const stat = statSync(path); evidenceIdentity.push({ path, bytes: stat.size, modified: stat.mtimeMs }); } catch { /* missing evidence invalidates receipts */ }
+  }
+  const unchanged = !!previous?.evidenceIdentity?.length && JSON.stringify(previous.evidenceIdentity) === JSON.stringify(evidenceIdentity) && JSON.stringify(previous.executableIdentity) === JSON.stringify(executableIdentity);
+  const linkedDownload = !!d && g.managed && d.gameId === g.id && d.state === 'completed' && d.installState === 'installed' && d.preparation?.installDir === g.installDir;
+  const trusted = linkedDownload && (newlyInstalled || unchanged) ? receipt ?? previous : null;
+  if (trusted?.version) {
+    const scheme = trusted.scheme ?? (/^build /.test(trusted.version) ? (/^(?:www\.)?steamrip\.com$/i.test(g.sourceHost ?? '') ? 'steam-build' : 'site-build') : 'semantic');
+    if (!result.evidence.some(e => e.scheme === scheme) && !identifiers.some(e => e.scheme === scheme)) identifiers.push({ scheme, version: trusted.version, source: 'download-time receipt' });
+  }
+  const preferred = identifiers.find(e => e.scheme === 'semantic') ?? identifiers.find(e => e.scheme === 'steam-build') ?? identifiers[0];
+  const conflict = result.evidence.some(e => !identifiers.some(i => i.scheme === e.scheme));
+  return {
+    ...(trusted ?? { updated: null, files: [], sizes: [], at: checkedAt }),
+    version: preferred?.version ?? null, scheme: preferred?.scheme,
+    file: trusted ? previous?.file ?? (d ? { url: d.url, name: d.fileName, bytes: d.totalBytes, etag: d.etag, lastModified: d.lastModified } : null) : null,
+    identifiers, executableIdentity, evidenceIdentity,
+    inspection: {
+      state: preferred ? 'identified' : 'unresolved', checkedAt,
+      detail: preferred ? `Installed version identified from ${preferred.source}.` : conflict ? 'Local files report conflicting game versions. No update was offered.' : `No reliable game version was found in the executable, manifests, configuration or logs.${result.limitations.length ? ' ' + result.limitations.join(' ') : ''}`,
+    },
+  };
+}

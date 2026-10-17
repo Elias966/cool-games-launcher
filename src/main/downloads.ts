@@ -187,7 +187,7 @@ export class DownloadManager extends EventEmitter {
       partPath: d.partPath ?? this.partPathFor(id),
       state: 'queued',
       userPrompt: null,
-      resolution: null,
+      resolution: d.resolution?.buildVersion ? { pageUrl: d.resolution.pageUrl, steps: 0, history: [], buildVersion: d.resolution.buildVersion } : null,
       errorCode: null,
       errorDetail: null,
     });

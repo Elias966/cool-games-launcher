@@ -359,7 +359,11 @@ export class Resolver {
           this.trial.comparison.sourceScrollY = ex.viewport.scrollY;
         }
         const offered = mirrorsForPart(mirrorRoutes([...downloadEvidence(ex, Number.MAX_SAFE_INTEGER), ...entry.candidates, ...(checkpoint.mirrorCandidates ?? []), ...(!checkpoint.mirrors?.selected && !checkpoint.mirrors?.finished ? checkpoint.mirrors?.routes ?? [] : [])]), checkpoint.partName ?? d.fileName, d.partIndex);
-        if (!this.trial && offered.length) this.deps.catalog.setVersion(entry.id, pageFingerprint(ex, downloadEvidence(ex, Number.MAX_SAFE_INTEGER), entry.title));
+        if (!this.trial && offered.length) {
+          checkpoint.buildVersion = pageFingerprint(ex, downloadEvidence(ex, Number.MAX_SAFE_INTEGER), entry.title);
+          this.deps.catalog.setVersion(entry.id, checkpoint.buildVersion);
+          downloadsRepo.update(id, { resolution: checkpoint });
+        }
         if (!this.trial && offered.length > 1) {
           try { await this.compareMirrors(id, token, ex, offered, checkpoint); return; }
           catch (error) {

@@ -38,6 +38,7 @@ import { WishlistService } from './wishlist';
 import { LauncherTray } from './tray';
 import { ensureLauncherEntry, gameFromArgs } from './shortcuts';
 import { writeDiagnostics } from './diagnostics';
+import { installedGameRoot } from './installed-version';
 import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { GameIdentifier } from './game-identify';
@@ -327,6 +328,7 @@ async function main() {
   updateService = new UpdateService({
     games: gamesRepo, catalog: catalogRepo, sources: sourcesRepo, downloads: downloadsRepo, settings: settingsRepo, limiter, fetcher,
     readPage: (url, signal) => browser.readUpdatePage(url, signal),
+    inspectLocal: (g, signal) => installWorker.call('inspectVersion', { installDir: installedGameRoot(g), executable: g.executable, title: g.title, appid: g.art?.appid ? String(g.art.appid) : undefined, prefixDir: g.prefixDir }, signal),
     startUpdate: (id) => library.startUpdate(id), isRunning: (id) => library.isRunning(id), broadcast: () => library.broadcast(),
   });
   const updates = updateService;
@@ -521,7 +523,7 @@ async function main() {
       configDir: paths.config,
     }),
     'compat:releases': async ({ refresh }) => ({ ...await protonReleases.refresh(refresh), installed: protonsWithUse(), defaultPath: compat.protonPath() }),
-    'compat:setDefault': ({ path }) => compat.setDefault(path),
+    'compat:setDefault': ({ path }) => { const result = compat.setDefault(path); library.broadcast(); return result; },
     'compat:addFolder': async () => {
       const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose a Proton folder'), properties: ['openDirectory'] });
       if (r.canceled || !r.filePaths[0]) return null;
@@ -569,6 +571,7 @@ async function main() {
       if (before.sendDoNotTrack !== s.sendDoNotTrack) await initBrowser(s);
       if (before.maxConcurrentDownloads !== s.maxConcurrentDownloads) downloads.pump();
       publish('settings:changed', s);
+      if (before.protonPath !== s.protonPath) library.broadcast();
       return s;
     },
     'sounds:choose': async ({ sound }) => {

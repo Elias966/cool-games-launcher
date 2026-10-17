@@ -970,4 +970,5 @@ export const ar: Record<string, string> = {
   "— waiting for a website to list it": "— بانتظار أن يدرجها أحد المواقع",
   "“{name}” can’t be played. Choose an MP3, OGG, WAV or FLAC file.": "لا يمكن تشغيل «{name}». اختر ملف MP3 أو OGG أو WAV أو FLAC.",
   "♥ Wishlisted": "♥ في قائمة الرغبات",
+  'Runtime installation is disabled with Valve Proton. Choose GE-Proton, CachyOS Proton or Wine to use game runtime installers.': 'تثبيت مكتبات تشغيل اللعبة معطل عند استخدام Valve Proton. اختر GE-Proton أو CachyOS Proton أو Wine لتثبيتها.',
 };

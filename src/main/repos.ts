@@ -999,6 +999,8 @@ export interface DownloadRecord {
 
 /** Saved progress of AI download resolution, so it can resume after leaving the Store. */
 export interface ResolutionCheckpoint {
+  /** The build actually observed before transferring this file, never a later catalog refresh. */
+  buildVersion?: VersionFingerprint;
   /** Tested mirror routes; saved across interrupted website navigation. */
   mirrors?: import('./download-mirrors').MirrorComparison;
   pageUrl: string;

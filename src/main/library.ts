@@ -19,14 +19,14 @@ import type { ExecCandidate } from '../workers/exec-scan';
 import { findVersion, versionLabel, fingerprintKey, type InstalledVersion } from '@shared/game-version';
 import { sameInstall } from './store-builds';
 import { installedFile } from './updates';
-import { installedGameRoot } from './installed-version';
+import { installedGameRoot, inspectedInstalledVersion } from './installed-version';
 import { createShortcut, removeShortcuts } from './shortcuts';
-import type { CompatManager } from './compat';
+import { protonProvider, type CompatManager } from './compat';
 import type { DownloadManager } from './downloads';
 import type { PolicyService } from './policy-service';
 import { publish, toast } from './bus';
 import { paths, vendor } from './paths';
-import type { Game, GameUpdateInfo, LaunchOptions, Runner, SaveBackup } from '@shared/types';
+import type { Game, GameUpdateInfo, LaunchOptions, Runner, SaveBackup, ProtonInstall } from '@shared/types';
 import { tm } from './i18n';
 
 function slug(s: string) {
@@ -249,10 +249,11 @@ export class Library {
 
   list(): Game[] {
     const pol = this.policy.policy();
-    return this.games.list().map((g) => this.toGame(g, pol.showNsfw));
+    const protons = { installed: this.compat.installed(), defaultPath: this.compat.protonPath?.() ?? this.settings.get().protonPath };
+    return this.games.list().map((g) => this.toGame(g, pol.showNsfw, protons));
   }
 
-  private toGame(g: GameRecord, showNsfw: boolean): Game {
+  private toGame(g: GameRecord, showNsfw: boolean, protons: { installed: ProtonInstall[]; defaultPath: string | null }): Game {
     const artworkAllowed = g.artworkFile && (g.catalogRating !== 'adult' || showNsfw) && g.catalogRating !== 'unknown';
     return {
       id: g.id,
@@ -275,6 +276,8 @@ export class Library {
       running: this.runningIds.has(g.id) || this.installingRuntimes.has(g.id),
       executableCandidates: g.candidates,
       version: versionLabel(g.installedVersion),
+      versionCheck: g.installedVersion?.inspection,
+      runtimeInstallerDisabled: this.runtimeInstallerDisabled(g, undefined, protons),
       update: this.updateView(g),
       previousVersion: g.previous ? versionLabel(g.previous.version) ?? 'previous version' : null,
       canRollback: !!g.previous?.installDir && existsSync(g.previous.installDir),
@@ -325,9 +328,25 @@ export class Library {
 
   /** After a successful install: delete the archive when Settings says so. */
   private afterInstalled(gameId: number) {
+    void this.inspectVersion(gameId, true);
+
     if (this.settings.get().afterInstall !== 'delete') return;
     const { freed } = this.deleteArchive(gameId);
     if (freed) toast('info', tm('Deleted the downloaded files ({size} GB freed).', { size: (freed / 1024 ** 3).toFixed(freed > 1024 ** 3 ? 1 : 2) }));
+  }
+
+  /** Inspect local metadata in the utility process; importing never borrows
+   * today's website version or executes the game to discover a number. */
+  private async inspectVersion(id: number, newlyInstalled = false) {
+    const g = this.games.get(id);
+    if (!g || g.store || !g.executable || !g.installDir) return;
+    try {
+      const evidence = await this.worker.call<import('../workers/version-evidence').VersionEvidenceResult>('inspectVersion', { installDir: installedGameRoot(g), executable: g.executable, title: g.title, appid: g.art?.appid ? String(g.art.appid) : undefined, prefixDir: g.prefixDir }, this.work.signal);
+      const current = this.games.get(id);
+      if (!current || current.executable !== g.executable || current.installDir !== g.installDir) return;
+      this.games.update(id, { installedVersion: inspectedInstalledVersion(g, g.downloadId ? this.downloadsRepo.get(g.downloadId) : null, evidence, newlyInstalled) });
+      this.broadcast();
+    } catch (e) { if (!this.work.signal.aborted) console.warn('[library] version inspection failed', g.title, (e as Error).message); }
   }
 
   /**
@@ -505,7 +524,7 @@ export class Library {
         sourceHost: d.sourceHost,
         status: r.status,
         candidates: r.candidates.map((c) => c.path),
-        installedVersion: entry?.version ? { ...entry.version, file: installedFile(d) } : null,
+        installedVersion: d.resolution?.buildVersion ? { ...d.resolution.buildVersion, file: installedFile(d) } : null,
       });
       if (r.kind === 'windows') {
         this.games.update(game.id, { prefixDir: join(paths.prefixes, `game-${game.id}`) });
@@ -546,12 +565,13 @@ export class Library {
     if (!g?.catalogId || g.store || !g.installDir) throw new Error('Link this local game to a website page before updating');
     const current = this.updateView(g);
     if (current && UPDATE_BUSY.has(current.state)) return;
+    if (!g.update || g.update.unverified || !['available', 'failed'].includes(g.update.state)) throw new Error('Check for updates first. A newer game build must be verified before downloading.');
     const entry = this.catalog.raw(g.catalogId);
     if (!entry || entry.downloadStatus !== 'available') throw new Error('The game page no longer offers a download');
     if (!this.startDownload) throw new Error('Downloads are not ready yet');
     // Named after the page's current title, so the new folder carries the new version.
     const d = this.startDownload(g.catalogId, entry.title || g.title, g.sourceHost);
-    this.downloadsRepo.update(d.id, { updateGameId: id });
+    this.downloadsRepo.update(d.id, { updateGameId: id, resolution: { pageUrl: entry.pageUrl, steps: 0, history: [], ...d.resolution, buildVersion: entry.version ?? undefined } });
     const now = new Date().toISOString();
     const base: GameUpdateInfo = g.update ?? { state: 'available', from: versionLabel(g.installedVersion), to: versionLabel(entry.version), reason: 'update requested', detectedAt: now, key: entry.version ? fingerprintKey(entry.version) : now };
     this.games.update(id, { update: { ...base, to: versionLabel(entry.version) ?? base.to, state: 'downloading', downloadId: d.id, detail: null, prepared: null } });
@@ -663,7 +683,7 @@ export class Library {
     const entry = g.catalogId ? this.catalog.raw(g.catalogId) : null;
     const now = new Date().toISOString();
     const previous: PreviousBuild = { installDir: g.installDir, executable: g.executable, kind: g.kind, runner: g.runner, candidates: g.candidates, version: g.installedVersion, replacedAt: now, managed: g.managed };
-    const installedVersion: InstalledVersion = { ...(entry?.version ?? { version: null, updated: null, files: [], sizes: [], at: now }), file: installedFile(d) };
+    const installedVersion: InstalledVersion = { ...(d?.resolution?.buildVersion ?? { version: null, updated: null, files: [], sizes: [], at: now }), file: installedFile(d) };
     const runner = prepared.kind === g.kind ? g.runner : this.defaultRunner(prepared.kind);
     const prefixDir = g.prefixDir ?? (prepared.kind === 'windows' ? join(paths.prefixes, `game-${g.id}`) : null);
     const to = versionLabel(installedVersion) ?? g.update?.to ?? null;
@@ -809,6 +829,14 @@ export class Library {
 
   private tools = detectTools();
 
+  private runtimeInstallerDisabled(g: GameRecord, actualPath?: string, context?: { installed: ProtonInstall[]; defaultPath: string | null }) {
+    if (g.kind !== 'windows' || g.runner === 'wine') return false;
+    const installed = context?.installed ?? this.compat.installed();
+    const own = g.launch.protonPath && installed.some(p => p.path === g.launch.protonPath) ? g.launch.protonPath : null;
+    const path = actualPath ?? own ?? context?.defaultPath ?? this.compat.protonPath?.() ?? this.settings.get().protonPath;
+    return !!path && (installed.find(p => p.path === path)?.provider ?? protonProvider(basename(path))) === 'valve';
+  }
+
   private async runnerEnv(runner: Runner, launch?: LaunchOptions) {
     const s = this.settings.get();
     // A game's own Proton build, when it is still installed; otherwise the default.
@@ -892,6 +920,7 @@ export class Library {
    * its prefix. A failing installer never blocks the game.
    */
   private async installRuntimes(g: GameRecord, runner: Runner, env: Awaited<ReturnType<Library['runnerEnv']>>) {
+    if (runner === 'proton' && this.runtimeInstallerDisabled(g, env.protonPath)) return;
     const found = await this.worker.call<Array<{ path: string; rel: string; label: string; args: string[] }>>('findRedists', { dir: g.installDir }).catch(() => []);
     const done: string[] = [];
     if (found.length) {
@@ -915,6 +944,8 @@ export class Library {
 
   /** "Reinstall runtimes": they run again before the next start. */
   resetRuntimes(id: number) {
+    const g = this.games.get(id);
+    if (g && this.runtimeInstallerDisabled(g)) throw new Error('Runtime installation is disabled with Valve Proton.');
     this.games.update(id, { redistDone: null });
     this.broadcast();
   }
@@ -1086,6 +1117,7 @@ export class Library {
       candidates: [],
     });
     if (isWin) this.games.update(game.id, { prefixDir: join(paths.prefixes, `game-${game.id}`) });
+    void this.inspectVersion(game.id);
     this.broadcast();
     return this.list().find((x) => x.id === game.id) ?? null;
   }

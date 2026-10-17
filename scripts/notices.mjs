@@ -58,6 +58,7 @@ for (const c of manifest.components) {
 md += `
 Notes:
 
+- **ooz** (GPL-3.0), powzix, pinned source and complete local isolated helper source/build instructions ship in \`resources/vendor/ooz\`. It decodes bounded game configuration metadata. Source: https://github.com/powzix/ooz
 - **Mozilla Firefox** is distributed unmodified apart from an enterprise
   \`distribution/policies.json\` (updates, telemetry and first-run pages turned
   off). Firefox and the Firefox logos are trademarks of the Mozilla Foundation.

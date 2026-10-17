@@ -2,6 +2,7 @@
 // Bundles the Electron main process, preload script and utility-process
 // workers with esbuild. Native or WASM-loading packages stay external and are
 // shipped in node_modules by electron-builder.
+import './build-ooz.mjs';
 import { build, context } from 'esbuild';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

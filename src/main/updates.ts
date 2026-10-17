@@ -13,16 +13,18 @@ import type { PageFetcher } from './page-fetcher';
 import type { HostRateLimiter } from './rate-limit';
 import { toast } from './bus';
 import { tm } from './i18n';
-import { localInstalledVersion } from './installed-version';
+import { inspectedInstalledVersion } from './installed-version';
 
 /** The build a game page offers. */
 export function pageFingerprint(ex: PageExtract, candidates: Array<{ fileName: string | null; label: string; sizeText: string | null }>, listingTitle?: string | null): VersionFingerprint {
-  return makeFingerprint({
+  const fingerprint = makeFingerprint({
     titles: [ex.game?.title, ex.meta['og:title'], ex.title, listingTitle],
     text: ex.text,
     meta: ex.meta,
     candidates,
   });
+  if (fingerprint.version) fingerprint.scheme = /^build /.test(fingerprint.version) ? (/\bsteam(?:works)?\s*(?:build|buildid)\s*[:#=-]?\s*\d+/i.test(ex.text) ? 'steam-build' : 'site-build') : 'semantic';
+  return fingerprint;
 }
 
 /** What the launcher knows about the file it downloaded for a game. */
@@ -47,6 +49,7 @@ export class UpdateService {
       settings: SettingsRepo;
       limiter: HostRateLimiter;
       fetcher: PageFetcher | null;
+      inspectLocal?: (game: GameRecord, signal: AbortSignal) => Promise<import('../workers/version-evidence').VersionEvidenceResult>;
       readPage?: (url: string, signal: AbortSignal) => Promise<PageExtract>;
       startUpdate: (gameId: number) => Promise<void> | void;
       isRunning: (gameId: number) => boolean;
@@ -56,6 +59,7 @@ export class UpdateService {
 
   /** Checks every installed game whose last check is older than the refresh interval, then repeats. */
   start(initialDelayMs = 90_000) {
+    this.tracked();
     const tick = () => {
       this.timer = null;
       void this.checkDue().finally(() => { if (!this.controller.signal.aborted) this.timer = setTimeout(tick, 15 * 60_000); this.timer?.unref?.(); });
@@ -73,6 +77,7 @@ export class UpdateService {
   private tracked(): GameRecord[] {
     const out: GameRecord[] = [];
     for (let g of this.deps.games.list()) {
+      if (g.update?.unverified && !BUSY.has(g.update.state)) { this.deps.games.update(g.id, { update: null }); this.deps.broadcast(); }
       if (g.store || g.status !== 'installed' || !g.installDir) continue;
       if (g.catalogId === null) {
         const id = this.deps.catalog.matchInstalled(g.title, g.art?.appid);
@@ -115,6 +120,13 @@ export class UpdateService {
     if (!g || !entry) return;
     const source = this.deps.sources.get(entry.sourceId);
     if (g.store || source?.enabled === false) return;
+    if (this.deps.inspectLocal) {
+      const evidence = await this.deps.inspectLocal(g, signal);
+      if (signal.aborted) return;
+      const d = g.downloadId ? this.deps.downloads.get(g.downloadId) : null;
+      this.deps.games.update(g.id, { installedVersion: inspectedInstalledVersion(g, d, evidence), ...(g.update?.unverified ? { update: null } : {}) });
+      this.deps.broadcast();
+    }
     let current: VersionFingerprint | null = null;
     const fetcher = this.deps.fetcher;
     if (this.deps.readPage || fetcher) {
@@ -147,7 +159,7 @@ export class UpdateService {
     }
     // The file the game was installed from, at the same address: changed validators mean a re-upload.
     let head: Awaited<ReturnType<PageFetcher['headFile']>> | null = null;
-    const file = g.installedVersion?.file;
+    const file = this.deps.games.get(gameId)?.installedVersion?.file;
     if (fetcher && file?.url && /^https?:/i.test(file.url)) {
       await this.deps.limiter.wait(siteKey(hostOf(file.url)), 1000, signal);
       head = await fetcher.headFile(file.url, signal, entry.pageUrl).catch(() => null);
@@ -163,23 +175,34 @@ export class UpdateService {
     if (!current && !head) { this.deps.games.update(gameId, { updateCheckedAt: checkedAt }); return; }
     if (!g.installedVersion) {
       const d = g.downloadId ? this.deps.downloads.get(g.downloadId) : null;
-      this.deps.games.update(gameId, { installedVersion: localInstalledVersion(g, d) });
+      this.deps.games.update(gameId, { installedVersion: inspectedInstalledVersion(g, d, { evidence: [], inspectedPaths: [], rejectedResources: [], candidateSnippets: [], limitsReached: false, limitations: [] }) });
       g = this.deps.games.get(gameId)!;
     }
-    let verdict: UpdateVerdict = detectUpdate(g.installedVersion, current);
-    const unverified = !verdict.update && !g.installedVersion!.version && (!!current?.version || !g.installedVersion!.files.length && !g.installedVersion!.updated);
-    if (unverified && current) verdict = { update: true, from: null, to: versionLabel(current), reason: tm('Installed version unknown. The website build is available to install; a newer version could not be confirmed.') };
-    const reuploaded = fileChanged(g.installedVersion!.file, head ?? null);
-    if (!verdict.update && reuploaded) {
+    const installed = g.installedVersion!;
+    const scheme = current?.scheme ?? (current?.version ? /^build /.test(current.version) ? 'site-build' : 'semantic' : undefined);
+    const matched = installed.identifiers?.find(e => e.scheme === scheme);
+    const comparable = matched ? { ...installed, version: matched.version, scheme: matched.scheme } : installed;
+    let verdict: UpdateVerdict = detectUpdate(comparable, current);
+    const incompatible = !!installed.version && !!current?.version && (installed.scheme && scheme && installed.scheme !== scheme && !matched || !matched && /^build /.test(installed.version) !== /^build /.test(current.version));
+    if (installed.inspection) {
+      this.deps.games.update(gameId, { installedVersion: { ...installed, inspection: {
+        ...installed.inspection, checkedAt, state: incompatible ? 'incomparable' : installed.version ? 'identified' : 'unresolved',
+        detail: incompatible ? `Installed ${versionLabel(installed)}; the website publishes ${versionLabel(current)} using a different build system. A newer game version could not be verified.` : installed.inspection.detail,
+      } } });
+    }
+    const unresolved = installed.inspection?.state === 'unresolved';
+    const reuploaded = !unresolved && fileChanged(g.installedVersion!.file, head ?? null);
+    if (!verdict.update && !incompatible && reuploaded) {
       verdict = { update: true, from: versionLabel(g.installedVersion) ?? 'installed build', to: versionLabel(current) ?? 'new build', reason: 'the download file changed on the server' };
     }
     const key = [current ? fingerprintKey(current) : '', reuploaded && head ? `h:${head.etag ?? head.bytes ?? head.lastModified}` : ''].filter(Boolean).join('|') || checkedAt;
     const prev = g.update;
+    if (incompatible || unresolved) verdict = { update: false, from: versionLabel(installed), to: versionLabel(current), reason: 'different version identifiers cannot be compared' };
     if (!verdict.update) {
       // The site went back to the installed build: nothing to offer any more.
       const clear = prev?.state === 'available' || prev?.state === 'failed';
       this.deps.games.update(gameId, { updateCheckedAt: checkedAt, ...(clear ? { update: null } : {}) });
-      if (clear) this.deps.broadcast();
+      this.deps.broadcast();
       return;
     }
     // A stored "downloading" whose download failed or was removed is no longer in progress.
@@ -191,14 +214,14 @@ export class UpdateService {
     console.log(`[updates] ${g.title}: ${verdict.reason}`);
     this.deps.games.update(gameId, {
       updateCheckedAt: checkedAt,
-      update: { state: 'available', from: verdict.from, to: verdict.to, reason: verdict.reason, detectedAt: checkedAt, key, unverified },
+      update: { state: 'available', from: verdict.from, to: verdict.to, reason: verdict.reason, detectedAt: checkedAt, key, unverified: false },
     });
     this.deps.broadcast();
-    if (this.deps.settings.get().gameUpdates === 'auto' && !unverified) {
+    if (this.deps.settings.get().gameUpdates === 'auto') {
       toast('info', verdict.to ? tm('Updating {title} to {version}…', { title: g.title, version: verdict.to }) : tm('Updating {title}…', { title: g.title }));
       void Promise.resolve(this.deps.startUpdate(gameId)).catch((e) => toast('error', tm('Could not update {title}: {detail}', { title: g.title, detail: (e as Error).message })));
     } else {
-      toast('info', unverified ? tm('Website build available for {title}. Installed version unknown; review it in the Library.', { title: g.title }) : verdict.from && verdict.to ? tm('Update available for {title}: {from} → {to}. Open the Library to update.', { title: g.title, from: verdict.from, to: verdict.to }) : tm('Update available for {title}. Open the Library to update.', { title: g.title }));
+      toast('info', verdict.from && verdict.to ? tm('Update available for {title}: {from} → {to}. Open the Library to update.', { title: g.title, from: verdict.from, to: verdict.to }) : tm('Update available for {title}. Open the Library to update.', { title: g.title }));
     }
   }
 

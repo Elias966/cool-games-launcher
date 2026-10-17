@@ -1,5 +1,7 @@
 node_modules/
-vendor/
+vendor/*
+!vendor/ooz/
+vendor/ooz/cgl-ooz
 out/
 dist/
 release/

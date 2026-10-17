@@ -3,7 +3,11 @@
 // "updated" date). Comparing the fingerprint recorded at install time with the
 // page's current one tells whether an installed game has an update.
 
+export type VersionScheme = 'semantic' | 'steam-build' | 'gog-build' | 'epic-build' | 'developer-build' | 'site-build';
+export interface VersionIdentifier { version: string; scheme: VersionScheme; source: string }
+export interface VersionInspection { state: 'identified' | 'unresolved' | 'incomparable'; detail: string; checkedAt: string }
 export interface VersionFingerprint {
+  scheme?: VersionScheme;
   /** "1.2.3" or "build 15623144", from the title, file names or a labelled line. */
   version: string | null;
   /** The page's own modification date (ISO), when it publishes one. */
@@ -27,6 +31,10 @@ export interface InstalledFile {
 
 export interface InstalledVersion extends VersionFingerprint {
   file?: InstalledFile | null;
+  identifiers?: VersionIdentifier[];
+  inspection?: VersionInspection;
+  evidenceIdentity?: Array<{ path: string; bytes: number; modified: number }>;
+  executableIdentity?: { path: string; bytes: number; modified: number };
 }
 
 export interface UpdateVerdict {
@@ -36,22 +44,22 @@ export interface UpdateVerdict {
   reason: string;
 }
 
-const NUM = String.raw`(\d+(?:\.\d+){0,3}[a-z]?)`;
+const NUM = String.raw`(\d+(?:\.\d+){0,4}[a-z]?)`;
 type Pattern = [RegExp, 'version' | 'build'];
 // Strongest first. Titles and file names are trusted; page text only through
 // explicitly labelled "Version:" lines (system requirements also say "Version").
 const TITLE_PATTERNS: Pattern[] = [
   // A bare "V2" is often part of the name ("Sniper Elite V2"): a "v" needs a dotted number.
   [new RegExp(String.raw`\b(?:ver\.?|version)\s*${NUM}(?![\w.])`, 'i'), 'version'],
-  [/\bv(\d+(?:\.\d+){1,3}[a-z]?)(?![\w.])/i, 'version'],
+  [/\bv(\d+(?:\.\d+){1,4}[a-z]?)(?![\w.])/i, 'version'],
   [/\bbuild\s*[#:.]?\s*(\d{3,})\b/i, 'build'],
-  [/\b(?:patch|update|hotfix)\s+(\d+(?:\.\d+){1,3}[a-z]?)(?![\w.])/i, 'version'],
+  [/\b(?:patch|update|hotfix)\s+(\d+(?:\.\d+){1,4}[a-z]?)(?![\w.])/i, 'version'],
 ];
 const FILE_PATTERNS: Pattern[] = [
-  [/(?:^|[-_ .(\[])v(?:er)?[-_ .]?(\d+(?:[._]\d+){1,3}[a-z]?)(?=[-_ .)\]]|$)/i, 'version'],
+  [/(?:^|[-_ .(\[])v(?:er)?[-_ .]?(\d+(?:[._]\d+){1,4}[a-z]?)(?=[-_ .)\]]|$)/i, 'version'],
   [/(?:^|[-_ .(\[])build[-_ .]?(\d{3,})(?=[-_ .)\]]|$)/i, 'build'],
 ];
-const TEXT_LABEL = /\b(game version|current version|latest version|version|build)\s*[:：]\s*(?:v\s*)?(build\s*)?(\d+(?:\.\d+){0,3}[a-z]?)(?![\w.])/gi;
+const TEXT_LABEL = /\b(game version|current version|latest version|version|build)\s*[:：]\s*(?:v\s*)?(build\s*)?(\d+(?:\.\d+){0,4}[a-z]?)(?![\w.])/gi;
 const NOT_GAME = /directx|opengl|vulkan|shader|windows|\bos\b|macos|ubuntu|python|java|\.net|android|ios|driver|steam/i;
 
 function fromPatterns(text: string, patterns: Pattern[]): string | null {
@@ -127,13 +135,13 @@ const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year:
 
 /** A short, stable identity for "this build", used to remember an ignored update. */
 export function fingerprintKey(f: VersionFingerprint): string {
-  return f.version ? `v:${f.version}` : f.files.length ? `f:${f.files.join('|')}` : f.sizes.length ? `s:${f.sizes.join('|')}` : f.updated ? `d:${f.updated}` : '';
+  return f.version ? `v:${f.scheme ? f.scheme + ':' : ''}${f.version}` : f.files.length ? `f:${f.files.join('|')}` : f.sizes.length ? `s:${f.sizes.join('|')}` : f.updated ? `d:${f.updated}` : '';
 }
 
 /** A readable label for a build ("v1.3", "build 1234", "updated 3 Oct 2026"). */
 export function versionLabel(f: VersionFingerprint | null | undefined): string | null {
   if (!f) return null;
-  if (f.version) return /^build /.test(f.version) ? f.version : `v${f.version}`;
+  if (f.version) return f.scheme === 'developer-build' ? `game ${f.version}` : /^build /.test(f.version) ? f.version : `v${f.version}`;
   if (f.updated) return `updated ${day(f.updated)}`;
   return null;
 }
@@ -149,8 +157,9 @@ export function detectUpdate(installed: InstalledVersion | null | undefined, cur
   if (!installed || !current) return none('no fingerprint');
   const from = versionLabel(installed), to = versionLabel(current);
   if (installed.version && current.version) {
+    if (installed.scheme && current.scheme && installed.scheme !== current.scheme) return none('different version identifiers cannot be compared');
     const c = compareVersions(current.version, installed.version);
-    if (c === null) return installed.version !== current.version ? { update: true, from, to, reason: 'the site lists a different version' } : none('same version');
+    if (c === null) return none('different version identifiers cannot be compared');
     return c > 0 ? { update: true, from, to, reason: 'the site lists a newer version' } : none(c === 0 ? 'same version' : 'page offers an older version');
   }
   if (current.version && !installed.version && disjoint(installed.files, current.files)) return { update: true, from: from ?? 'installed build', to, reason: 'new download files with a version number' };

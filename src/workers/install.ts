@@ -1,6 +1,7 @@
 // Install utility process: extracts archives, finds executables, launches and
 // stops games, and removes app-managed files. Nothing runs automatically after
 // a download — every launch or installer run is an explicit user request.
+import { discoverVersionEvidence, type VersionEvidenceInput } from './version-evidence';
 import { carryOver, snapshotBuild } from './carry-over';
 import { backupSaves, pruneBackups, restoreSaves } from './save-backup';
 import { findRedists } from './redist';
@@ -155,6 +156,7 @@ function removeManaged(p: { path: string; root: string }) {
 }
 
 serve({
+  inspectVersion(p: VersionEvidenceInput) { return discoverVersionEvidence(p); },
   async hashFile(p: { path: string }, signal: AbortSignal) {
     const hash = createHash('sha256');
     const stream = createReadStream(p.path, { signal });

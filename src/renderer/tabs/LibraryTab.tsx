@@ -663,6 +663,7 @@ function LibraryHero({ game }: { game: Game }) {
             {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
           </p>
+          {game.versionCheck && game.versionCheck.state !== 'identified' && <p className="muted" role="status">{game.versionCheck.detail}</p>}
           {storeTwin && (
             <div className="hero__store-update">
               <span>{t('You own this game on {store}.', { store: STORE_LABEL[storeTwin.store] })}</span>
@@ -804,9 +805,9 @@ function LibraryHero({ game }: { game: Game }) {
           {game.kind === 'windows' && game.managed && (
             <div className="field">
               <span className="field__label">{t('Game runtimes')}</span>
-              <span className="field__hint">{t('Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.')}</span>
+              <span className="field__hint">{game.runtimeInstallerDisabled ? t('Runtime installation is disabled with Valve Proton. Choose GE-Proton, CachyOS Proton or Wine to use game runtime installers.') : t('Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.')}</span>
               <div className="launch-row">
-                <Button variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), t('The runtimes will be installed again before the next start.'))}>{t('Reinstall runtimes')}</Button>
+                <Button disabled={game.runtimeInstallerDisabled} variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), t('The runtimes will be installed again before the next start.'))}>{t('Reinstall runtimes')}</Button>
               </div>
             </div>
           )}

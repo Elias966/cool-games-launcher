@@ -49,3 +49,33 @@ describe('Library operation races',()=>{
   expect(t.games.get(t.game.id)!.launch).toEqual(previous);
  });
 });
+
+describe('Valve Proton runtime installer guard', () => {
+ function windows(defaultPath='/steam/Proton 10.0', own: string|null=null, runner='proton') {
+  const t=setup(); t.games.update(t.game.id,{kind:'windows',runner:runner as any,redistDone:null,launch:{...t.game.launch,protonPath:own}});
+  const installed=[{path:'/steam/Proton 10.0',provider:'valve'},{path:'/managed/GE-Proton10-25',provider:'ge'}];
+  (t.library as any).compat={installed:()=>installed,protonPath:()=>defaultPath};
+  return t;
+ }
+ it('skips installers with Valve selected as the launcher default without marking them installed', async () => {
+  const t=windows();
+  await (t.library as any).installRuntimes(t.games.get(t.game.id),'proton',{protonPath:'/steam/Proton 10.0'});
+  expect(t.worker.call).not.toHaveBeenCalled(); expect(t.games.get(t.game.id)?.redistDone).toBeNull();
+  expect(t.library.list()[0].runtimeInstallerDisabled).toBe(true);
+  expect(()=>t.library.resetRuntimes(t.game.id)).toThrow(/Valve Proton/);
+ });
+ it('applies the per-game Valve override even when the default is GE', async () => {
+  const t=windows('/managed/GE-Proton10-25','/steam/Proton 10.0');
+  expect(t.library.list()[0].runtimeInstallerDisabled).toBe(true);
+  await (t.library as any).installRuntimes(t.games.get(t.game.id),'proton',{protonPath:'/steam/Proton 10.0'});
+  expect(t.worker.call).not.toHaveBeenCalled();
+ });
+ it('allows runtimes with a GE override or Wine despite a Valve default', async () => {
+  for (const t of [windows('/steam/Proton 10.0','/managed/GE-Proton10-25'),windows('/steam/Proton 10.0',null,'wine')]) {
+   t.worker.call.mockResolvedValue([]);
+   expect(t.library.list()[0].runtimeInstallerDisabled).toBe(false);
+   await (t.library as any).installRuntimes(t.games.get(t.game.id),t.games.get(t.game.id)!.runner,{protonPath:'/managed/GE-Proton10-25'});
+   expect(t.worker.call).toHaveBeenCalledWith('findRedists',expect.anything());
+  }
+ });
+});

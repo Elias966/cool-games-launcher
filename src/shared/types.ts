@@ -270,6 +270,8 @@ export interface Game {
   executableCandidates: string[];
   /** Installed build ("v1.2", "build 1234"), when the site publishes one. */
   version: string | null;
+  versionCheck?: import('./game-version').VersionInspection;
+  runtimeInstallerDisabled?: boolean;
   update: GameUpdateInfo | null;
   /** The previous build is kept after an update until the new one has been played. */
   previousVersion: string | null;

@@ -128,7 +128,8 @@ describe('UpdateService', () => {
     const { svc, games, game } = service();
     svc.evaluate(game, fp({version:'1.2'}));
     expect(games.get(game)?.installedVersion?.version).toBeNull();
-    expect(games.get(game)?.update).toMatchObject({state:'available',unverified:true});
+    expect(games.get(game)?.update).toBeNull();
+    expect(games.get(game)?.installedVersion?.inspection?.state).toBe('unresolved');
   });
   it('announces a newer build once, and not again after it is skipped', () => {
     const { svc, games, game } = service();
@@ -172,7 +173,28 @@ describe('UpdateService', () => {
   });
   it('does not automatically replace an imported game with an unknown version', () => {
     const {svc,games,game,startUpdate}=service('auto');svc.evaluate(game,fp({version:'2.0'}));
-    expect(games.get(game)?.update?.unverified).toBe(true);expect(startUpdate).not.toHaveBeenCalled();
+    expect(games.get(game)?.update).toBeNull();expect(startUpdate).not.toHaveBeenCalled();
+  });
+  it('compares only matching namespaces and does not offer an unrelated Steam build', () => {
+    const { svc, games, game, startUpdate } = service('auto');
+    games.update(game, {installedVersion:{...fp({version:'0.1.4.0.848',scheme:'semantic'}),identifiers:[{scheme:'semantic',version:'0.1.4.0.848',source:'DefaultGame.ini'},{scheme:'developer-build',version:'build 848',source:'BuildSettings.ini'}],inspection:{state:'identified',detail:'Game files',checkedAt:new Date().toISOString()}}});
+    svc.evaluate(game,fp({version:'build 25505592',scheme:'steam-build'}));
+    expect(games.get(game)?.update).toBeNull(); expect(startUpdate).not.toHaveBeenCalled();
+    expect(games.get(game)?.installedVersion?.inspection?.state).toBe('incomparable');
+    svc.evaluate(game,fp({version:'0.1.5.0.900',scheme:'semantic'}));
+    expect(games.get(game)?.update).toMatchObject({state:'available',from:'v0.1.4.0.848',to:'v0.1.5.0.900'});
+  });
+  it('uses a verified matching manifest even when a semantic identifier is preferred for display', () => {
+    const { svc, games, game } = service();
+    games.update(game, {installedVersion:{...fp({version:'1.2.3',scheme:'semantic'}),identifiers:[{scheme:'semantic',version:'1.2.3',source:'game.exe'},{scheme:'steam-build',version:'build 1000',source:'appmanifest'}],inspection:{state:'identified',detail:'Game files',checkedAt:new Date().toISOString()}}});
+    svc.evaluate(game,fp({version:'build 1001',scheme:'steam-build'}));
+    expect(games.get(game)?.update).toMatchObject({state:'available',from:'build 1000',to:'build 1001'});
+  });
+  it('does not bypass unresolved conflicting versions using files, dates, or HTTP validators', () => {
+    const { svc, games, game, startUpdate } = service('auto');
+    games.update(game, {installedVersion:{...fp({files:['old.zip'],updated:'2020-01-01'}),inspection:{state:'unresolved',detail:'Conflicting metadata',checkedAt:new Date().toISOString()},file:{url:'https://host/file',name:'old.zip',etag:'old',bytes:100,lastModified:null}}});
+    svc.evaluate(game,fp({version:'2.0',files:['new.zip'],updated:'2026-01-01'}),{status:200,etag:'new',bytes:200,lastModified:null});
+    expect(games.get(game)?.update).toBeNull(); expect(startUpdate).not.toHaveBeenCalled();
   });
   it('starts the update by itself in automatic mode', () => {
     const { svc, games, game, startUpdate } = service('auto');
