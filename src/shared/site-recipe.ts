@@ -33,6 +33,8 @@ export interface SiteRecipe {
   /** The site's own Popular / Trending listing pages, and when they were last read. */
   rankPages?: { popular?: string; trending?: string };
   rankAt?: string;
+  recentPages?: string[];
+  siteDatesVersion?: number;
 }
 
 // 3: the AI also sees menu links when choosing routes (catalogs often live there).
@@ -159,8 +161,8 @@ export function paginationLinks(ex: PageExtract): string[] {
   return [...out];
 }
 
-const CATALOG_TEXT = /^(?:all games|games? list|browse(?: games)?|catalog(?:ue)?|a\s*[-–]\s*z|all titles|game library|full list)$/i;
-const CATALOG_HREF = /\/(?:category|categories|genre|genres|games-list|game-list|all-games|browse|catalog|tag)\b|\/games\/?$/i;
+const CATALOG_TEXT = /^(?:all games|games? list|browse(?: games)?|catalog(?:ue)?|a\s*[-–]\s*z|all titles|game library|full list|recently added|newly added|latest games|new games|new releases|recent games)$/i;
+const CATALOG_HREF = /\/(?:category|categories|genre|genres|games-list|game-list|all-games|browse|catalog|tag|recently-added|newly-added|latest-games|new-games|new-releases|recent)\b|\/games\/?$/i;
 
 /**
  * Links that open a site's catalog: "All games", A–Z lists, browse, category
@@ -178,6 +180,11 @@ export function catalogLinks(ex: PageExtract): string[] {
     if (CATALOG_TEXT.test(text) || CATALOG_HREF.test(u.pathname) && text.length > 0 && text.length <= 40) out.add(l.href.split('#')[0]);
   }
   return [...out].slice(0, 40);
+}
+
+/** Explicit recent-addition routes can use a different layout from the main catalog. */
+export function recentListingLinks(ex: PageExtract): string[] {
+  return catalogLinks(ex).filter(url => [...ex.links, ...(ex.menuLinks ?? [])].some(l => l.href.split('#')[0] === url && /^(?:recently added|newly added|latest games|new games|new releases|recent games)$/i.test(l.text.trim())));
 }
 
 /** More-listing routes per the recipe plus the page's own declared next page. */

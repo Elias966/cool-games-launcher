@@ -55,6 +55,7 @@ export interface CatalogEntry {
   rating: ContentRating;
   ratingReasons: string[];
   discoveredAt: string;
+  siteAddedAt?: string | null;
   updatedAt: string;
   detailFetched: boolean;
   installedGameId: number | null;
@@ -146,7 +147,7 @@ export interface CatalogQuery {
   offset?: number;
 }
 
-export type CatalogSort = 'popular' | 'trending' | 'new' | 'title';
+export type CatalogSort = 'popular' | 'trending' | 'new' | 'title' | 'title-desc';
 
 export interface FacetValue {
   name: string;

@@ -19,7 +19,7 @@ const PAGE = 120;
 const SORTS: Array<{ id: CatalogSort; label: string; icon: IconName; hint: string }> = [
   { id: 'popular', label: tk('Popular'), icon: 'star', hint: tk('Most downloaded and played first, from the sites’ own lists and counters') },
   { id: 'trending', label: tk('Trending'), icon: 'flame', hint: tk('Popular right now: the sites’ trending lists, then popular recent releases') },
-  { id: 'new', label: tk('New'), icon: 'clock', hint: tk('Most recently found first') },
+  { id: 'new', label: tk('New'), icon: 'clock', hint: tk('Newest website additions first') },
   { id: 'title', label: tk('A–Z'), icon: 'sort', hint: tk('Alphabetical') },
 ];
 
@@ -66,7 +66,7 @@ export function StoreTab() {
   /** Near the top of the list, where changes may move things around. */
   const [nearTop, setNearTop] = useState(true);
 
-  const setSort = (v: CatalogSort) => setStoreView({ sort: v, scrollTop: 0 });
+  const setSort = (v: CatalogSort) => setStoreView({ sort: v === 'title' && sort === 'title' ? 'title-desc' : v, scrollTop: 0 });
   const setCategory = (v: string) => setStoreView({ category: v, scrollTop: 0 });
   const setTag = (v: string) => setStoreView({ tag: v, scrollTop: 0 });
   const setPlatformFilter = (v: Platform[]) => setStoreView({ platforms: v, scrollTop: 0 });
@@ -403,9 +403,9 @@ export function StoreTab() {
 
         <div className="sort-tabs" role="tablist" aria-label={t('Sort games')}>
           {SORTS.map((o) => (
-            <button key={o.id} role="tab" aria-selected={sort === o.id} title={t(o.hint)} className={`sort-tab sort-tab--${o.id} ${sort === o.id ? 'is-on' : ''}`} onClick={() => setSort(o.id)}>
+            <button key={o.id} role="tab" aria-selected={sort === o.id || o.id === 'title' && sort === 'title-desc'} title={t(o.id === 'title' && sort === 'title-desc' ? 'Reverse alphabetical' : o.hint)} className={`sort-tab sort-tab--${o.id} ${sort === o.id || o.id === 'title' && sort === 'title-desc' ? 'is-on' : ''}`} onClick={() => setSort(o.id)}>
               <Icon name={o.icon} size={16} />
-              {t(o.label)}
+              {t(o.id === 'title' && sort === 'title-desc' ? 'Z–A' : o.label)}
             </button>
           ))}
           <button role="tab" aria-selected={wishOnly} className={`sort-tab sort-tab--wish ${wishOnly ? 'is-on' : ''}`} onClick={() => setStoreView({ wishlist: !wishOnly, scrollTop: 0 })}>

@@ -96,6 +96,8 @@ export interface PageExtract {
   notices?: string[];
   /** When the page was first published (ISO), if it says. */
   published?: string | null;
+  observedAt?: string;
+  recentGameLinks?: string[];
   /** Lists under headings like "Popular games" or "Trending", in page order. */
   rankedSections?: Array<{ kind: 'popular' | 'trending'; heading: string; links: string[] }>;
 }
@@ -110,6 +112,30 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
 
   const clean = (s: string | null | undefined, max = 300): string =>
     (s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const observedAt = new Date().toISOString();
+  const dateCache = new WeakMap<Element, string | null>();
+  const dateIn = (root: Element): string | null => {
+    if (dateCache.has(root)) return dateCache.get(root)!;
+    let found: string | null = null;
+    const selector = '[itemprop="datePublished"],time,[data-published],[data-date],[data-timestamp],.date,.time,.post-time,.entry-time,.timestamp,.post-meta,.entry-meta,.post-date,.entry-date,.posted-on,.published,.timeago,[class*="post_date"],[class*="post-date"],[class*="time-ago"],[class*="time_ago"]';
+    const nodes = [...(root.matches(selector) ? [root] : []), ...root.querySelectorAll(selector)].slice(0, 30);
+    for (const node of nodes) {
+      if (node.closest('aside,footer,nav,[class*="related"],[class*="comment"],[class*="release-date"],[class*="release_date"]')) continue;
+      const label = `${node.className} ${node.getAttribute('itemprop') ?? ''} ${node.textContent ?? ''}`;
+      if (/updated|modified|release|copyright/i.test(label) && !/datePublished|\bpublished\b/.test(label)) continue;
+      const relative = clean([...node.childNodes].map(n=>n.textContent).join(' '),300).match(/\b(?:just now|yesterday|(?:\d+(?:\.\d+)?|an?|one)\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|[smhdw])\s+ago)\b/i)?.[0];
+      found = clean(node.getAttribute('datetime') || node.getAttribute('content') || node.getAttribute('data-published') || node.getAttribute('data-date') || node.getAttribute('data-timestamp') || node.getAttribute('title') || relative || node.textContent, 150) || null;
+      if (found) break;
+    }
+    if (!found) {
+      const text = clean([...root.childNodes].map(n=>n.textContent).join(' '), 2000);
+      found = text.match(/\b(?:added|posted|published)(?:\s+on)?\s*[:：-]?\s*(just now|yesterday|(?:\d+(?:\.\d+)?|an?|one)\s+(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+ago)\b/i)?.[1] ?? null;
+      if (/updated|modified|release|playtime/i.test(text.slice(Math.max(0, text.indexOf(found ?? '') - 30), text.indexOf(found ?? '')))) found = null;
+    }
+    if (!found) found = clean([...root.childNodes].map(n=>n.textContent).join(' '), 2000).match(/\b(?:added|posted|published)(?:\s+on)?\s*[:：-]\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+[A-Za-z]+\s+\d{4})/i)?.[1] ?? null;
+    dateCache.set(root, found);
+    return found;
+  };
   const abs = (u: string | null | undefined): string | null => {
     if (!u || !u.trim() || u.trim().startsWith('#') || /^\s*javascript:/i.test(u)) return null;
     try {
@@ -668,15 +694,17 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
   }
   const mainText = mainScope ? clean((mainScope as HTMLElement).innerText || mainScope.textContent || '', 20000) : null;
   const ldPublished = (jsonLd as Array<Record<string, unknown>>).map((o) => o?.datePublished).find((v) => typeof v === 'string') as string | undefined;
-  const published = meta['article:published_time'] || meta['datepublished'] || ldPublished || mainScope?.querySelector('time[datetime]')?.getAttribute('datetime') || null;
+  const published = meta['article:published_time'] || meta['datepublished'] || ldPublished || (mainScope ? dateIn(mainScope.closest('article') ?? mainScope) : null);
   const RANK_POPULAR = /\b(?:most\s+)?popular\b|most\s+(?:downloaded|played|viewed)|\btop\s+(?:games|downloads|rated|\d+)\b|^top$|best\s+(?:games|of)|all[- ]time/i;
   const RANK_TRENDING = /\btrending\b|\bhot\b|this\s+week|rising|new\s+(?:and|&)\s+popular|right\s+now/i;
+  const recentGameLinks: string[] = [];
   const rankedSections: Array<{ kind: 'popular' | 'trending'; heading: string; links: string[] }> = [];
   for (const h of doc.querySelectorAll('h1,h2,h3,h4,h5,h6,.widget-title,.widgettitle,.section-title,[class*="block-title"]')) {
     const heading = clean(h.textContent, 60);
     if (!heading || heading.length > 50) continue;
     const kind = RANK_TRENDING.test(heading) ? 'trending' : RANK_POPULAR.test(heading) ? 'popular' : null;
-    if (!kind || rankedSections.some((r) => r.kind === kind)) continue;
+    const recent = /^(?:recently added(?: games)?|newly added(?: games)?|latest games|new games|new releases|recent games)$/i.test(heading);
+    if (!recent && (!kind || rankedSections.some((r) => r.kind === kind))) continue;
     const box = h.parentElement?.closest('section,aside,.widget,[class*="widget"],[class*="popular"],[class*="trending"],[class*="block"]') ?? h.parentElement;
     if (!box || box === doc.body || box === doc.documentElement) continue;
     const hrefs: string[] = [];
@@ -687,7 +715,8 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       hrefs.push(u.split('#')[0]);
       if (hrefs.length >= 60) break;
     }
-    if (hrefs.length >= 3) rankedSections.push({ kind, heading, links: hrefs });
+    if (recent) recentGameLinks.push(...hrefs);
+    else if (kind && hrefs.length >= 3) rankedSections.push({ kind, heading, links: hrefs });
   }
 
   return {
@@ -715,6 +744,8 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       .map(el => clean((el as HTMLElement).innerText || el.textContent, 301))
       .filter(text => text.length > 0 && text.length <= 300).slice(0, 16),
     published,
+    observedAt,
+    recentGameLinks: [...new Set(recentGameLinks)],
     rankedSections,
     viewport: { w: vw, h: vh, scrollY: Math.round(win.scrollY), docH: Math.round(doc.documentElement.scrollHeight) },
     inputState,

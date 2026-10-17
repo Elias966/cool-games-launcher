@@ -2,6 +2,7 @@ import {DEFAULT_MODEL_ID, DEFAULT_AGENTS} from '@shared/models';
 import type { InstallResult } from '../workers/prepare-game';
 import type { PlayStats, ProtonPackage } from '@shared/types';
 // Typed data access over SQLite. No Electron imports, so it is testable in Node.
+import { parseSiteDate } from '@shared/site-date';
 import { cpus } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Db } from './db';
@@ -334,6 +335,7 @@ interface CatalogRow {
   cover_score?: number | null;
   popularity_json?: string | null;
   published_at?: string | null;
+  site_added_at?: string | null;
   rank_popular?: number | null;
   rank_trending?: number | null;
   description_source?: string | null;
@@ -386,13 +388,16 @@ export interface ListingInput {
   categories?: string[];
   thumbnailUrl?: string | null;
   textSignals?: string[];
+  published?: string | null;
+  observedAt?: string;
 }
 
 const CATALOG_ORDER: Record<NonNullable<CatalogQuery['sort']>, string> = {
-  new: '(c.artwork_file IS NULL), c.discovered_at DESC, c.id DESC',
+  new: '(c.site_added_at IS NULL), julianday(c.site_added_at) DESC, c.discovered_at DESC, c.id DESC',
   popular: '(c.artwork_file IS NULL), c.pop_score DESC, c.discovered_at DESC, c.id DESC',
   trending: '(c.artwork_file IS NULL), c.trend_score DESC, c.discovered_at DESC, c.id DESC',
   title: 'c.title COLLATE NOCASE, c.id',
+  'title-desc': 'c.title COLLATE NOCASE DESC, c.id DESC',
 };
 
 export class CatalogRepo {
@@ -450,6 +455,7 @@ export class CatalogRepo {
       rating: r.rating,
       ratingReasons: raw.ratingReasons,
       discoveredAt: r.discovered_at,
+      siteAddedAt: r.site_added_at ?? null,
       updatedAt: r.updated_at,
       detailFetched: !!r.detail_fetched_at,
       installedGameId: r.game_id ?? null,
@@ -477,6 +483,7 @@ export class CatalogRepo {
     const byUrl = this.st.get(`SELECT ${cols} FROM catalog WHERE source_id = ? AND page_url = ?`).get(sourceId, l.pageUrl) as Existing | undefined;
     const existing = byUrl ?? (this.st.get(`SELECT ${cols} FROM catalog WHERE source_id = ? AND title_key = ? AND title_key != '' ORDER BY id DESC`).get(sourceId, l.titleKey) as Existing | undefined);
     if (existing) {
+      if (byUrl) this.setSiteAdded(existing.id, l.published, l.observedAt);
       // A listing is provisional evidence. Never replace classified detail,
       // taxonomy, artwork or download routes with a weaker repeat observation.
       if (existing.detail_fetched_at || existing.download_status === 'available') {
@@ -487,6 +494,7 @@ export class CatalogRepo {
           // Same game on another page: only a newer announced build moves the entry there.
           if (!newer) return { id: existing.id, created: false };
           this.st.get('UPDATE catalog SET page_url = ?, listing_title = ?, detail_fetched_at = NULL, detail_attempts = 0 WHERE id = ?').run(l.pageUrl, l.title, existing.id);
+          this.setSiteAdded(existing.id, l.published, l.observedAt);
           return { id: existing.id, created: false, changed: true };
         }
         if (existing.listing_title !== null && newer) {
@@ -526,8 +534,32 @@ export class CatalogRepo {
         JSON.stringify(l.textSignals ?? []),
         l.title,
       ) as { id: number };
+    this.setSiteAdded(r.id, l.published, l.observedAt);
     this.mergeTaxonomy(r.id, l.categories ?? [], l.tags ?? []);
     return { id: r.id, created: true };
+  }
+
+  private setSiteAdded(id: number, raw: string | null | undefined, observedAt?: string) {
+    const date = parseSiteDate(raw, observedAt);
+    if (!date) return;
+    // Relative labels are rounded by sites. Keep the first estimate stable;
+    // precise date metadata can replace it on the next observation.
+    this.st.get(`UPDATE catalog SET site_added_at = ${date.relative ? 'COALESCE(site_added_at, ?)' : '?'} WHERE id = ?`).run(date.iso, id);
+  }
+
+  /** Existing listings need posting-date repair without redoing download/AI
+   * verification. Undated sites retry at most weekly. */
+  datesNeedingCheck(ids: number[], limit = 40): number[] {
+    if (!ids.length) return [];
+    const due = this.db.prepare(`SELECT id FROM catalog WHERE id IN (${ids.map(()=>'?').join(',')}) AND download_status = 'available'
+      AND site_added_at IS NULL AND (site_date_checked_at IS NULL OR julianday(site_date_checked_at) < julianday('now','-7 days'))`).all(...ids) as Array<{id:number}>;
+    const wanted = new Set(due.map(r=>r.id));
+    return ids.filter(id=>wanted.has(id)).slice(0,limit);
+  }
+
+  recordSiteDate(id: number, published: string | null, observedAt?: string) {
+    this.setSiteAdded(id, published, observedAt);
+    this.st.get('UPDATE catalog SET site_date_checked_at = ? WHERE id = ?').run(now(), id);
   }
 
   private mergeTaxonomy(id: number, categories: string[], tags: string[]) {
@@ -620,6 +652,7 @@ export class CatalogRepo {
       version?: VersionFingerprint | null;
       popularity?: PopularitySignals | null;
       published?: string | null;
+      observedAt?: string;
     },
   ) {
     this.mergeTaxonomy(id, d.categories ?? [], d.tags ?? []);
@@ -650,8 +683,9 @@ export class CatalogRepo {
       );
     if (d.popularity !== undefined || d.published !== undefined) {
       this.st.get('UPDATE catalog SET popularity_json = COALESCE(?, popularity_json), published_at = COALESCE(?, published_at) WHERE id = ?')
-        .run(d.popularity ? JSON.stringify(d.popularity) : null, d.published ?? null, id);
+        .run(d.popularity ? JSON.stringify(d.popularity) : null, parseSiteDate(d.published, d.observedAt)?.iso ?? null, id);
     }
+    if (d.published !== undefined) this.recordSiteDate(id, d.published, d.observedAt);
     // A description chosen from the page itself replaces one looked up elsewhere.
     if (d.description) this.st.get('UPDATE catalog SET description_source = NULL WHERE id = ?').run(id);
     this.rescore(id);

@@ -1,10 +1,11 @@
 // Website discovery. Runs only while the Store is active: crawls the user's
 // sources incrementally (checkpointed). DOM extraction supplies observations;
 // the local vision model chooses games, navigation and download routes.
+import { parseSiteDate } from '@shared/site-date';
 import { canonicalUrl, hostOf, siteKey, titleKey } from '@shared/urls';
 import { textAdultSignals } from '@shared/policy';
 import { downloadEvidence } from '@shared/download-evidence';
-import { catalogLinks, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recipeCards, recipeRoutes, ROUTES_VERSION, type SiteRecipe } from '@shared/site-recipe';
+import { catalogLinks, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recentListingLinks, recipeCards, recipeRoutes, ROUTES_VERSION, type SiteRecipe } from '@shared/site-recipe';
 import type { PageExtract, ExtractCard } from '@shared/page-extract';
 import type { Platform, Source } from '@shared/types';
 import type { SourcesRepo, CatalogRepo, SettingsRepo, CrawlCursor } from './repos';
@@ -432,6 +433,15 @@ export class Discovery {
     const { sources, catalog, session } = this.deps;
     // A site indexed before is re-checked incrementally (see staleRun below).
     const cursor: CrawlCursor = sources.cursor(source.id) ?? { pending: [source.url], visited: [], pagesDone: 0, startedAt: new Date().toISOString(), refresh: this.incremental(source) };
+    // Backfill website dates from the front/recent pages without throwing away
+    // the existing crawl or moving a page waiting for human verification.
+    const savedRecipe = sources.recipe(source.id);
+    if (savedRecipe && savedRecipe.siteDatesVersion !== 1 && !cursor.verification) {
+      const first = [source.url, ...(savedRecipe.recentPages ?? [])];
+      cursor.pending = [...first, ...cursor.pending.filter(url => !first.includes(url))];
+      cursor.visited = cursor.visited.filter(url => !first.includes(url));
+      sources.saveRecipe(source.id, { ...savedRecipe, siteDatesVersion: 1 });
+    }
     this.progress(source, 'crawling', 'Reading listing pages', cursor.pagesDone, catalog.count(source.id));
     this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Indexing {name}', { name: source.name }), context: 'discovery' });
     const host = hostOf(source.url);
@@ -505,14 +515,24 @@ export class Discovery {
           delete cursor.staleRun;
           console.log(`[discovery] ${source.name}: re-learned routes, ${more.length} listing links`);
         }
-        for (const route of [...recipeRoutes(ex, recipe), ...extraRoutes]) {
+        const recent = recentListingLinks(ex).filter(url => !matchesAny(url, recipe!.game));
+        if (recent.length) {
+          recipe = { ...recipe, recentPages: [...new Set([...(recipe.recentPages ?? []), ...recent])].slice(0, 6), siteDatesVersion: 1 };
+          sources.saveRecipe(source.id, recipe);
+        }
+        for (const route of [...recipeRoutes(ex, recipe), ...catalogLinks(ex), ...extraRoutes]) {
           const next = canonicalUrl(route);
-          if (next && hostOf(next) === host && !cursor.visited.includes(next) && !cursor.pending.includes(next)) cursor.pending.push(next);
+          if (next && hostOf(next) === host && !cursor.visited.includes(next) && !cursor.pending.includes(next)) {
+            if (recent.includes(next)) cursor.pending.splice(1, 0, next);
+            else cursor.pending.push(next);
+          }
         }
         cursor.pending.shift();
         cursor.visited.push(canonicalUrl(url) ?? url);
         cursor.pagesDone++;
         delete cursor.page; delete cursor.retryAt; delete cursor.failures;
+        const recentGames = new Set((ex.recentGameLinks ?? []).map(url => canonicalUrl(url)));
+        cards.sort((a,b)=>Number(recentGames.has(canonicalUrl(b.href)))-Number(recentGames.has(canonicalUrl(a.href))));
         // Games and routes commit together: closing mid-page loses nothing.
         let created = 0;
         const stored = sources.checkpoint(source.id, cursor, () => cards.map((card) => { const r = this.storeCard(source.id, card, ex); if (r?.created || r?.changed) created++; return r?.id; }).filter((id): id is number => id !== undefined));
@@ -520,11 +540,12 @@ export class Discovery {
         // row bring nothing new, the rest is already indexed.
         if (cursor.refresh) {
           cursor.staleRun = created ? 0 : (cursor.staleRun ?? 0) + 1;
-          if (cursor.staleRun >= 2) { cursor.pending = []; sources.saveCursor(source.id, cursor); }
+          if (cursor.staleRun >= 2) { cursor.pending = cursor.pending.filter(url => recipe?.recentPages?.includes(url)); cursor.staleRun = 0; sources.saveCursor(source.id, cursor); }
         }
         // AI-confirmed games appear as soon as their cover passes the content
         // check; download routes are verified in the background right after.
         catalog.markListed(stored);
+        await this.repairSiteDates(source, stored, token);
         await this.classifyListed(stored, token);
         this.notifyCatalog(source.id);
         const secs = Math.max(1, (Date.now() - started) / 1000);
@@ -587,6 +608,27 @@ export class Discovery {
     } finally {
       if (this.activeSourceId === source.id) this.activeSourceId = null;
     }
+  }
+
+  private async repairSiteDates(source: Source, ids: number[], token: SessionToken) {
+    const { catalog, fetcher, browser, limiter, session } = this.deps;
+    const pending = catalog.datesNeedingCheck(ids);
+    let next = 0;
+    await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
+      while (next < pending.length) {
+        const id = pending[next++], entry = catalog.raw(id);
+        if (!entry) continue;
+        session.assertLive(token, 'website date check');
+        try {
+          await limiter.wait(siteKey(hostOf(entry.pageUrl)), this.spacing(source), token.signal);
+          let ex = fetcher ? await fetcher.fetch(entry.pageUrl, token.signal).then(r=>r.ok?r.extract:null).catch(()=>null) : null;
+          // Script dates and cookie-gated pages use an isolated browser tab.
+          if ((!ex || this.gated(ex) || !parseSiteDate(ex.published,ex.observedAt)) && browser.readUpdatePage) ex = await browser.readUpdatePage(entry.pageUrl,token.signal);
+          session.assertLive(token, 'website date result');
+          if (ex && this.samePage(ex.url,entry.pageUrl) && !this.gated(ex)) catalog.recordSiteDate(id,ex.published??null,ex.observedAt);
+        } catch (e) { if (isCancelled(e) || !session.isLive(token)) throw e; }
+      }
+    }));
   }
 
   private async classifyListed(ids: number[], token: SessionToken) {
@@ -735,6 +777,8 @@ export class Discovery {
       learnedAt: new Date().toISOString(),
       origin: 'ai',
       routesVersion: ROUTES_VERSION,
+      siteDatesVersion: 1,
+      recentPages: previous?.recentPages,
     };
     const chosen = new Set(r.games.map((u) => u.split('#')[0]));
     let cards = recipeCards(ex, recipe);
@@ -1008,7 +1052,8 @@ export class Discovery {
       downloadStatus: game && candidates.length ? 'available' : 'unavailable',
       version: game && candidates.length ? pageFingerprint(ex, candidates) : null,
       popularity: game ? popularitySignals(ex) : null,
-      published: ex.published ? new Date(Date.parse(ex.published) || Date.now()).toISOString() : null,
+      published: ex.published ?? null,
+      observedAt: ex.observedAt,
     });
     if (signals.length) catalog.addTextSignals(id, signals);
     if (game && candidates.length) await this.deps.classification.classifyEntry(id, token.signal);

@@ -215,6 +215,13 @@ export const MIGRATIONS: Array<string | { id: string; run: (db: DatabaseSync) =>
       addColumnIfMissing(db, 'games', 'store_build', 'TEXT');
     },
   },
+  // Website posting time is distinct from Steam release dates used by Trending.
+  { id: 'catalog.site_added_at separate from game release dates', run: (db) => {
+    addColumnIfMissing(db, 'catalog', 'site_added_at', 'TEXT');
+    addColumnIfMissing(db, 'catalog', 'site_date_checked_at', 'TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS catalog_site_added ON catalog(site_added_at DESC, id DESC); UPDATE sources SET last_crawl_at = NULL WHERE enabled = 1;');
+  } },
+
 ];
 
 /** Adds a column unless the table already has it. */

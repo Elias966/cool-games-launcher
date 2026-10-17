@@ -136,7 +136,7 @@ export const requests = {
       platforms: z.array(platform).max(5).optional(),
       categories: z.array(z.string().min(1).max(60)).max(12).optional(),
       tags: z.array(z.string().min(1).max(60)).max(20).optional(),
-      sort: z.enum(['popular', 'trending', 'new', 'title']).optional(),
+      sort: z.enum(['popular', 'trending', 'new', 'title', 'title-desc']).optional(),
       wishlist: z.boolean().optional(),
       limit: z.number().int().min(1).max(500).optional(),
       offset: z.number().int().min(0).optional(),
