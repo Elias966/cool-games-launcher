@@ -471,6 +471,11 @@ export class CatalogRepo {
     };
   }
 
+  idByUrl(sourceId: number, pageUrl: string): number | null {
+    const row = this.st.get('SELECT id FROM catalog WHERE source_id=? AND page_url=?').get(sourceId,pageUrl) as {id:number}|undefined;
+    return row?.id ?? null;
+  }
+
   /**
    * Inserts a newly discovered listing, or refreshes basic fields of a known
    * one. `changed` marks a verified game whose listing now announces a newer
@@ -549,9 +554,14 @@ export class CatalogRepo {
 
   /** Existing listings need posting-date repair without redoing download/AI
    * verification. Undated sites retry at most weekly. */
+  dateCheckBatch(limit = 500): number[] {
+    return (this.db.prepare(`SELECT c.id FROM catalog c JOIN sources s ON s.id=c.source_id WHERE s.enabled=1 AND c.download_status IN ('available','listed')
+      AND c.site_added_at IS NULL AND (c.site_date_checked_at IS NULL OR julianday(c.site_date_checked_at)<julianday('now','-7 days')) ORDER BY c.discovered_at DESC,c.id DESC LIMIT ?`).all(limit) as Array<{id:number}>).map(r=>r.id);
+  }
+
   datesNeedingCheck(ids: number[], limit = 40): number[] {
     if (!ids.length) return [];
-    const due = this.db.prepare(`SELECT id FROM catalog WHERE id IN (${ids.map(()=>'?').join(',')}) AND download_status = 'available'
+    const due = this.db.prepare(`SELECT id FROM catalog WHERE id IN (${ids.map(()=>'?').join(',')}) AND download_status IN ('available','listed')
       AND site_added_at IS NULL AND (site_date_checked_at IS NULL OR julianday(site_date_checked_at) < julianday('now','-7 days'))`).all(...ids) as Array<{id:number}>;
     const wanted = new Set(due.map(r=>r.id));
     return ids.filter(id=>wanted.has(id)).slice(0,limit);

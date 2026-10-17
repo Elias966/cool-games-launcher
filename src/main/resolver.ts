@@ -85,7 +85,7 @@ export class Resolver {
       downloadWorker: WorkerHost;
       policy: PolicyService;
       agent?: LocalGameAgent;
-      openDrawer: (reason: string, requiresUser?: boolean) => void;
+      openDrawer: (reason: string, requiresUser?: boolean, kind?: UserPrompt['kind']) => void;
       browserSampleMs?: number;
       /** Every part of a split game is known and downloading/downloaded: preparation may start when they finish. */
       partsSettled?: (groupId: number) => void;
@@ -196,7 +196,7 @@ export class Resolver {
     this.deps.foreground?.hold(`download:${id}`, true);
     this.deps.downloads.setPrompt(id, prompt, 'needs-user');
     this.deps.ai.setStatus({ phase: 'paused', detail: prompt.message, context: 'interactive' });
-    this.deps.openDrawer(prompt.message, true);
+    this.deps.openDrawer(prompt.message, true, prompt.kind);
     if (['captcha', 'login', 'blocked'].includes(prompt.kind)) this.watchGate(id);
   }
 

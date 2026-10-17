@@ -5,6 +5,7 @@
 import type { WorkerHost } from './worker-host';
 import type { BrowserClient } from './browser-client';
 import type { FetchPageResult } from '../workers/fetcher';
+import { parseSiteDate } from '@shared/site-date';
 import { hostOf, siteKey } from '@shared/urls';
 
 const AUTH_TTL_MS = 60_000;
@@ -20,7 +21,7 @@ export class PageFetcher {
   private pending = new Map<string, Promise<{ cookie: string; userAgent: string; at: number }>>();
 
   /** Several parser processes: HTML parsing is CPU-bound and would serialise parallel reads. */
-  constructor(private workers: WorkerHost[], private browser: BrowserClient) {}
+  constructor(private workers: WorkerHost[], private browser: BrowserClient, private profileDir?: string) {}
 
   private async session(url: string) {
     const key = siteKey(hostOf(url));
@@ -55,6 +56,22 @@ export class PageFetcher {
     this.stats.http++;
     this.stats.ms += r.ms;
     return r;
+  }
+
+  /** Date ordering uses HTTP and a read-only cookie jar. A dedicated rendering tab handles
+   * JavaScript and HTTP challenges; it never uses an AI or the AI's page. */
+  async fetchBackground(url: string, signal: AbortSignal, detail = false): Promise<FetchPageResult> {
+    const worker = this.workers[this.next++ % this.workers.length];
+    const cached = this.auth.get(siteKey(hostOf(url)));
+    const cookie = this.profileDir ? await worker.call<string>('storedCookies', {profileDir:this.profileDir,url},signal).catch(()=> '') : cached?.cookie ?? '';
+    if (signal.aborted) throw Object.assign(new Error('Cancelled'), {code:'cancelled'});
+    const r = await worker.call<FetchPageResult>('fetchPage',{url,cookie,userAgent:cached?.userAgent},signal);
+    if (signal.aborted) throw Object.assign(new Error('Cancelled'), {code:'cancelled'});
+    if (r.ok && !r.extract.gates.captcha && !r.extract.gates.blocked && !r.extract.gates.login &&
+      (!detail || parseSiteDate(r.extract.published,r.extract.observedAt))) return r;
+    const started = Date.now();
+    const extract = await this.browser.readDatePage(url,signal,detail);
+    return {ok:true,status:200,url:extract.url,extract,ms:Date.now()-started};
   }
 
   async fetchText(url: string, signal: AbortSignal): Promise<{ status: number; url: string; text: string | null }> {

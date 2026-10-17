@@ -127,7 +127,7 @@ export const requests = {
   'store:searchFocus': z.object({ focused:z.boolean() }).strict(),
   'store:searchCancel': z.undefined(),
   'store:search': z.object({ query:z.string().trim().min(1).max(200),sourceIds:z.array(id).max(100).optional() }).strict(),
-  'store:setActive': z.object({ active: z.boolean() }).strict(),
+  'store:setActive': z.object({ active: z.boolean(), sort: z.enum(['popular','trending','new','title','title-desc']).optional() }).strict(),
   'catalog:facets': z.undefined(),
   'catalog:list': z
     .object({

@@ -145,3 +145,12 @@ describe('current browser control identities', () => {
     expect(dom.window.document.querySelector(`[data-cgl-i="${ex.controls[0].i}"]`)?.textContent).toBe('Current');
   });
 });
+
+describe('listing titles without artwork', () => {
+  it('keeps each game title instead of inheriting a Recently Added heading', () => {
+    load('<main><h2>Recently Added</h2>'+['Alpha','Bravo','Charlie'].map(title=>`<article><a href="/game/${title}"><h3>${title}</h3></a></article>`).join('')+'</main>','https://games.test/');
+    expect(extract().cards.map(c=>c.title)).toEqual(['Alpha','Bravo','Charlie']);
+    load('<main><h2>Recently Added</h2>'+['Alpha','Bravo','Charlie'].map(title=>`<article><a href="/game/${title}">${title}</a></article>`).join('')+'</main>','https://games.test/');
+    expect(extract().cards.map(c=>c.title)).toEqual(['Alpha','Bravo','Charlie']);
+  });
+});

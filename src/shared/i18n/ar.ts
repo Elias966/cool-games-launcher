@@ -974,4 +974,9 @@ export const ar: Record<string, string> = {
   'Newest website additions first': 'أحدث الألعاب المضافة إلى الموقع أولاً',
   'Reverse alphabetical': 'ترتيب أبجدي عكسي',
   'Z–A': 'ي–أ',
+  'The launcher checks added dates on game webpages in the background. No AI is used for this order.': 'يتحقق المشغل من تواريخ إضافة الألعاب من صفحاتها في الخلفية دون استخدام الذكاء الاصطناعي للترتيب.',
+  'Take control of the live Firefox page for smooth browsing and website verification. Your page and form input stay in place.': 'تحكّم مباشرة في صفحة فايرفوكس للتصفح السلس والتحقق من الموقع. تبقى الصفحة ومدخلاتك كما هي.',
+  'Return control to launcher': 'إعادة التحكم إلى المشغّل',
+  'Take control of Firefox': 'التحكم في فايرفوكس',
+  'Complete the website check so the launcher can read game addition dates.': 'أكمل التحقق من الموقع ليتمكن المشغّل من قراءة تواريخ إضافة الألعاب.',
 };

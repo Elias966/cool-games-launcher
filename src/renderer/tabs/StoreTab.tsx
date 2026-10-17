@@ -412,6 +412,7 @@ export function StoreTab() {
             <Icon name="heart" size={16} />
             {t('Wishlist')}{wishlist.length ? ` (${wishlist.length})` : ''}
           </button>
+          {sort === 'new' && <span className="sort-tabs__note">{t('The launcher checks added dates on game webpages in the background. No AI is used for this order.')}</span>}
           {(sort === 'popular' || sort === 'trending') && loaded && facets.gathering > 0 && (
             <span className="sort-tabs__note">
               {t('Collecting popularity for {n} more games from their Steam pages (players’ recommendations and release dates) — about {min} min left. The order gets better as it runs; games without data come last.', { n: facets.gathering.toLocaleString(locale()), min: Math.max(1, Math.round((facets.gathering * 1.8) / 60)) })}</span>

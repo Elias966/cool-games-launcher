@@ -73,6 +73,7 @@ function initialStoreView(): StoreView {
 /** Updates the Store view; the filters (not the search text or scroll) also survive restarts. */
 export function setStoreView(patch: Partial<StoreView>) {
   setState((s) => ({ storeView: { ...s.storeView, ...patch } }));
+  if ('sort' in patch && state.tab === 'store') void api.invoke('store:setActive',{active:true,sort:state.storeView.sort}).catch(()=>undefined);
   if (['sort', 'category', 'tag', 'platforms', 'sources'].some((k) => k in patch)) {
     try {
       const { sort, category, tag, platforms, sources } = getState().storeView;
@@ -155,7 +156,7 @@ export function setTab(tab: TabId) {
   // Remembered in the launcher's database right away: it reopens on this page after a restart.
   void api.invoke('app:setLastTab', { tab }).catch(() => undefined);
   // Leaving the Store pauses indexing (download work continues); entering starts it.
-  if (prev === 'store' || tab === 'store') void api.invoke('store:setActive', { active: tab === 'store' }).then((ai) => setState({ ai })).catch(() => undefined);
+  if (prev === 'store' || tab === 'store') void api.invoke('store:setActive', { active: tab === 'store', sort: state.storeView.sort }).then((ai) => setState({ ai })).catch(() => undefined);
   if (tab !== 'store') setState((s) => ({ browser: { ...s.browser, open: false, snapshot: null } }));
 }
 
@@ -216,6 +217,6 @@ export async function boot() {
   void api.invoke('stores:state').then((stores) => setState({ stores })).catch(() => undefined);
   void api.invoke('wishlist:list').then((wishlist) => setState({ wishlist })).catch(() => undefined);
   // Also picks up the AI status from before this window subscribed to updates.
-  const ai = await api.invoke('store:setActive', { active: state.tab === 'store' }).catch(() => null);
+  const ai = await api.invoke('store:setActive', { active: state.tab === 'store', sort: state.storeView.sort }).catch(() => null);
   if (ai) setState({ ai });
 }

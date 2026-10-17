@@ -3,6 +3,9 @@
 // the browser uses (without a layout engine). Indexing reads many listing and
 // game pages in parallel through it; Firefox remains the fallback for pages
 // that need JavaScript or a human website check.
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { gunzipSync } from 'node:zlib';
 import { serve } from './rpc';
@@ -145,8 +148,34 @@ async function headFile(p: FetchPageParams, signal: AbortSignal): Promise<{ stat
   }
 }
 
+/** Saved Firefox cookies, read without launching or focusing a browser. */
+export function storedCookies(p: {profileDir: string; url: string}): string {
+  const path = join(p.profileDir, 'cookies.sqlite');
+  if (!existsSync(path)) return '';
+  let db: DatabaseSync | undefined;
+  try {
+    const target = new URL(p.url);
+    if (!/^https?:$/.test(target.protocol)) return '';
+    db = new DatabaseSync(path, {readOnly: true});
+    db.exec('PRAGMA busy_timeout=250');
+    const rows = db.prepare(`SELECT name,value,host,path,isSecure,expiry FROM moz_cookies
+      WHERE originAttributes='' AND (host=? OR host='.' || ? OR ? LIKE '%.' || ltrim(host,'.')) LIMIT 500`)
+      .all(target.hostname, target.hostname, target.hostname) as Array<{
+        name: string; value: string; host: string; path: string; isSecure: number; expiry: number;
+      }>;
+    return rows.filter(c =>
+      (c.host === target.hostname || c.host.startsWith('.') && (target.hostname === c.host.slice(1) || target.hostname.endsWith(c.host))) &&
+      (!c.isSecure || target.protocol === 'https:') && c.expiry > Date.now() / 1000 &&
+      (target.pathname === c.path || target.pathname.startsWith(c.path.endsWith('/') ? c.path : c.path + '/')) &&
+      !/[\r\n;]/.test(c.name + c.value))
+      .sort((a, b) => b.path.length - a.path.length).map(c => c.name + '=' + c.value).join('; ');
+  } catch { return ''; }
+  finally { db?.close(); }
+}
+
 if ((process as unknown as { parentPort?: unknown }).parentPort) {
   serve({
+    storedCookies,
     fetchPage: (p: FetchPageParams, signal: AbortSignal) => fetchPage(p, signal),
     fetchText: (p: FetchPageParams, signal: AbortSignal) => fetchText(p, signal),
     headFile: (p: FetchPageParams, signal: AbortSignal) => headFile(p, signal),

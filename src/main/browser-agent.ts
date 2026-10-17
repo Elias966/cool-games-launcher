@@ -4,7 +4,7 @@ import {z} from 'zod';
 import protocol from '@shared/fara-protocol.json';
 import type {PageExtract,ExtractControl} from '@shared/page-extract';
 import type {AiService,AgentMessage,AgentTool} from './ai';
-import type {BrowserClient,BrowserContext} from './browser-client';
+import type {BrowserClient,AgentBrowserContext as BrowserContext} from './browser-client';
 import type {StoreSession,SessionToken} from './store-session';
 import {CancelledError} from '@shared/worker-protocol';
 import {isCatalogNavigation,isDownloadControl,isFileUrl} from '@shared/download-evidence';

@@ -5,7 +5,7 @@ import type { ExecCandidate } from '../workers/exec-scan';
 import type { DownloadCandidate } from '@shared/types';
 import { actionKey, isCatalogNavigation, isFileUrl } from '@shared/download-evidence';
 import type { AiService } from './ai';
-import type { BrowserClient, BrowserContext } from './browser-client';
+import type { BrowserClient, AgentBrowserContext as BrowserContext } from './browser-client';
 import type { StoreSession, SessionToken } from './store-session';
 import {BrowserAgent,BrowserActionRejectedError,type BrowserAgentAction,type BrowserRouteConstraint} from './browser-agent';
 import {ComputerAgent} from './computer-agent';

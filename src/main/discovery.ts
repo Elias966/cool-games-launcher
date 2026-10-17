@@ -1,7 +1,6 @@
 // Website discovery. Runs only while the Store is active: crawls the user's
 // sources incrementally (checkpointed). DOM extraction supplies observations;
 // the local vision model chooses games, navigation and download routes.
-import { parseSiteDate } from '@shared/site-date';
 import { canonicalUrl, hostOf, siteKey, titleKey } from '@shared/urls';
 import { textAdultSignals } from '@shared/policy';
 import { downloadEvidence } from '@shared/download-evidence';
@@ -100,9 +99,9 @@ export class Discovery {
   ) {
     this.agent = deps.agent ?? new LocalGameAgent(deps.ai, deps.browser, deps.session);
     deps.session.on('enter', (token: SessionToken) => this.start(token));
-    deps.session.on('leave', () => {
+    deps.session.on('leave', (options?: {preserveBrowser?: boolean}) => {
       if(this.changedTimer){clearTimeout(this.changedTimer);this.changedTimer=null;}
-      void deps.browser.stopLoading('discovery');
+      if (!options?.preserveBrowser) void deps.browser.stopLoading('discovery');
       this.wake?.();
     });
   }
@@ -433,15 +432,6 @@ export class Discovery {
     const { sources, catalog, session } = this.deps;
     // A site indexed before is re-checked incrementally (see staleRun below).
     const cursor: CrawlCursor = sources.cursor(source.id) ?? { pending: [source.url], visited: [], pagesDone: 0, startedAt: new Date().toISOString(), refresh: this.incremental(source) };
-    // Backfill website dates from the front/recent pages without throwing away
-    // the existing crawl or moving a page waiting for human verification.
-    const savedRecipe = sources.recipe(source.id);
-    if (savedRecipe && savedRecipe.siteDatesVersion !== 1 && !cursor.verification) {
-      const first = [source.url, ...(savedRecipe.recentPages ?? [])];
-      cursor.pending = [...first, ...cursor.pending.filter(url => !first.includes(url))];
-      cursor.visited = cursor.visited.filter(url => !first.includes(url));
-      sources.saveRecipe(source.id, { ...savedRecipe, siteDatesVersion: 1 });
-    }
     this.progress(source, 'crawling', 'Reading listing pages', cursor.pagesDone, catalog.count(source.id));
     this.deps.ai.setStatus({ phase: 'navigating', detail: tm('Indexing {name}', { name: source.name }), context: 'discovery' });
     const host = hostOf(source.url);
@@ -545,7 +535,6 @@ export class Discovery {
         // AI-confirmed games appear as soon as their cover passes the content
         // check; download routes are verified in the background right after.
         catalog.markListed(stored);
-        await this.repairSiteDates(source, stored, token);
         await this.classifyListed(stored, token);
         this.notifyCatalog(source.id);
         const secs = Math.max(1, (Date.now() - started) / 1000);
@@ -608,27 +597,6 @@ export class Discovery {
     } finally {
       if (this.activeSourceId === source.id) this.activeSourceId = null;
     }
-  }
-
-  private async repairSiteDates(source: Source, ids: number[], token: SessionToken) {
-    const { catalog, fetcher, browser, limiter, session } = this.deps;
-    const pending = catalog.datesNeedingCheck(ids);
-    let next = 0;
-    await Promise.all(Array.from({length:Math.min(4,pending.length)},async()=>{
-      while (next < pending.length) {
-        const id = pending[next++], entry = catalog.raw(id);
-        if (!entry) continue;
-        session.assertLive(token, 'website date check');
-        try {
-          await limiter.wait(siteKey(hostOf(entry.pageUrl)), this.spacing(source), token.signal);
-          let ex = fetcher ? await fetcher.fetch(entry.pageUrl, token.signal).then(r=>r.ok?r.extract:null).catch(()=>null) : null;
-          // Script dates and cookie-gated pages use an isolated browser tab.
-          if ((!ex || this.gated(ex) || !parseSiteDate(ex.published,ex.observedAt)) && browser.readUpdatePage) ex = await browser.readUpdatePage(entry.pageUrl,token.signal);
-          session.assertLive(token, 'website date result');
-          if (ex && this.samePage(ex.url,entry.pageUrl) && !this.gated(ex)) catalog.recordSiteDate(id,ex.published??null,ex.observedAt);
-        } catch (e) { if (isCancelled(e) || !session.isLive(token)) throw e; }
-      }
-    }));
   }
 
   private async classifyListed(ids: number[], token: SessionToken) {

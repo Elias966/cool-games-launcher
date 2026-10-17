@@ -4,17 +4,15 @@
 // behalf of a web page.
 import { existsSync, mkdirSync, copyFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
 import type { WebDriver } from 'selenium-webdriver';
 import { extractPage, type PageExtract } from '@shared/page-extract';
 import { downloadEvidence, isFileUrl, isHostLanding } from '@shared/download-evidence';
 import { emit, log, serve, throwIfAborted } from './rpc';
-import { humanFirefoxPage } from './firefox-session';
 
 process.title = 'cgl-browser';
 process.env.SE_OFFLINE = 'true'; // never let Selenium Manager reach the network
 
-type ContextName = 'interactive' | 'discovery' | 'updates';
+type ContextName = 'interactive' | 'discovery' | 'updates' | 'dates';
 
 interface InitParams {
   firefoxPath: string;
@@ -25,13 +23,15 @@ interface InitParams {
   doNotTrack: boolean;
   width: number;
   height: number;
+  headless?: boolean;
 }
 
 let cfg: InitParams | null = null;
 let driver: WebDriver | null = null;
 let starting: Promise<WebDriver> | null = null;
-let humanProcess: ChildProcess | null = null;
-let humanExit: Promise<void> | null = null;
+let liveHuman: { context: ContextName; handle: string; lastUrl: string } | null = null;
+let humanMonitor: ReturnType<typeof setInterval> | null = null;
+const headless = () => cfg?.headless ?? !(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 const resumeUrls = new Map<ContextName, string>();
 const windows = new Map<ContextName, string>();
 let current: ContextName | null = null;
@@ -99,7 +99,7 @@ function prepareProfile(c: InitParams) {
 }
 
 async function getDriver(): Promise<WebDriver> {
-  if (humanProcess) throw new Error('Firefox is under direct human control. Return to the launcher before resuming AI.');
+  if (liveHuman) throw new Error('Firefox is under direct human control. Return to the launcher before resuming AI.');
   if (driver) return driver;
   if (starting) return starting;
   if (!cfg) throw new Error('Browser worker not initialised');
@@ -111,8 +111,9 @@ async function getDriver(): Promise<WebDriver> {
     const firefox = require('selenium-webdriver/firefox') as typeof import('selenium-webdriver/firefox');
     const opts = new firefox.Options()
       .setBinary(c.firefoxPath)
-      .addArguments('-headless', '-profile', c.profileDir, '-no-remote')
+      .addArguments('-profile', c.profileDir, '-no-remote')
       .windowSize({ width: c.width, height: c.height });
+    if (headless()) opts.addArguments('-headless');
     opts.setPageLoadStrategy('eager');
     const service = new firefox.ServiceBuilder(c.geckodriverPath).addArguments('--allow-system-access');
     const d = await new Builder().forBrowser('firefox').setFirefoxOptions(opts).setFirefoxService(service).build();
@@ -121,6 +122,7 @@ async function getDriver(): Promise<WebDriver> {
     windows.set('interactive', await d.getWindowHandle());
     current = 'interactive';
     driver = d;
+    if (!headless()) await d.manage().window().minimize().catch(() => undefined);
     log('firefox session started');
     return d;
   })();
@@ -142,6 +144,7 @@ async function useContext(ctx: ContextName): Promise<WebDriver> {
       await d.switchTo().newWindow('window');
       handle = await d.getWindowHandle();
       await d.manage().window().setRect({ width: cfg!.width, height: cfg!.height });
+      if (!headless()) await d.manage().window().minimize().catch(() => undefined);
     }
     windows.set(ctx, handle);
     current = ctx;
@@ -359,6 +362,32 @@ async function readUpdatePage(p: { url: string }, signal: AbortSignal) {
         ex = await d.executeScript(`return (${extractPage.toString()})({mark:false,maxLinks:1000,maxControls:300})`) as PageExtract;
       }
       return ex;
+    } finally {
+      if (previous && windows.has(previous)) await useContext(previous).catch(() => undefined);
+    }
+  });
+}
+
+/** Deterministic rendering for date metadata: no model, links or AI actions. */
+async function readDatePage(p: {url: string; detail?: boolean}, signal: AbortSignal) {
+  if (!isHttp(p.url)) throw new Error('Invalid date page URL');
+  return exclusive(async () => {
+    throwIfAborted(signal);
+    const previous = current, d = await useContext('dates');
+    try {
+      // A human may just have completed a check on this exact live page.
+      if (await d.getCurrentUrl() !== p.url) {
+        await d.manage().setTimeouts({pageLoad:15000});
+        try { await d.get(p.url); }
+        catch (error) { if (!/timeout|NS_BINDING_ABORTED/i.test((error as Error).message)) throw error; }
+        finally { await d.manage().setTimeouts({pageLoad:30000}); }
+      }
+      for (let n = 0; ; n++) {
+        throwIfAborted(signal);
+        const ex = await d.executeScript(`return (${extractPage.toString()})({mark:false,fast:true,maxLinks:1000,maxControls:0})`) as PageExtract;
+        if (n >= 8 || !ex.gates.captcha && !ex.gates.blocked && (p.detail ? !!ex.published : !!ex.cards.length)) return ex;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     } finally {
       if (previous && windows.has(previous)) await useContext(previous).catch(() => undefined);
     }
@@ -669,8 +698,10 @@ async function stopLoading(p: { context: ContextName }) {
 }
 
 async function closeContext(p: { context: ContextName }) {
+  if (liveHuman) return;
   if (!driver) return;
   return exclusive(async () => {
+    if (liveHuman) return;
     const handle = windows.get(p.context);
     if (!handle) return;
     const d = driver!;
@@ -689,56 +720,98 @@ async function closeContext(p: { context: ContextName }) {
   });
 }
 
-/** Transfer the profile to ordinary Firefox, with no WebDriver or screenshot input path. */
+/** Reveal the actual page, retaining its JavaScript, forms and verification state. */
 async function beginHuman(p: { context: ContextName }) {
+  if (headless()) throw new Error('Direct browsing requires a desktop display.');
   return exclusive(async () => {
-    if (humanProcess) return { active: true };
+    if (liveHuman) return { active: true };
     const d = await useContext(p.context);
-    const url = await d.getCurrentUrl();
-    for (const [ctx, handle] of windows) {
-      await d.switchTo().window(handle);
-      const page = await d.getCurrentUrl();
-      if (isHttp(page)) resumeUrls.set(ctx, page);
-    }
-    await shutdownDriver();
-    const startedAt=Date.now();
-    // Observe the human's final selected tab without WebDriver controlling
-    // that Firefox window. The normal worker restores the longer interval.
-    writeFileSync(join(cfg!.profileDir,'user.js'),prefs(cfg!)+'\nuser_pref("browser.sessionstore.interval", 1000);\nuser_pref("browser.sessionstore.resume_from_crash", true);\n');
-    const proc = spawn(cfg!.firefoxPath, ['-no-remote', '-profile', cfg!.profileDir, isHttp(url) ? url : 'about:blank'], { stdio: 'ignore' });
-    humanProcess = proc;
-    await new Promise<void>((resolve, reject) => {
-      proc.once('spawn', resolve);
-      proc.once('error', reject);
-    }).catch((e) => { humanProcess = null; throw e; });
-    humanExit = new Promise<void>((resolve)=>proc.once('exit', async () => {
-      if (humanProcess === proc) {
-        humanProcess = null;
-        // Firefox finishes replacing its session file as its process exits.
-        await new Promise(r=>setTimeout(r,250));
-        const page=humanFirefoxPage(cfg!.profileDir,startedAt);
-        if(process.env.CGL_DEBUG)log('human return page',page? pageLocation(page):'pre-handoff bookmark');
-        if(page)resumeUrls.set(p.context,page);
-        emit('humanMode', { active: false });
-      }
-      resolve();
-    }));
+    const handle = await d.getWindowHandle();
+    await d.manage().window().maximize();
+    const firefox = d as import('selenium-webdriver/firefox').Driver;
+    try {
+      await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
+      await firefox.executeScript('window.focus();');
+    } finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context); }
+    liveHuman = { context: p.context, handle, lastUrl: await d.getCurrentUrl() };
     emit('humanMode', { active: true });
+    humanMonitor = setInterval(() => {
+      void exclusive(async () => {
+        if (!liveHuman || !driver) return;
+        try {
+          const handles = await driver.getAllWindowHandles();
+          if (handles.includes(liveHuman.handle) || handles.some(h => ![...windows.values()].includes(h))) {
+            const firefox = driver as import('selenium-webdriver/firefox').Driver;
+            try {
+              await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
+              const url = await firefox.executeScript<string>("return Services.wm.getMostRecentWindow('navigator:browser')?.gBrowser.selectedBrowser.currentURI.spec ?? ''");
+              if (liveHuman && isHttp(url)) liveHuman.lastUrl = url;
+            } catch { /* Closing the controlled window can invalidate only this target. */ }
+            finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context).catch(() => undefined); }
+            return;
+          }
+          const context = liveHuman.context;
+          if (isHttp(liveHuman.lastUrl)) resumeUrls.set(context, liveHuman.lastUrl);
+          clearHumanMonitor(); liveHuman = null; windows.delete(context); current = null;
+          if (!handles.length) { driver = null; windows.clear(); killGeckodriver(); }
+          emit('humanMode', { active: false });
+        } catch {
+          if (liveHuman && isHttp(liveHuman.lastUrl)) resumeUrls.set(liveHuman.context, liveHuman.lastUrl);
+          clearHumanMonitor(); liveHuman = null; driver = null; windows.clear(); current = null;
+          killGeckodriver(); emit('humanMode', { active: false });
+        }
+      });
+    }, 1000);
+    humanMonitor.unref();
     return { active: true };
   });
 }
+function clearHumanMonitor() {
+  if (humanMonitor) clearInterval(humanMonitor);
+  humanMonitor = null;
+}
+
+/** Find the tab the user selected before WebDriver can change selection. */
+async function selectedHumanTab(d: WebDriver, fallback: string) {
+  const firefox = d as import('selenium-webdriver/firefox').Driver;
+  let selected: number | null = null;
+  try {
+    await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
+    selected = await firefox.executeScript<number>(`return Services.wm.getMostRecentWindow('navigator:browser')?.gBrowser.selectedBrowser.browsingContext.id ?? null;`);
+  } catch { /* The window was closed; use a surviving tab below. */ }
+  finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context).catch(() => undefined); }
+  const handles = await d.getAllWindowHandles();
+  for (const handle of handles.slice(0, 100)) {
+    await d.switchTo().window(handle);
+    if (selected !== null) {
+      try {
+        await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
+        const id = await firefox.executeScript<number>('return gBrowser.selectedBrowser.browsingContext.id');
+        if (id === selected) return handle;
+      } finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context); }
+    }
+  }
+  const handle = handles.includes(fallback) ? fallback : handles[0];
+  if (!handle) throw new Error('Firefox was closed');
+  await d.switchTo().window(handle);
+  return handle;
+}
 
 async function endHuman() {
-  const proc = humanProcess;
-  if (!proc) { await humanExit; return { active: false }; }
-  // Allow one session-store interval after the user's last navigation.
-  await new Promise(r=>setTimeout(r,1100));
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => proc.kill('SIGKILL'), 6000);
-    proc.once('exit', () => { clearTimeout(timer); resolve(); });
-    proc.kill('SIGTERM');
+  if (liveHuman) return exclusive(async () => {
+    if (!liveHuman) return { active: false };
+    const context = liveHuman.context, fallback = liveHuman.handle;
+    clearHumanMonitor();
+    try {
+      if (driver) {
+        const handle = await selectedHumanTab(driver, fallback);
+        for (const [ctx, h] of windows) if (ctx !== context && h === handle) windows.delete(ctx);
+        windows.set(context, handle); current = context;
+        await driver.manage().window().minimize().catch(() => undefined);
+      }
+    } finally { liveHuman = null; emit('humanMode', { active: false }); }
+    return { active: false };
   });
-  await humanExit;
   return { active: false };
 }
 
@@ -789,6 +862,7 @@ serve({
   snapshot,
   extract,
   readUpdatePage,
+  readDatePage,
   pointer,
   inspectPoint,
   movePointer,
@@ -818,10 +892,9 @@ serve({
 });
 
 // Workers are stopped with SIGTERM, which skips 'exit' handlers unless handled.
-process.on('SIGTERM', () => { killGeckodriver(); humanProcess?.kill('SIGTERM'); process.exit(0); });
+process.on('SIGTERM', () => { clearHumanMonitor(); killGeckodriver(); process.exit(0); });
 process.on('exit', () => {
   killGeckodriver();
-  humanProcess?.kill('SIGTERM');
   void driver?.quit();
 });
 

@@ -508,7 +508,10 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       // The card is the closest ancestor (≤3 levels) that also contains an image.
       let card: Element = a;
       // Never climb into an element that holds several links: that is a list, not a card.
-      for (let d = 0; d < 3 && card.parentElement && !card.querySelector('img') && card.parentElement.querySelectorAll('a[href]').length <= 3; d++) card = card.parentElement;
+      for (let d = 0; d < 3 && card.parentElement && !card.querySelector('img') && card.parentElement.querySelectorAll('a[href]').length <= 3; d++) {
+        if (card.matches('article, li') || card.parentElement.matches('main, section, body, html, ul, ol')) break;
+        card = card.parentElement;
+      }
       const key = sig(card, 3);
       const list = groups.get(key) ?? [];
       list.push({ a: a as HTMLAnchorElement, card });
@@ -524,6 +527,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
         const href = abs(a.getAttribute('href'))!;
         // Prefer real headings, then elements whose class is exactly "title"/"name", then fuzzy matches.
         const heading =
+          a.querySelector('h1, h2, h3, h4, h5') ??
           card.querySelector('h1, h2, h3, h4, h5') ??
           card.querySelector('.title, .name, [class~="game-title"], [class~="game_title"], [itemprop="name"]') ??
           card.querySelector('[class*="title"], [class*="name"]');

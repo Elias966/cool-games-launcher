@@ -100,6 +100,18 @@ describe('AI calls', () => {
 });
 
 describe('Discovery', () => {
+  it('cancels AI without stopping a live website check during human handoff', () => {
+    const session = new StoreSession(), token = session.enter(), stopLoading = vi.fn();
+    new Discovery({ session, agent: fixtureAgent(), browser: {stopLoading} } as never);
+    session.leave({preserveBrowser:true});
+    expect(token.signal.aborted).toBe(true);
+    expect(stopLoading).not.toHaveBeenCalled();
+    const ordinary = new StoreSession(); ordinary.enter();
+    new Discovery({ session:ordinary, agent:fixtureAgent(), browser:{stopLoading} } as never);
+    ordinary.leave();
+    expect(stopLoading).toHaveBeenCalledWith('discovery');
+  });
+
   it('applies the agent decision before artwork classification', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cgl-test-'));
     const db = openDb(join(dir, 'x.db'));

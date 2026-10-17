@@ -375,7 +375,7 @@ describe('verification during mirror comparisons',()=>{
   expect(paused.resolution?.mirrors?.paused).toEqual({route:first.url,pageUrl:first.url});
   expect(paused.resolution?.mirrors?.failures).toEqual([]);
   expect(paused.resolution?.mirrors?.tested).not.toContain(first.url);
-  expect(t.deps.openDrawer).toHaveBeenLastCalledWith(expect.any(String),true);
+  expect(t.deps.openDrawer).toHaveBeenLastCalledWith(expect.any(String),true,'captcha');
   expect(t.agent.verify).not.toHaveBeenCalled();
   expect(recoverGamePage).not.toHaveBeenCalled();
   // A fresh resolver reads only the durable checkpoint, with the verified tab intact.

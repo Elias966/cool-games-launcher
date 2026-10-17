@@ -38,13 +38,13 @@ export class StoreSession extends EventEmitter {
     return this.token()!;
   }
 
-  leave() {
+  leave(options?: { preserveBrowser?: boolean }) {
     if (!this.controller) return;
     const c = this.controller;
     this.controller = null;
     this.epoch++; // anything stamped with the old epoch is now stale
     c.abort();
-    this.emit('leave');
+    this.emit('leave', options);
   }
 
   /** True while `token` belongs to the live session. */

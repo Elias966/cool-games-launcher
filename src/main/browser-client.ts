@@ -2,7 +2,8 @@
 import type { WorkerHost } from './worker-host';
 import type { PageExtract } from '@shared/page-extract';
 
-export type BrowserContext = 'interactive' | 'discovery';
+export type AgentBrowserContext = 'interactive' | 'discovery';
+export type BrowserContext = AgentBrowserContext | 'dates';
 
 export interface SnapshotResult {
   png: string;
@@ -51,6 +52,9 @@ export class BrowserClient {
   }
   readUpdatePage(url: string, signal?: AbortSignal) {
     return this.worker.call<PageExtract>('readUpdatePage', { url }, signal);
+  }
+  readDatePage(url: string, signal?: AbortSignal, detail = false) {
+    return this.worker.call<PageExtract>('readDatePage', {url, detail}, signal);
   }
   snapshot(context: BrowserContext, withMedia: boolean, signal?: AbortSignal, labels = false) {
     return this.worker.call<SnapshotResult>('snapshot', { context, withMedia, labels }, signal);

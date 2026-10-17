@@ -39,6 +39,7 @@ import { LauncherTray } from './tray';
 import { ensureLauncherEntry, gameFromArgs } from './shortcuts';
 import { writeDiagnostics } from './diagnostics';
 import { installedGameRoot } from './installed-version';
+import { SiteDates } from './site-dates';
 import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { GameIdentifier } from './game-identify';
@@ -218,16 +219,18 @@ async function main() {
   const browser = new BrowserClient(browserWorker);
   const browserView = new BrowserView(browser, ai, policy, catalogRepo, session);
   const gameAgent = new LocalGameAgent(ai, browser, session);
-  const fetcher = new PageFetcher(fetcherWorkers, browser);
+  const fetcher = new PageFetcher(fetcherWorkers, browser, paths.browserProfile);
   let updateService: UpdateService | null = null;
   let wishlistService: WishlistService | null = null;
   let libraryRef: Library | null = null;
+  let offerHumanBrowser: (context: 'interactive' | 'discovery' | 'dates') => void = () => undefined;
   const discovery = new Discovery({ agent: gameAgent, fetcher, sources: sourcesRepo, catalog: catalogRepo, settings: settingsRepo, session, ai, classification, browser, limiter, policy,
     updates: { afterDetail: (id) => updateService?.afterDetail(id) },
     wishlist: { afterDetail: (id) => wishlistService?.afterDetail(id) },
     onVerificationRequired: (sourceId, message) => {
       browserView.show('discovery');
       publish('browser:attention', { downloadId: 0, sourceId, message, requiresUser:true });
+      offerHumanBrowser('discovery');
     },
     isModelReady:()=>models.readyAgents(['analysis','browsing']),
     onVerificationResolved: (sourceId) => publish('browser:verificationResolved', { sourceId }),
@@ -238,6 +241,17 @@ async function main() {
   });
   const downloads = new DownloadManager(downloadsWorker, downloadsRepo, catalogRepo, settingsRepo, policy, browser);
   let storeRequestedActive = false;
+  let storeSort = 'popular';
+  const siteDates = new SiteDates({
+    catalog: catalogRepo, sources: sourcesRepo, fetcher, limiter,
+    classify: (id, signal) => classification.classifyEntry(id, signal),
+    changed: () => publish('catalog:changed', {policyRevision: policy.policy().revision, sourceId: null}),
+    verify: () => {
+      browserView.show('dates');
+      publish('browser:attention', {downloadId: 0, message: tm('Complete the website check so the launcher can read game addition dates.'), requiresUser: true});
+      offerHumanBrowser('dates');
+    },
+  });
   let syncSession: () => void = () => undefined;
   let shuttingDown = false;
   const WAITING_FOR_AI = new Set(['resolving', 'needs-resolution', 'needs-user', 'queued', 'active']);
@@ -245,7 +259,7 @@ async function main() {
   const aiWorkPending = () => downloadsRepo.list().some((d) => d.catalogId !== null && !d.modelAsset && !d.compatPackage &&
     (WAITING_FOR_AI.has(d.state) || (d.state === 'completed' && d.installState !== 'installed' && d.installState !== 'failed')));
   let humanBrowserActive = false;
-  let humanContext: 'interactive' | 'discovery' = 'interactive';
+  let humanContext: 'interactive' | 'discovery' | 'dates' = 'interactive';
   const restoreAfterHuman = () => {
     const wasActive = humanBrowserActive;
     humanBrowserActive = false;
@@ -254,6 +268,7 @@ async function main() {
       if(humanContext==='interactive')foreground.hold('human-download',true);
       session.enter();
       browserView.show(humanContext);
+      syncSession();
       discovery.poke();
       if (humanContext === 'interactive') {resolver.continueAfterHuman();foreground.hold('human-download',false);}
     }
@@ -278,12 +293,31 @@ async function main() {
       try { return await storeSearch.recoverPage(catalogId, token); }
       finally { browserView.show('interactive'); }
     },
-    openDrawer: (reason, requiresUser) => {
+    openDrawer: (reason, requiresUser, kind) => {
       browserView.show();
       publish('browser:attention', { downloadId: 0, message: reason, requiresUser });
+      if (kind && ['captcha','login','blocked'].includes(kind)) offerHumanBrowser('interactive');
     },
     partsSettled: (groupId) => libraryRef?.partsSettled(groupId),
   });
+  const startHumanBrowser = async (context: 'interactive' | 'discovery' | 'dates') => {
+    if (humanBrowserActive || shuttingDown) return;
+    humanContext = context;
+    humanBrowserActive = true;
+    siteDates.setActive(false);
+    session.leave({preserveBrowser:true});
+    try {
+      await browser.beginHuman(context);
+      publish('browser:humanMode', { active: true });
+    } catch (error) { restoreAfterHuman(); throw error; }
+  };
+  offerHumanBrowser = context => {
+    // Let the requesting operation save its checkpoint before cancelling AI.
+    setTimeout(() => {
+      if (!session.active || humanBrowserActive || shuttingDown) return;
+      void startHumanBrowser(context).catch(error => console.warn('[browser] human control:', (error as Error).message));
+    }, 0).unref();
+  };
   const models=new ModelManager({root:paths.models,repo:downloadsRepo,downloads,settings:settingsRepo,worker:installWorker,onSelected:async()=>{
     const active=session.active;session.leave();await ai.unload();await initInference(settingsRepo.get());
     if(active)session.enter();discovery.poke();
@@ -291,7 +325,7 @@ async function main() {
   // Load the model and compile its GPU pipelines as soon as the Store opens,
   // so the first real AI decision does not pay the cold-start cost.
   session.on('enter', () => {
-    if (storeRequestedActive && !ai.paused && models.readyAgents()) void inferenceWorker.call('warmup', { modelId: settingsRepo.get().aiAgents.analysis }).catch(() => undefined);
+    if (storeRequestedActive && storeSort !== 'new' && !ai.paused && models.readyAgents()) void inferenceWorker.call('warmup', { modelId: settingsRepo.get().aiAgents.analysis }).catch(() => undefined);
   });
   const compat = new CompatManager({ settings: settingsRepo, repo: downloadsRepo, downloads, worker: installWorker, dataDir: paths.data, pin: manifest.onDemand.find((p) => p.id === 'ge-proton')!, detectProton });
   const protonReleases = new ProtonReleases(join(paths.data, 'compat', 'releases.json'));
@@ -487,6 +521,8 @@ async function main() {
   syncSession = () => {
     if (humanBrowserActive || shuttingDown) return;
     foreground.hold('outside-store', !storeRequestedActive);
+    foreground.hold('new-date-order', storeSort === 'new');
+    siteDates.setActive(storeRequestedActive && storeSort === 'new' && !aiWorkPending());
     const want = storeRequestedActive || aiWorkPending();
     if (want && !session.active) session.enter();
     else if (!want && session.active) session.leave();
@@ -666,7 +702,8 @@ async function main() {
       requireStore();
       return storeSearch.search(query,sourceIds);
     },
-    'store:setActive': ({ active }) => {
+    'store:setActive': ({ active, sort }) => {
+      if(sort)storeSort=sort;
       storeRequestedActive = active;
       if (!active) storeSearch.cancel();
       syncSession();
@@ -677,6 +714,7 @@ async function main() {
     'catalog:list': (q) => {
       const pol = policy.policy();
       const r = catalogRepo.query(pol, q);
+      if(q.sort==='new')siteDates.prioritize(r.entries.map(e=>e.id));
       return { policyRevision: pol.revision, total: r.total, entries: r.entries, fuzzy: r.fuzzy };
     },
     // ProtonDB's public summary for a Steam game, cached for three days.
@@ -777,17 +815,7 @@ async function main() {
     },
     'browser:humanStart': async () => {
       requireStore();
-      humanContext = browserView.activeContext;
-      humanBrowserActive = true;
-      // Cancels every Store automation before releasing the Firefox profile.
-      session.leave();
-      try {
-        await browser.beginHuman(humanContext);
-        publish('browser:humanMode', { active: true });
-      } catch (e) {
-        restoreAfterHuman();
-        throw e;
-      }
+      await startHumanBrowser(browserView.activeContext);
     },
     'browser:humanFinish': async () => {
       await browser.endHuman();
@@ -1027,6 +1055,7 @@ async function main() {
       shuttingDown = true;
       storeRequestedActive = false;
       clearInterval(protonRefreshTimer);
+      siteDates.stop();
       updates.stop();
       descriptions.stop();
       resolver.shutdown();
