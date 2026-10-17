@@ -227,10 +227,10 @@ async function main() {
   const discovery = new Discovery({ agent: gameAgent, fetcher, sources: sourcesRepo, catalog: catalogRepo, settings: settingsRepo, session, ai, classification, browser, limiter, policy,
     updates: { afterDetail: (id) => updateService?.afterDetail(id) },
     wishlist: { afterDetail: (id) => wishlistService?.afterDetail(id) },
-    onVerificationRequired: (sourceId, message) => {
+    onVerificationRequired: (sourceId, message, captcha) => {
       browserView.show('discovery');
       publish('browser:attention', { downloadId: 0, sourceId, message, requiresUser:true });
-      offerHumanBrowser('discovery');
+      if (captcha) offerHumanBrowser('discovery');
     },
     isModelReady:()=>models.readyAgents(['analysis','browsing']),
     onVerificationResolved: (sourceId) => publish('browser:verificationResolved', { sourceId }),
@@ -249,7 +249,6 @@ async function main() {
     verify: () => {
       browserView.show('dates');
       publish('browser:attention', {downloadId: 0, message: tm('Complete the website check so the launcher can read game addition dates.'), requiresUser: true});
-      offerHumanBrowser('dates');
     },
   });
   let syncSession: () => void = () => undefined;
@@ -264,6 +263,7 @@ async function main() {
     const wasActive = humanBrowserActive;
     humanBrowserActive = false;
     publish('browser:humanMode', { active: false });
+    if (wasActive && humanContext === 'dates') siteDates.continueAfterHuman();
     if (wasActive && (storeRequestedActive || aiWorkPending())) {
       if(humanContext==='interactive')foreground.hold('human-download',true);
       session.enter();
@@ -296,7 +296,7 @@ async function main() {
     openDrawer: (reason, requiresUser, kind) => {
       browserView.show();
       publish('browser:attention', { downloadId: 0, message: reason, requiresUser });
-      if (kind && ['captcha','login','blocked'].includes(kind)) offerHumanBrowser('interactive');
+      if (kind === 'captcha') offerHumanBrowser('interactive');
     },
     partsSettled: (groupId) => libraryRef?.partsSettled(groupId),
   });
@@ -811,6 +811,7 @@ async function main() {
     'browser:show': () => {
       if (humanBrowserActive) { publish('browser:humanMode', { active: true }); return; }
       requireStore();
+      if (storeSort === 'new' && siteDates.needsVerification && !aiWorkPending()) { browserView.show('dates'); return; }
       return browserView.showDefault(sourcesRepo.list().find((s) => s.enabled)?.url ?? null);
     },
     'browser:humanStart': async () => {

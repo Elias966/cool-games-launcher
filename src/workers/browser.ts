@@ -37,9 +37,36 @@ const windows = new Map<ContextName, string>();
 let current: ContextName | null = null;
 let chain: Promise<unknown> = Promise.resolve();
 
-/** Serialises every WebDriver command: one session, many callers. */
+/** Native visibility does not destroy the document or its CAPTCHA session. */
+async function nativeVisibility(d: WebDriver, visible: boolean) {
+  const firefox = d as import('selenium-webdriver/firefox').Driver;
+  await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
+  try {
+    await firefox.executeScript(`
+      Services.prefs.setBoolPref('browser.tabs.loadDivertedInBackground', !arguments[0]);
+      Services.prefs.setIntPref('browser.link.open_newwindow.restriction', arguments[0] ? 2 : 0);
+      if (arguments[0]) {
+        window.docShell.treeOwner.QueryInterface(Ci.nsIBaseWindow).visibility = true;
+      } else {
+        for (const win of Services.wm.getEnumerator('navigator:browser')) {
+          win.docShell.treeOwner.QueryInterface(Ci.nsIBaseWindow).visibility = false;
+        }
+      }
+    `, visible);
+  } finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context); }
+}
+
+/** Serialises every command and keeps background work off the desktop. */
 function exclusive<T>(fn: () => Promise<T>): Promise<T> {
-  const next = chain.then(fn, fn);
+  const run = async () => {
+    try { return await fn(); }
+    finally {
+      if (driver && !liveHuman && !headless()) {
+        await nativeVisibility(driver, false).catch(error => log('Could not hide background Firefox:', (error as Error).message));
+      }
+    }
+  };
+  const next = chain.then(run, run);
   chain = next.catch(() => undefined);
   return next;
 }
@@ -53,8 +80,13 @@ function prefs(c: InitParams): string {
     'browser.startup.homepage_override.mstone': 'ignore',
     'browser.aboutwelcome.enabled': false,
     'browser.tabs.warnOnClose': false,
+    'browser.link.open_newwindow': 3,
+    'browser.link.open_newwindow.restriction': 0,
+    'browser.tabs.loadInBackground': true,
+    'browser.tabs.loadDivertedInBackground': true,
     'browser.sessionstore.resume_from_crash': false,
     'browser.startup.page': 0,
+    'browser.startup.blankWindow': false,
     'browser.sessionstore.resume_session_once': false,
     'browser.sessionstore.interval': 15000,
     'datareporting.policy.dataSubmissionEnabled': false,
@@ -117,12 +149,12 @@ async function getDriver(): Promise<WebDriver> {
     opts.setPageLoadStrategy('eager');
     const service = new firefox.ServiceBuilder(c.geckodriverPath).addArguments('--allow-system-access');
     const d = await new Builder().forBrowser('firefox').setFirefoxOptions(opts).setFirefoxService(service).build();
+    if (!headless()) await nativeVisibility(d, false);
     await d.manage().setTimeouts({ pageLoad: 30000, script: 15000, implicit: 0 });
     windows.clear();
     windows.set('interactive', await d.getWindowHandle());
     current = 'interactive';
     driver = d;
-    if (!headless()) await d.manage().window().minimize().catch(() => undefined);
     log('firefox session started');
     return d;
   })();
@@ -141,10 +173,8 @@ async function useContext(ctx: ContextName): Promise<WebDriver> {
     if (handles.length && !windows.size) {
       handle = handles[0];
     } else {
-      await d.switchTo().newWindow('window');
+      await d.switchTo().newWindow('tab');
       handle = await d.getWindowHandle();
-      await d.manage().window().setRect({ width: cfg!.width, height: cfg!.height });
-      if (!headless()) await d.manage().window().minimize().catch(() => undefined);
     }
     windows.set(ctx, handle);
     current = ctx;
@@ -727,6 +757,7 @@ async function beginHuman(p: { context: ContextName }) {
     if (liveHuman) return { active: true };
     const d = await useContext(p.context);
     const handle = await d.getWindowHandle();
+    await nativeVisibility(d, true);
     await d.manage().window().maximize();
     const firefox = d as import('selenium-webdriver/firefox').Driver;
     try {
@@ -807,7 +838,6 @@ async function endHuman() {
         const handle = await selectedHumanTab(driver, fallback);
         for (const [ctx, h] of windows) if (ctx !== context && h === handle) windows.delete(ctx);
         windows.set(context, handle); current = context;
-        await driver.manage().window().minimize().catch(() => undefined);
       }
     } finally { liveHuman = null; emit('humanMode', { active: false }); }
     return { active: false };

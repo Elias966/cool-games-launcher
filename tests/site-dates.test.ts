@@ -63,9 +63,17 @@ describe('launcher date service',()=>{
   const{catalog,sources,add}=fixture();const id=add('Gated');let solved=false;
   const fetchBackground=vi.fn(async(url:string)=>response(url,solved?'<article><time class="published" datetime="2026-10-16"></time></article>':'<h1>Verify you are human</h1><div class="cf-turnstile"></div>'));
   const verify=vi.fn(),service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn(),verify});cleanup.push(()=>service.stop());
-  service.setActive(true);await vi.waitFor(()=>expect(verify).toHaveBeenCalledTimes(1));solved=true;service.setActive(true);
+  service.setActive(true);await vi.waitFor(()=>expect(verify).toHaveBeenCalledTimes(1));
+  service.setActive(true);service.prioritize([id]);await new Promise(r=>setTimeout(r,30));expect(fetchBackground).toHaveBeenCalledTimes(1);
+  solved=true;service.continueAfterHuman();service.setActive(true);
   await vi.waitFor(()=>expect(catalog.get(id,policy)?.siteAddedAt).toBe('2026-10-16T00:00:00.000Z'));
   expect(fetchBackground.mock.calls.map(c=>c[0])).toEqual(['https://games.test/Gated','https://games.test/Gated']);
+ });
+ it('does not request human control for HTTP blocks or missing dates',async()=>{
+  const{catalog,sources,add}=fixture();add('Blocked');add('Undated');
+  const fetchBackground=vi.fn(async(url:string)=>response(url,url.endsWith('Blocked')?'<title>403 Forbidden</title>':'<article><h1>No date</h1></article>'));
+  const verify=vi.fn(),service=new SiteDates({catalog,sources,fetcher:{fetchBackground} as any,limiter:{wait:async()=>{}} as any,changed:vi.fn(),verify});cleanup.push(()=>service.stop());
+  service.setActive(true);await vi.waitFor(()=>expect(fetchBackground).toHaveBeenCalledTimes(2));expect(verify).not.toHaveBeenCalled();
  });
  it('uses a deterministic rendering tab for HTTP challenges and script dates',async()=>{
   const gated=response('https://games.test/game','<h1>Verify you are human</h1><div class="cf-turnstile"></div>');

@@ -15,6 +15,7 @@ export class SiteDates {
   private again = false;
   private fronts = new Map<number, number>();
   private retry = new Map<number, number>();
+  private waitingForHuman = false;
   private gate: {url: string; sourceId: number; entryId: number | null} | null = null;
 
   constructor(private deps: {
@@ -25,6 +26,7 @@ export class SiteDates {
   }) {}
 
   setActive(active: boolean) {
+    active = active && !this.waitingForHuman;
     this.active = active;
     if (!active) {
       this.controller?.abort();
@@ -46,6 +48,10 @@ export class SiteDates {
 
   stop() { this.setActive(false); }
 
+  get needsVerification() { return this.waitingForHuman; }
+
+  continueAfterHuman() { this.waitingForHuman = false; }
+
   private poke() {
     if (!this.active) return;
     if (this.task) { this.again = true; return; }
@@ -63,8 +69,9 @@ export class SiteDates {
   }
 
   private askForVerification(ex: PageExtract, url: string, sourceId: number, entryId: number | null) {
-    if (!this.deps.verify || !ex.gates.captcha && !ex.gates.login && !ex.gates.blocked) return false;
+    if (!this.deps.verify || !ex.gates.captcha) return false;
     this.gate = {url,sourceId,entryId};
+    this.waitingForHuman = true;
     this.setActive(false);
     this.deps.verify();
     return true;

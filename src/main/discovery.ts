@@ -90,7 +90,7 @@ export class Discovery {
       policy: PolicyService;
       agent?: LocalGameAgent;
       fetcher?: PageFetcher;
-      onVerificationRequired?: (sourceId: number, message: string) => void;
+      onVerificationRequired?: (sourceId: number, message: string, captcha: boolean) => void;
       onVerificationResolved?: (sourceId: number) => void;
       /** A game page was re-verified: installed copies compare their build with it. */
       updates?: { afterDetail(catalogId: number): void };
@@ -222,7 +222,7 @@ export class Discovery {
       });
       session.assertLive(token);
     }
-    if (restored) this.deps.onVerificationRequired?.(check.sourceId, sources.get(check.sourceId)?.statusDetail ?? 'Complete the website check.');
+    if (restored) this.deps.onVerificationRequired?.(check.sourceId, sources.get(check.sourceId)?.statusDetail ?? 'Complete the website check.', ex.gates.captcha);
     if (ex.gates.captcha || ex.gates.blocked || ex.gates.login) return false;
     this.resumeVerification(check.sourceId);
     return true;
@@ -776,10 +776,10 @@ export class Discovery {
         : 'The website refused access (blocked or rate-limited). Indexing will retry later.';
     this.progress(source, 'blocked', message, pagesDone, this.deps.catalog.count(source.id));
     if (ex.gates.blocked && !ex.gates.captcha) this.deps.limiter.backoff(hostOf(url), 10 * 60_000);
-    this.requestVerification(source.id, url, entryId);
+    this.requestVerification(source.id, url, entryId, ex.gates.captcha);
   }
 
-  private requestVerification(sourceId: number, url: string, entryId: number | null) {
+  private requestVerification(sourceId: number, url: string, entryId: number | null, captcha: boolean) {
     // The user takes over this exact Firefox window, with its current URL,
     // cookies and challenge state. Do not navigate it again until they retry.
     this.manualSourceId = sourceId;
@@ -789,7 +789,7 @@ export class Discovery {
     const cursor = this.deps.sources.cursor(sourceId) ?? { pending: [], visited: [], pagesDone: 0, startedAt: new Date().toISOString() };
     cursor.verification = { url, entryId };
     this.deps.sources.saveCursor(sourceId, cursor);
-    this.deps.onVerificationRequired?.(sourceId, this.deps.sources.get(sourceId)?.statusDetail ?? 'Complete the website check, then resume discovery.');
+    this.deps.onVerificationRequired?.(sourceId, this.deps.sources.get(sourceId)?.statusDetail ?? 'Complete the website check, then resume discovery.', captcha);
   }
 
   /** Allow automatic page verification/redirects to settle, without clicking challenges. */
