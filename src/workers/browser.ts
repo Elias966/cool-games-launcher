@@ -7,14 +7,14 @@ import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { WebDriver } from 'selenium-webdriver';
 import { extractPage, type PageExtract } from '@shared/page-extract';
-import { isFileUrl, isHostLanding } from '@shared/download-evidence';
+import { downloadEvidence, isFileUrl, isHostLanding } from '@shared/download-evidence';
 import { emit, log, serve, throwIfAborted } from './rpc';
 import { humanFirefoxPage } from './firefox-session';
 
 process.title = 'cgl-browser';
 process.env.SE_OFFLINE = 'true'; // never let Selenium Manager reach the network
 
-type ContextName = 'interactive' | 'discovery';
+type ContextName = 'interactive' | 'discovery' | 'updates';
 
 interface InitParams {
   firefoxPath: string;
@@ -336,6 +336,32 @@ async function extract(p: { context: ContextName }) {
     const ex = (await d.executeScript(`return (${extractPage.toString()})(arguments[0])`, {})) as PageExtract;
     if (process.env.CGL_DEBUG) log('observed', {context:p.context,url:pageLocation(ex.url),title:ex.title,gates:ex.gates});
     return ex;
+  });
+}
+
+/** An atomic background read in its own tab; never moves the user's browser
+ * or the indexer's tab between their navigation and extraction commands. */
+async function readUpdatePage(p: { url: string }, signal: AbortSignal) {
+  if (!isHttp(p.url)) throw new Error('Invalid game page URL');
+  return exclusive(async () => {
+    throwIfAborted(signal);
+    const previous = current;
+    const d = await useContext('updates');
+    try {
+      await d.get(p.url);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      throwIfAborted(signal);
+      let ex = await d.executeScript(`return (${extractPage.toString()})({mark:false,maxLinks:1000,maxControls:300})`) as PageExtract;
+      // Let normal verification redirects and script-generated links settle.
+      for (let n = 0; n < 8 && (ex.gates.captcha || ex.gates.blocked || !downloadEvidence(ex).length); n++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        throwIfAborted(signal);
+        ex = await d.executeScript(`return (${extractPage.toString()})({mark:false,maxLinks:1000,maxControls:300})`) as PageExtract;
+      }
+      return ex;
+    } finally {
+      if (previous && windows.has(previous)) await useContext(previous).catch(() => undefined);
+    }
   });
 }
 
@@ -762,6 +788,7 @@ serve({
   returnToPage,
   snapshot,
   extract,
+  readUpdatePage,
   pointer,
   inspectPoint,
   movePointer,

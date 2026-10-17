@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
+import { downloadEvidence } from '../src/shared/download-evidence';
 import { extractPage, type PageExtract } from '../src/shared/page-extract';
 vi.mock('electron', () => ({ app: { isPackaged:false,getAppPath:()=>process.cwd() },shell:{} }));
 import { openDb } from '../src/main/db';
@@ -43,7 +44,13 @@ describe('fastest working mirror selection',()=>{
   t.downloadWorker.call.mockImplementation(async(method,args)=>{if(method==='probe')return {isFile:true,fileName:'orbit.zip',totalBytes:1000000} as any;if(args.url.includes('broken'))throw Error('HTTP 503');if(args.url.includes('wrong-part'))return sample(50000,'orbit.part2.rar','different');return sample(args.url.includes('fast')?2000:200);});
   await t.resolve();expect(t.downloads.handoff).toHaveBeenCalledOnce();expect(t.downloads.handoff.mock.calls[0][1]).toBe('https://fast.test/orbit.zip');
   expect(t.downloadWorker.call.mock.calls.filter(c=>c[0]==='benchmarkMirror')).toHaveLength(4);
-  expect(toDownloadItem(t.downloadsRepo.get(t.d.id)!)).toMatchObject({mirrorChoice:{host:'fast.test',speedBps:2000,tested:2},state:'active'});
+  expect(toDownloadItem(t.downloadsRepo.get(t.d.id)!)).toMatchObject({mirrorChoice:{host:'fast.test',speedBps:2000,tested:4,measured:2,unavailable:2},state:'active'});
+ });
+ it('benchmarks all four working hosts and can choose the last host', async () => {
+  const t=setup(['one.test','two.test','three.test','four.test'].map(h=>candidate(h)));
+  t.downloadWorker.call.mockImplementation(async(method,args)=>method==='probe'?{isFile:true,fileName:'orbit.zip',totalBytes:1000000}:sample(args.url.includes('four.test')?9000:100));
+  await t.resolve();expect(t.downloadWorker.call.mock.calls.filter(c=>c[0]==='benchmarkMirror')).toHaveLength(4);
+  expect(t.downloadsRepo.get(t.d.id)?.url).toBe('https://four.test/orbit.zip');
  });
  it('uses the next fastest measured mirror if the winning link expires',async()=>{
   const t=setup();const original=t.downloadWorker.call.getMockImplementation()!;
@@ -434,4 +441,9 @@ it('does not attribute a retained first-host transfer to a second host after ver
  expect(samples?.map(s=>s.route)).toEqual([first.url,second.url]);
  expect(samples?.find(s=>s.route===second.url)?.url).toBe('https://cdn.test/orbit.zip');
  expect(t.downloads.adoptBrowserDownload).toHaveBeenCalledWith(t.d.id,original);
+});
+
+it('keeps third and fourth host links when the AI control observation was truncated', () => {
+ const ex=page('<a href="https://megadb.net/aaaaaaaaaaaa">Mirror A</a><a href="https://bzzhr.to/bbbbbbbbbbbb">Mirror B</a><a href="https://gofile.io/d/cccccc">Mirror C</a><a href="https://1fichier.com/?dddddddddddd">Mirror D</a>');ex.controls=ex.controls.slice(0,2);
+ expect(downloadEvidence(ex).map(c=>new URL(c.url).hostname)).toEqual(['megadb.net','bzzhr.to','gofile.io','1fichier.com']);
 });

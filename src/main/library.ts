@@ -19,6 +19,7 @@ import type { ExecCandidate } from '../workers/exec-scan';
 import { findVersion, versionLabel, fingerprintKey, type InstalledVersion } from '@shared/game-version';
 import { sameInstall } from './store-builds';
 import { installedFile } from './updates';
+import { installedGameRoot } from './installed-version';
 import { createShortcut, removeShortcuts } from './shortcuts';
 import type { CompatManager } from './compat';
 import type { DownloadManager } from './downloads';
@@ -82,30 +83,7 @@ function inside(root: string, p: string) {
   return t.startsWith(r + sep);
 }
 
-export function detectProton(): string[] {
-  const roots = [
-    join(homedir(), '.steam/root/compatibilitytools.d'),
-    join(homedir(), '.steam/steam/compatibilitytools.d'),
-    join(homedir(), '.local/share/Steam/compatibilitytools.d'),
-    join(homedir(), '.steam/steam/steamapps/common'),
-    join(homedir(), '.steam/root/steamapps/common'),
-    join(homedir(), '.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common'),
-    '/usr/share/steam/steamapps/common',
-    join(homedir(), '.local/share/Steam/steamapps/common'),
-    join(homedir(), '.var/app/com.valvesoftware.Steam/data/Steam/compatibilitytools.d'),
-    join(homedir(), '.local/share/umu/compatibilitytools'),
-    '/usr/share/steam/compatibilitytools.d',
-  ];
-  const found = new Set<string>();
-  for (const r of roots) {
-    if (!existsSync(r)) continue;
-    for (const name of readdirSync(r)) {
-      const dir = join(r, name);
-      if (existsSync(join(dir, 'proton')) && /proton/i.test(name)) found.add(dir);
-    }
-  }
-  return [...found].sort().reverse();
-}
+export { detectProton } from './proton-detect';
 
 /** Optional launch helpers on the system (Gamescope, MangoHud, GameMode). */
 export function detectTools(): { gamescope: string | null; mangohud: string | null; gamemode: string | null } {
@@ -565,7 +543,7 @@ export class Library {
   /** Downloads the newer build of an installed game. */
   startUpdate(id: number) {
     const g = this.games.get(id);
-    if (!g?.catalogId || g.store || !g.managed || !g.installDir) throw new Error('Only games the launcher installed from a website can be updated');
+    if (!g?.catalogId || g.store || !g.installDir) throw new Error('Link this local game to a website page before updating');
     const current = this.updateView(g);
     if (current && UPDATE_BUSY.has(current.state)) return;
     const entry = this.catalog.raw(g.catalogId);
@@ -667,14 +645,16 @@ export class Library {
     if (g.store) throw new Error('Use the linked store to update this game.');
     if (!existsSync(prepared.executable)) throw new Error('The prepared update is missing; download it again');
     this.setUpdate(id, { state: 'preparing', detail: tm('Moving your saves to the new version…') });
-    if (this.settings.get().saveBackups) await this.backupSaves(id, 'before updating');
+    // Updating always takes a recovery copy, even if periodic backups are off.
+    await this.backupSaves(id, 'before updating', true);
     let carried = 0;
     if (g.installDir && g.executable && existsSync(g.installDir)) {
       const r = await this.worker.call<{ copied: string[]; skipped: string[] }>('carryOver', {
-        fromRoot: g.installDir, fromExe: g.executable, toRoot: prepared.installDir, toExe: prepared.executable,
+        fromRoot: installedGameRoot(g), fromExe: g.executable, toRoot: prepared.installDir, toExe: prepared.executable,
         manifest: manifestFor(g.installDir), since: Date.parse(g.addedAt),
       });
       carried = r.copied.length;
+      if (r.skipped.some(path => /(?:^|\/)(?:saves?|saved|savegames?|userdata|profiles?)(?:\/|$)|\.(?:sav|save|sgd)$/i.test(path))) throw new Error('Some saves could not be preserved. The old version is still installed.');
       if (carried) console.log(`[updates] ${g.title}: carried ${carried} file(s) into the new version`, r.copied.slice(0, 20));
     }
     // Only one previous build is kept.
@@ -682,7 +662,7 @@ export class Library {
     const d = this.downloadsRepo.get(prepared.downloadId);
     const entry = g.catalogId ? this.catalog.raw(g.catalogId) : null;
     const now = new Date().toISOString();
-    const previous: PreviousBuild = { installDir: g.installDir, executable: g.executable, kind: g.kind, runner: g.runner, candidates: g.candidates, version: g.installedVersion, replacedAt: now };
+    const previous: PreviousBuild = { installDir: g.installDir, executable: g.executable, kind: g.kind, runner: g.runner, candidates: g.candidates, version: g.installedVersion, replacedAt: now, managed: g.managed };
     const installedVersion: InstalledVersion = { ...(entry?.version ?? { version: null, updated: null, files: [], sizes: [], at: now }), file: installedFile(d) };
     const runner = prepared.kind === g.kind ? g.runner : this.defaultRunner(prepared.kind);
     const prefixDir = g.prefixDir ?? (prepared.kind === 'windows' ? join(paths.prefixes, `game-${g.id}`) : null);
@@ -690,7 +670,7 @@ export class Library {
     const title = retitle(g.title, g.installedVersion?.version, installedVersion.version);
     this.games.update(id, {
       title,
-      installDir: prepared.installDir, executable: prepared.executable, kind: prepared.kind, runner, prefixDir,
+      installDir: prepared.installDir, executable: prepared.executable, kind: prepared.kind, runner, prefixDir, managed: true,
       candidates: prepared.candidates, status: 'installed', downloadId: prepared.downloadId, previous, installedVersion,
       update: { ...(g.update ?? { from: versionLabel(g.installedVersion), reason: 'updated', detectedAt: now, key: entry?.version ? fingerprintKey(entry.version) : now }), state: 'updated', to, carried, detail: null, prepared: null },
       updateCheckedAt: now,
@@ -710,7 +690,7 @@ export class Library {
   }
 
   /** Copies the game's saves (prefix user folders, files it wrote in its folder); null when there is nothing to save. */
-  async backupSaves(id: number, reason: string): Promise<SaveBackup | null> {
+  async backupSaves(id: number, reason: string, strict = false): Promise<SaveBackup | null> {
     const g = this.games.get(id);
     if (!g) return null;
     const at = new Date().toISOString();
@@ -719,7 +699,7 @@ export class Library {
     try {
       const r = await this.worker.call<{ files: number; bytes: number }>('backupSaves', {
         out,
-        gameRoot: g.managed ? g.installDir : null,
+        gameRoot: installedGameRoot(g),
         manifest: g.installDir ? manifestFor(g.installDir) : null,
         since: Date.parse(g.addedAt),
         prefix: g.prefixDir,
@@ -729,6 +709,7 @@ export class Library {
       await this.worker.call('pruneBackups', { dir: this.backupDir(id), keep: this.settings.get().saveBackupsKeep });
       return { stamp, at, reason, files: r.files, bytes: r.bytes, version: versionLabel(g.installedVersion) };
     } catch (e) {
+      if (strict) throw e;
       console.warn('[saves] backup failed', g.title, (e as Error).message);
       return null;
     }
@@ -753,7 +734,7 @@ export class Library {
     const from = join(this.backupDir(id), stamp);
     if (!existsSync(join(from, 'backup.json'))) throw new Error('That backup no longer exists');
     await this.backupSaves(id, 'before restoring an older backup');
-    const r = await this.worker.call<{ files: number }>('restoreSaves', { from, gameRoot: g.managed ? g.installDir : null, prefix: g.prefixDir });
+    const r = await this.worker.call<{ files: number }>('restoreSaves', { from, gameRoot: installedGameRoot(g), prefix: g.prefixDir });
     toast('success', tm('Restored {n} save files for {title}.', { n: r.files, title: g.title }));
     return r;
   }
@@ -789,9 +770,9 @@ export class Library {
     const p = g?.previous;
     if (!g || !p?.installDir || !p.executable || !existsSync(p.executable)) throw new Error('The previous version is no longer available');
     if (this.runningIds.has(id)) throw new Error('Close the game before rolling back');
-    if (this.settings.get().saveBackups) await this.backupSaves(id, 'before rolling back');
+    await this.backupSaves(id, 'before rolling back', true);
     if (g.installDir && g.executable && existsSync(g.installDir)) {
-      await this.worker.call('carryOver', { fromRoot: g.installDir, fromExe: g.executable, toRoot: p.installDir, toExe: p.executable, manifest: manifestFor(g.installDir), since: null });
+      await this.worker.call('carryOver', { fromRoot: installedGameRoot(g), fromExe: g.executable, toRoot: installedGameRoot(p), toExe: p.executable, manifest: manifestFor(g.installDir), since: null });
     }
     const current = g.installDir;
     const now = new Date().toISOString();
@@ -801,7 +782,7 @@ export class Library {
     this.games.update(id, {
       title: retitle(g.title, g.installedVersion?.version, p.version?.version),
       installDir: p.installDir, executable: p.executable, kind: p.kind, runner: p.runner, candidates: p.candidates,
-      installedVersion: p.version, previous: null, status: 'installed',
+      installedVersion: p.version, previous: null, status: 'installed', managed: p.managed ?? g.managed,
       update: { state: 'ignored', from: versionLabel(p.version), to: versionLabel(g.installedVersion), reason: 'rolled back', detectedAt: now, key },
     });
     if (current && current !== p.installDir) await this.removeBuild(current);

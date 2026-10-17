@@ -5,7 +5,6 @@
 // frame is a handful of uniform writes. It never carries information that is
 // not also in the HTML interface.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { TabId } from '@shared/types';
@@ -450,11 +449,11 @@ function Comets({ pulse }: { pulse: React.RefObject<Pulse> }) {
 }
 
 function Structure({ tab, low, animate, pulse, groupRef }: { tab: TabId; low: boolean; animate: boolean; pulse: React.RefObject<Pulse>; groupRef: React.RefObject<THREE.Group | null> }) {
-  useFrame((_, dt) => {
+  useFrame(() => {
     const target = CAMERA_TARGETS[tab].core;
     const g = groupRef.current;
     if (!g) return;
-    const k = animate ? Math.min(1, dt * 1.2) : 1;
+    const k = animate ? Math.min(1, pulse.current.dt * 1.2) : 1;
     g.position.x += (target[0] - g.position.x) * k;
     g.position.y += (target[1] - g.position.y) * k;
     g.position.z += (target[2] - g.position.z) * k;
@@ -476,13 +475,14 @@ function Structure({ tab, low, animate, pulse, groupRef }: { tab: TabId; low: bo
 function SceneWatch({ tab }: { tab: TabId }) {
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
+  const invalidate = useThree((s) => s.invalidate);
   const report = (event: 'context-lost' | 'context-restored' | 'resize' | 'stall' | 'tab', detail: string) => void api.invoke('app:sceneEvent', { event, detail }).catch(() => undefined);
   const frames = useRef<number[]>([]);
   const lastStall = useRef(0);
   useEffect(() => {
     const canvas = gl.domElement;
     const lost = (event: Event) => { event.preventDefault(); canvas.style.opacity = '0'; report('context-lost', 'the GPU dropped the background'); };
-    const restored = () => { canvas.style.opacity = '1'; gl.resetState(); report('context-restored', ''); };
+    const restored = () => { gl.resetState(); invalidate(); report('context-restored', ''); };
     canvas.addEventListener('webglcontextlost', lost);
     canvas.addEventListener('webglcontextrestored', restored);
     return () => { canvas.removeEventListener('webglcontextlost', lost); canvas.removeEventListener('webglcontextrestored', restored); };
@@ -522,18 +522,18 @@ function Invalidator({ deps }: { deps: unknown[] }) {
   return null;
 }
 
-/**
- * Cinematic finish: bloom makes the energy actually glow. Skipped in low-power
- * mode. Always the same effects: switching effects on and off changes the
- * picture's brightness (the film grain alone lightens it a lot), which read as
- * a white layer flickering.
- */
-function Effects() {
-  return (
-    <EffectComposer multisampling={0}>
-      <Bloom mipmapBlur resolutionScale={0.5} luminanceThreshold={0.25} luminanceSmoothing={0.3} intensity={0.85} radius={0.65} />
-    </EffectComposer>
-  );
+/** Render directly into the preserved canvas. The bloom composer owned a
+ * separate offscreen buffer that could clear during resize/restoration and
+ * leave a black frame behind the UI. Emissive/additive scene shaders already
+ * provide the glow without that buffer or its extra full-screen passes. */
+function StableRender() {
+  useFrame(({gl, scene, camera, size}) => {
+    if (!size.width || !size.height || gl.getContext().isContextLost()) return;
+    gl.setRenderTarget(null);
+    gl.render(scene, camera);
+    gl.domElement.style.opacity = '1';
+  }, 1);
+  return null;
 }
 
 /** Keep one demand loop for the life of the canvas. Pause invalidations while
@@ -567,7 +567,7 @@ const DPR = 0.85;
 export const OrbitalScene = memo(function OrbitalScene(props: SceneProps) {
   const { tab, activity, flow, animate, low, visible } = props;
   const camera = useMemo(() => ({ fov: 46, near: 0.1, far: 160, position: CAMERA_TARGETS.store.pos }), []);
-  const renderer = useMemo(() => ({ antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' as const, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }), []);
+  const renderer = useMemo(() => ({ antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' as const, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }), []);
   const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0, time: 0, dt: 0 });
   const structure = useRef<THREE.Group | null>(null);
   return (
@@ -593,7 +593,7 @@ export const OrbitalScene = memo(function OrbitalScene(props: SceneProps) {
         <Rig tab={tab} animate={animate} pulse={pulse} />
         <Invalidator deps={[tab, low, visible]} />
         <SceneWatch tab={tab} />
-        {!low && <Effects />}
+        <StableRender />
       </Canvas>
     </div>
   );

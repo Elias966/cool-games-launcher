@@ -28,6 +28,7 @@ import type { MirrorSample } from '../workers/mirror-probe';
 import { formatSpeed } from '@shared/format';
 import { unavailableHostReason } from '@shared/download-host';
 import { downloadPageKey, isGameBookmark, isSiteBrowseUrl } from '@shared/download-page';
+import { pageFingerprint } from './updates';
 
 const MAX_STEPS = 24;
 /** Optional-payment pages ("pay what you want") offer a free path; only a required payment pauses. */
@@ -358,6 +359,7 @@ export class Resolver {
           this.trial.comparison.sourceScrollY = ex.viewport.scrollY;
         }
         const offered = mirrorsForPart(mirrorRoutes([...downloadEvidence(ex, Number.MAX_SAFE_INTEGER), ...entry.candidates, ...(checkpoint.mirrorCandidates ?? []), ...(!checkpoint.mirrors?.selected && !checkpoint.mirrors?.finished ? checkpoint.mirrors?.routes ?? [] : [])]), checkpoint.partName ?? d.fileName, d.partIndex);
+        if (!this.trial && offered.length) this.deps.catalog.setVersion(entry.id, pageFingerprint(ex, downloadEvidence(ex, Number.MAX_SAFE_INTEGER), entry.title));
         if (!this.trial && offered.length > 1) {
           try { await this.compareMirrors(id, token, ex, offered, checkpoint); return; }
           catch (error) {
@@ -546,7 +548,7 @@ export class Resolver {
           if (!await this.handoffUrl(id, winner.url, winner.referer, token, winner.fileName ?? winner.nameHint, winner)) { comparison.failures.push({ route: winner.route, reason: 'The measured link expired or changed before handoff.' }); continue; }
           }
           comparison.finished = true;
-          comparison.selected = { host: hostOf(winner.url)||hostOf(winner.route), speedBps: winner.speedBps, tested: comparison.samples.length };
+          comparison.selected = { host: hostOf(winner.url)||hostOf(winner.route), speedBps: winner.speedBps, tested: comparison.tested.length, measured: comparison.samples.length, unavailable: comparison.failures.length };
           persist();
           await this.cancelBrowserAlternatives(comparison,winner.browserDownload?.target);
           console.log(`[resolver] selected fastest measured mirror ${comparison.selected.host}: ${formatSpeed(winner.speedBps)} (${comparison.samples.length} measured mirrors)`);

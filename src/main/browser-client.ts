@@ -49,6 +49,9 @@ export class BrowserClient {
   extract(context: BrowserContext, signal?: AbortSignal) {
     return this.worker.call<PageExtract>('extract', { context }, signal);
   }
+  readUpdatePage(url: string, signal?: AbortSignal) {
+    return this.worker.call<PageExtract>('readUpdatePage', { url }, signal);
+  }
   snapshot(context: BrowserContext, withMedia: boolean, signal?: AbortSignal, labels = false) {
     return this.worker.call<SnapshotResult>('snapshot', { context, withMedia, labels }, signal);
   }

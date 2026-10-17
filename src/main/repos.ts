@@ -12,6 +12,7 @@ import type { SiteRecipe } from '@shared/site-recipe';
 import { compareVersions, findVersion, type InstalledVersion, type VersionFingerprint } from '@shared/game-version';
 import { popularScore, trendingScore, usefulTag, type PopularitySignals, type RankKind } from '@shared/popularity';
 import { titleSimilarity } from '@shared/fuzzy';
+import { sameGame } from './descriptions';
 import { DEFAULT_LAUNCH, type LaunchOptions, type SteamMedia } from '@shared/types';
 import type {
   CatalogEntry,
@@ -546,8 +547,9 @@ export class CatalogRepo {
     for (const id of ids) this.st.get("UPDATE catalog SET download_status = 'listed' WHERE id = ? AND download_status = 'pending'").run(id);
   }
 
-  setVersion(id: number, version: VersionFingerprint) {
-    this.st.get('UPDATE catalog SET version_json = ? WHERE id = ?').run(JSON.stringify(version), id);
+  setVersion(id: number, version: VersionFingerprint, candidates?: DownloadCandidate[]) {
+    if (candidates) this.st.get('UPDATE catalog SET version_json = ?, candidates_json = ? WHERE id = ?').run(JSON.stringify(version), JSON.stringify(candidates), id);
+    else this.st.get('UPDATE catalog SET version_json = ? WHERE id = ?').run(JSON.stringify(version), id);
   }
 
   /** A verified replacement for a missing game page; listing/indexing stays unchanged. */
@@ -561,6 +563,13 @@ export class CatalogRepo {
   /** Available games, most popular first, for description repair. */
   idsNeedingDescription(limit: number): number[] {
     return (this.db.prepare(`SELECT id FROM catalog WHERE download_status = 'available' ORDER BY (tags_json LIKE '%"top"%' OR tags_json LIKE '%"popular"%') DESC, discovered_at DESC, id DESC LIMIT ?`).all(limit) as Array<{ id: number }>).map((r) => r.id);
+  }
+
+  /** Only a unique exact identity is safe to associate with an imported copy. */
+  matchInstalled(title: string, appid?: number | null): number | null {
+    const rows = this.db.prepare("SELECT c.id, c.title, c.steam_json FROM catalog c JOIN sources s ON s.id = c.source_id WHERE s.enabled = 1 AND c.download_status = 'available'").all() as Array<{ id: number; title: string; steam_json: string | null }>;
+    const matches = rows.filter(r => appid && json<SteamMedia | null>(r.steam_json, null)?.appid === appid || sameGame(r.title, title));
+    return matches.length === 1 ? matches[0].id : null;
   }
 
   /** Re-verify these game pages (their site says they changed); they stay listed meanwhile. */
@@ -1199,6 +1208,7 @@ interface GameRow {
 
 /** The build an update replaced, kept until the new one has been played. */
 export interface PreviousBuild {
+  managed?: boolean;
   installDir: string | null;
   executable: string | null;
   kind: 'linux' | 'windows';
@@ -1312,9 +1322,12 @@ export class GamesRepo {
     return rows.map((r) => this.map(r));
   }
 
-  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images' | 'namedByUser' | 'store' | 'storeId' | 'storeBuild'>>) {
+  update(id: number, patch: Partial<Pick<GameRecord, 'title' | 'executable' | 'args' | 'runner' | 'prefixDir' | 'favorite' | 'status' | 'candidates' | 'kind' | 'installDir' | 'artworkFile' | 'installedVersion' | 'update' | 'previous' | 'updateCheckedAt' | 'downloadId' | 'archiveKept' | 'launch' | 'redistDone' | 'art' | 'images' | 'namedByUser' | 'store' | 'storeId' | 'storeBuild' | 'catalogId' | 'sourceHost' | 'managed'>>) {
     const cols: Record<string, string> = {
       title: 'title',
+      catalogId: 'catalog_id',
+      sourceHost: 'source_host',
+      managed: 'managed',
       executable: 'executable',
       args: 'args',
       runner: 'runner',

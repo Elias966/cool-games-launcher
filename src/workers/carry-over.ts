@@ -13,6 +13,14 @@ const MAX_FILES = 200_000;
 const MAX_FILE_BYTES = 2 * 1024 ** 3;
 // Never let the old build's programs overwrite the new build's.
 const PROGRAM = /\.(exe|dll|so(\.\d+)*|msi|x86_64|x86|appimage|pck|pak|bat|sh)$/i;
+// Imported saves often predate the day the folder was added to the launcher.
+// Their identity, rather than import time, establishes that they are user data.
+const SAVE = /(?:^|\/)(?:saves?|savegames?|saved|savedata|userdata|user_data|profiles?|settings|config)(?:\/|$)|(?:^|\/)(?:save|progress|profile|slot|autosave|quicksave|game_state)[^/]*\.(?:dat|bin|json|db|sqlite)$|\.(?:sav|save|sgd|cfg|ini|prefs)$/i;
+const isPlayerFile = (rel: string, size: number, mtime: number, manifest: Manifest | null, since?: number | null) => {
+  if (!PROGRAM.test(rel) && SAVE.test(rel)) return true;
+  const known = manifest?.[rel];
+  return manifest ? !known || known[0] !== size || Math.abs(known[1] - mtime) > 2000 : !!since && mtime > since + 2000;
+};
 
 export function walk(root: string, onFile: (rel: string, size: number, mtimeMs: number) => void) {
   const stack = [''];
@@ -60,11 +68,9 @@ export function playerFiles(root: string, manifestPath: string | null | undefine
   if (manifestPath && existsSync(manifestPath)) {
     try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest; } catch { manifest = null; }
   }
-  if (!manifest && !since) return [];
   const out: Array<{ rel: string; size: number }> = [];
   walk(root, (rel, size, mtime) => {
-    const known = manifest?.[rel];
-    const players = manifest ? !known || known[0] !== size || Math.abs(known[1] - mtime) > 2000 : mtime > since! + 2000;
+    const players = isPlayerFile(rel, size, mtime, manifest, since);
     if (players && !PROGRAM.test(rel)) out.push({ rel, size });
   });
   return out;
@@ -76,21 +82,28 @@ export function carryOver(p: CarryParams): { copied: string[]; skipped: string[]
   if (p.manifest && existsSync(p.manifest)) {
     try { manifest = JSON.parse(readFileSync(p.manifest, 'utf8')) as Manifest; } catch { manifest = null; }
   }
-  if (!manifest && !p.since) return { copied: [], skipped: [] };
   const map = rebaser(relative(p.fromRoot, p.fromExe).split(sep).join('/'), relative(p.toRoot, p.toExe).split(sep).join('/'));
   const copied: string[] = [];
   const skipped: string[] = [];
   walk(p.fromRoot, (rel, size, mtime) => {
-    const known = manifest?.[rel];
-    const players = manifest ? !known || known[0] !== size || Math.abs(known[1] - mtime) > 2000 : mtime > p.since! + 2000;
+    const players = isPlayerFile(rel, size, mtime, manifest, p.since);
     if (!players) return;
     const target = join(p.toRoot, map(rel));
     if (!within(p.toRoot, target) || size > MAX_FILE_BYTES || (PROGRAM.test(rel) && existsSync(target))) { skipped.push(rel); return; }
     try {
+      // An archive may have planted a symlink in a save's destination path.
+      // Never follow it outside the staged build or overwrite unrelated files.
+      for (let path = target; within(p.toRoot, path); path = dirname(path)) {
+        if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error('Symbolic link in save destination');
+      }
       mkdirSync(dirname(target), { recursive: true });
       copyFileSync(join(p.fromRoot, rel), target);
       copied.push(map(rel));
-    } catch { skipped.push(rel); }
+    } catch (e) {
+      // Keep the original installation selected. A silently skipped save is
+      // worse than a failed update that can be retried.
+      throw new Error(`Could not preserve ${rel}: ${(e as Error).message}`);
+    }
   });
   return { copied, skipped };
 }

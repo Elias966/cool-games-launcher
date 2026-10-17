@@ -13,6 +13,27 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
+## What's new in 0.2.20
+
+- **All download mirrors**: includes host links outside the AI's limited control
+  list, compares every observed matching host, and reports attempted hosts plus
+  unavailable/different files. Multipart downloads retain their separate parts.
+- **Imported local game updates**: uniquely matched imports retain their indexed
+  game URL. Checks read that exact page in a hidden Firefox tab, preserving the
+  visible browser and its scroll. Known builds are compared; unknown installed
+  versions offer a clearly labelled manual refresh and never auto-update.
+- **Save protection**: website updates back up saves, carry older imported save
+  folders into the new build, and retain the game's prefix and previous build.
+  Unreal imports from Binaries/Win64 include the project's Saved folder. A failed
+  save copy leaves the old installation active.
+- **Stable 3D rendering**: direct rendering removes the bloom framebuffer that
+  could clear during graphics/window transitions; context restoration waits for
+  a rendered frame before displaying the canvas again.
+- **Merging and Steam Proton**: repeated merge clicks share one operation; an
+  existing Epic installation is reused. Proton detection follows Steam's extra
+  libraries and both Flatpak layouts, deduplicates paths, and offers a refresh.
+  Steam Proton builds are used directly from their installed folders.
+
 ## What's new in 0.2.19
 
 - **Fastest website mirror**: the local AI selects the game's playable package, then
@@ -367,11 +388,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.19-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.20-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.19-x86_64.AppImage
+./Cool-Games-Launcher-0.2.20-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
+import { symlinkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDb } from '../src/main/db';
 import { CatalogRepo, DownloadsRepo, GamesRepo, SettingsRepo, SourcesRepo, defaultSettings } from '../src/main/repos';
 import { UpdateService } from '../src/main/updates';
 import { carryOver, snapshotBuild } from '../src/workers/carry-over';
+import { installedGameRoot, localInstalledVersion } from '../src/main/installed-version';
 import { matchExecutable } from '../src/main/library';
 import type { VersionFingerprint } from '@shared/game-version';
 
@@ -37,6 +38,17 @@ describe('save carry-over', () => {
     expect(existsSync(join(newB, 'Orbit v1.2'))).toBe(false);
   });
 
+  it('preserves imported saves older than their import date, and rejects symlink destinations', () => {
+    const dir=tmp(),oldB=join(dir,'old'),newB=join(dir,'new'),outside=join(dir,'outside');
+    put(oldB,'game.exe');put(oldB,'Saved/SaveGames/slot.sav','irreplaceable progress');
+    put(newB,'game.exe','new program');mkdirSync(outside);
+    const ancient=new Date('2020-01-01');utimesSync(join(oldB,'Saved/SaveGames/slot.sav'),ancient,ancient);
+    let result=carryOver({fromRoot:oldB,fromExe:join(oldB,'game.exe'),toRoot:newB,toExe:join(newB,'game.exe'),since:Date.now()});
+    expect(result.copied).toContain('Saved/SaveGames/slot.sav');expect(readFileSync(join(newB,'Saved/SaveGames/slot.sav'),'utf8')).toBe('irreplaceable progress');
+    rmSync(join(newB,'Saved'),{recursive:true});symlinkSync(outside,join(newB,'Saved'));
+    expect(()=>carryOver({fromRoot:oldB,fromExe:join(oldB,'game.exe'),toRoot:newB,toExe:join(newB,'game.exe'),since:Date.now()})).toThrow(/Could not preserve/);
+    expect(existsSync(join(outside,'SaveGames/slot.sav'))).toBe(false);
+  });
   it('never lets an old program overwrite the new one', () => {
     const dir = tmp(), oldB = join(dir, 'old'), newB = join(dir, 'new');
     put(oldB, 'game.exe', 'v1');
@@ -112,15 +124,15 @@ describe('UpdateService', () => {
     const svc = new UpdateService({ games: r.games, catalog: r.catalog, sources: r.sources, downloads: r.downloads, settings: r.settings, limiter: { wait: async () => {} } as never, fetcher: null, startUpdate, isRunning: () => false, broadcast: vi.fn() });
     return { ...r, svc, game: game.id, startUpdate };
   }
-  it('takes the first observation as the baseline for games installed before update tracking', () => {
+  it('does not pretend the current website build is installed when local metadata is unknown', () => {
     const { svc, games, game } = service();
-    svc.evaluate(game, fp({ version: '1.2' }));
-    expect(games.get(game)?.installedVersion?.version).toBe('1.2');
-    expect(games.get(game)?.update).toBeNull();
+    svc.evaluate(game, fp({version:'1.2'}));
+    expect(games.get(game)?.installedVersion?.version).toBeNull();
+    expect(games.get(game)?.update).toMatchObject({state:'available',unverified:true});
   });
   it('announces a newer build once, and not again after it is skipped', () => {
     const { svc, games, game } = service();
-    svc.evaluate(game, fp({ version: '1.2' }));
+    games.update(game, {installedVersion: fp({version:'1.2'})});
     svc.evaluate(game, fp({ version: '1.3' }));
     expect(games.get(game)?.update).toMatchObject({ state: 'available', from: 'v1.2', to: 'v1.3' });
     games.update(game, { update: { ...games.get(game)!.update!, state: 'ignored' } });
@@ -139,16 +151,39 @@ describe('UpdateService', () => {
   });
   it('leaves store-linked copies out of website update checks and announcements', () => {
     const { svc, games, game, catalog } = service();
-    svc.evaluate(game, fp({ version: '1.2' }));
+    games.update(game, {installedVersion: fp({version:'1.2'})});
     games.update(game, { store: 'gog', storeId: '123' });
     catalog.setVersion(games.get(game)!.catalogId!, fp({ version: '2.0' }));
     svc.afterDetail(games.get(game)!.catalogId!);
     expect(svc.checkNow()).toBe(0); expect(games.get(game)?.update).toBeNull();
   });
+  it('links an imported game to its unique saved page and checks the rendered page without searching', async () => {
+    const r = service();
+    r.catalog.setDetail(r.games.get(r.game)!.catalogId!,{candidates:[{url:'https://gofile.io/d/abcdef',label:'Download',fileName:null,platform:null,sizeText:null}]});
+    r.games.update(r.game, {managed:false,catalogId:null,installedVersion:fp({version:'1.0'})});
+    const readPage = vi.fn(async (url:string) => ({url,title:'Orbit v2.0',meta:{},text:'',game:null,links:[],fileLinks:[],controls:[{i:0,text:'Download',href:'https://gofile.io/d/abcdef',inContent:true}],gates:{}}));
+    const svc = new UpdateService({games:r.games,catalog:r.catalog,sources:r.sources,downloads:r.downloads,settings:r.settings,limiter:{wait:async()=>{}} as never,fetcher:null,readPage:readPage as never,startUpdate:r.startUpdate,isRunning:()=>false,broadcast:vi.fn()});
+    const before = r.catalog.raw(r.games.get(r.game)!.catalogId ?? r.catalog.matchInstalled('Orbit')!)!;
+    expect(svc.checkNow()).toBe(1); await svc.checkDue();
+    expect(readPage).toHaveBeenCalledWith('https://games.test/orbit',expect.any(AbortSignal));
+    expect(r.games.get(r.game)).toMatchObject({catalogId:expect.any(Number),managed:false,update:{state:'available',from:'v1.0',to:'v2.0',unverified:false}});
+    expect(r.catalog.raw(r.games.get(r.game)!.catalogId!)?.pageUrl).toBe(before.pageUrl);
+    expect(r.catalog.raw(r.games.get(r.game)!.catalogId!)?.detailFetchedAt).toBe(before.detailFetchedAt);
+  });
+  it('does not automatically replace an imported game with an unknown version', () => {
+    const {svc,games,game,startUpdate}=service('auto');svc.evaluate(game,fp({version:'2.0'}));
+    expect(games.get(game)?.update?.unverified).toBe(true);expect(startUpdate).not.toHaveBeenCalled();
+  });
   it('starts the update by itself in automatic mode', () => {
-    const { svc, game, startUpdate } = service('auto');
-    svc.evaluate(game, fp({ version: '1.2' }));
+    const { svc, games, game, startUpdate } = service('auto');
+    games.update(game, {installedVersion: fp({version:'1.2'})});
     svc.evaluate(game, fp({ version: '2.0' }));
     expect(startUpdate).toHaveBeenCalledWith(game);
   });
+});
+
+it('finds the Saved folder and project version when an Unreal executable was imported from Binaries/Win64', () => {
+ const dir=tmp();put(dir,'Bodycam/Binaries/Win64/game.exe');put(dir,'Bodycam/Saved/SaveGames/slot.sav','progress');put(dir,'Bodycam/Config/DefaultGame.ini','[ProjectSettings]\nProjectVersion=1.2.3');
+ const game={title:'Bodycam',installDir:join(dir,'Bodycam/Binaries/Win64'),executable:join(dir,'Bodycam/Binaries/Win64/game.exe'),addedAt:new Date().toISOString()} as any;
+ expect(installedGameRoot(game)).toBe(join(dir,'Bodycam'));expect(localInstalledVersion(game,null).version).toBe('1.2.3');
 });

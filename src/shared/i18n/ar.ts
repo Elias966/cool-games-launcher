@@ -1,6 +1,13 @@
 // Arabic interface texts, keyed by the English text they replace (see i18n.ts).
 // Placeholders such as {n} must stay as they are.
 export const ar: Record<string, string> = {
+  '{n} unavailable or different files': '{n} مضيفين غير متاحين أو بملفات مختلفة',
+  'Build available': 'نسخة متاحة',
+  'Website build available': 'نسخة متاحة من الموقع',
+  'Installed version unknown. The website build is available to install; a newer version could not be confirmed.': 'إصدار النسخة المثبتة غير معروف. نسخة الموقع متاحة للتثبيت، لكن تعذّر تأكيد أنها أحدث.',
+  'Website build available for {title}. Installed version unknown; review it in the Library.': 'نسخة الموقع متاحة للعبة {title}. إصدار النسخة المثبتة غير معروف؛ راجعها في المكتبة.',
+  'Could not check {title}. Open its saved website page in the Store browser to complete any verification, then check again.': 'تعذّر فحص {title}. افتح صفحة اللعبة المحفوظة في متصفح المتجر لإكمال أي تحقق، ثم أعد الفحص.',
+  'This filters available releases. Choose the default runner from Installed versions above. Steam builds are used in place without copying.': 'هذا يرشّح الإصدارات المتاحة. اختر مشغّل الألعاب الافتراضي من الإصدارات المثبتة أعلاه. تُستخدم نسخ Steam مباشرة دون نسخ الملفات.',
   'Testing download mirror {n} of {total}: {host}': 'اختبار مرآة التنزيل {n} من {total}: {host}',
   'Testing download speed from {host}': 'اختبار سرعة التنزيل من {host}',
   'Fastest tested host: {host} · {speed} ({n} mirrors)': 'أسرع مضيف تم اختباره: {host} · {speed} ({n} مرايا)',

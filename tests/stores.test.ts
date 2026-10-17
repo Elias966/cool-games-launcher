@@ -142,6 +142,14 @@ describe('GOG and Epic accounts', () => {
     expect(await t.stores.adopt('gog', '1207658924', join(folder, 'Binaries'))).toBe(local.id);
   });
 
+  it('coalesces repeated merge clicks and reuses a matching Epic installation', async () => {
+    const t=setup();await t.stores.refresh();const folder=join(t.dir,'existingEpic');mkdirSync(join(folder,'Bin'),{recursive:true});writeFileSync(join(folder,'Bin/Game.exe'),'old');
+    const local=t.games.create({catalogId:null,downloadId:null,title:'Fortnite-like',kind:'windows',installDir:folder,executable:join(folder,'Bin/Game.exe'),args:'-custom',runner:'proton',prefixDir:null,managed:false,artworkFile:null,sourceHost:null,status:'installed',candidates:[]});
+    t.state.epicInstalled=[{app_name:'Fortune',install_path:folder,executable:'Bin/Game.exe',version:'1.0',needs_verification:true}];
+    const [first,second]=await Promise.all([t.stores.adopt('epic','Fortune',folder),t.stores.adopt('epic','Fortune',folder)]);
+    expect(first).toBe(local.id);expect(second).toBe(first);expect(t.games.list()).toHaveLength(1);expect(t.calls.some(c=>c.includes('import'))).toBe(false);
+    expect(t.games.get(local.id)).toMatchObject({store:'epic',args:'-custom'});
+  });
   it('merges an executable imported from a subfolder without losing its settings or play time', async () => {
     const t = setup(); await t.stores.refresh();
     const folder = join(t.dir, 'old/The Witcher'); mkdirSync(join(folder, 'Bin'), { recursive: true });

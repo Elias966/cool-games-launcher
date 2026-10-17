@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { symlinkSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDb, type Db } from '../src/main/db';
 import { DownloadsRepo, SettingsRepo, defaultSettings } from '../src/main/repos';
+import { detectProton } from '../src/main/proton-detect';
 import { CompatManager } from '../src/main/compat';
 
 let dir: string;
@@ -142,4 +143,12 @@ describe('Proton provisioning', () => {
     expect(compat.installed().map((p) => p.path)).toEqual([steam]);
     expect(() => compat.addFolder(join(dir, 'empty'))).toThrow('no Proton');
   });
+});
+
+it('detects official Proton in Flatpak Steam and extra library VDF paths without duplicates', () => {
+ const home=join(dir,'home'),steam=join(home,'.var/app/com.valvesoftware.Steam/.local/share/Steam'),extra=join(dir,'disk/SteamLibrary');
+ const native=join(home,'.local/share/Steam');mkdirSync(join(steam,'steamapps/common/Proton Experimental'),{recursive:true});mkdirSync(join(extra,'steamapps/common/Proton 10.0'),{recursive:true});mkdirSync(join(home,'.local/share'),{recursive:true});
+ writeFileSync(join(steam,'steamapps/common/Proton Experimental/proton'),'official');writeFileSync(join(extra,'steamapps/common/Proton 10.0/proton'),'official');
+ writeFileSync(join(steam,'steamapps/libraryfolders.vdf'),`"libraryfolders" { "1" { "path" "${extra}" } }`);symlinkSync(steam,native);
+ expect(detectProton(home).sort()).toEqual([join(extra,'steamapps/common/Proton 10.0'),join(steam,'steamapps/common/Proton Experimental')].sort());
 });

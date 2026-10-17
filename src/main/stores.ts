@@ -542,7 +542,17 @@ export class StoreService {
   }
 
   /** Adopts a copy already on disk (like Heroic's import), so it can be updated from the store. */
-  async adopt(store: StoreId, id: string, folder: string): Promise<number> {
+  private adopting = new Map<string, { folder: string; result: Promise<number> }>();
+
+  adopt(store: StoreId, id: string, folder: string): Promise<number> {
+    const key = `${store}:${id}`, pending = this.adopting.get(key);
+    if (pending) return sameInstall(pending.folder, folder) ? pending.result : Promise.reject(new Error('This game is being linked to another folder.'));
+    const result = this.adoptFolder(store, id, folder).finally(() => this.adopting.delete(key));
+    this.adopting.set(key, { folder, result });
+    return result;
+  }
+
+  private async adoptFolder(store: StoreId, id: string, folder: string): Promise<number> {
     const o = this.ownedGame(store, id);
     const j = this.job(store, id, 'import');
     try {
@@ -554,6 +564,8 @@ export class StoreService {
         if (!info) throw new Error(`This folder does not hold ${o.title} from GOG (no goggame-${id}.info).`);
         return await this.register(o, dirname(info), false);
       }
+      const installed = await this.epicInstall(id, j.signal);
+      if (installed && sameInstall(installed.install_path, folder)) return await this.registerEpic(o, false, folder, undefined, j.signal);
       const r = await this.legendary(['-y', 'import', id, folder, '--platform', 'Windows', '--skip-dlcs'], { signal: j.signal });
       if (r.code !== 0) throw new Error(lastLine(r.stderr) || `This folder does not hold ${o.title} from Epic.`);
       return await this.registerEpic(o, false, folder, undefined, j.signal);

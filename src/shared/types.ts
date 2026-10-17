@@ -199,7 +199,7 @@ export type InstallState = 'none' | 'installing' | 'installed' | 'failed';
 
 export interface DownloadItem {
   /** Result of bounded, real transfer measurements for equivalent file mirrors. */
-  mirrorChoice?: { host: string; speedBps: number; tested: number } | null;
+  mirrorChoice?: { host: string; speedBps: number; tested: number; measured?: number; unavailable?: number } | null;
   id: number;
   catalogId: number | null;
   /** Set for a Proton build the launcher is installing (its version name). */
@@ -332,6 +332,8 @@ export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: fals
 export type GameUpdateState = 'available' | 'downloading' | 'preparing' | 'waiting' | 'updated' | 'failed' | 'ignored';
 
 export interface GameUpdateInfo {
+  /** The imported build has no recoverable version; offer a manual refresh only. */
+  unverified?: boolean;
   state: GameUpdateState;
   from: string | null;
   to: string | null;

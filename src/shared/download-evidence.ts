@@ -6,7 +6,7 @@ import type { DownloadCandidate, Platform } from './types';
 const FILE = /\.(?:zip|7z|rar|tar(?:\.(?:gz|xz|bz2|zst))?|tgz|txz|appimage|x86_64|sh|run|exe|msi|deb|rpm|apk|dmg|love|jar|(?:zip|7z|rar|tar)\.\d{3}|r\d{2})$/i;
 const AVOID = /\b(?:advertisement|sponsored|download manager|browser extension|driver updater|source code|soundtrack|wallpaper|trailer|manual|subscribe|checkout|sign up|log in)\b/i;
 const DOWNLOAD = /\b(?:download(?:s|ing)?|get (?:the )?game|mirror|direct link|windows build|linux build|portable build)\b/i;
-const HOST_LABEL = /^(?:mediafire|mega(?:\.nz)?|google drive|gdrive|dropbox|pixeldrain|gofile|sourceforge|uploadhaven|buzzheavier|vikingfile|datanodes|fileditch|1fichier)(?:\s+(?:mirror|link|download|\d+))*$/i;
+const HOST_LABEL = /^(?:mediafire|mega(?:\.nz)?|megadb|google drive|gdrive|dropbox|pixeldrain|gofile|sourceforge|uploadhaven|buzzheavier|bzzhr|vikingfile|datanodes|fileditch|1fichier|qiwi|ranoz|fuckingfast)(?:\s+(?:mirror|link|download|\d+))*$/i;
 
 function excluded(text: string): boolean {
   if (/^copy\b.*\b(?:download|link)\b/i.test(text.trim())) return true;
@@ -48,6 +48,8 @@ export function isHostLanding(url: string): boolean {
     if (/^\/(?:pricing|blog|speedtest|developers|privacy|terms|proxy|contact|help|faq|report)\/?$/i.test(u.pathname)) return false;
     if (h === 'uploadhaven.com') return /^\/download\//.test(u.pathname);
     if (h === 'bzzhr.to') return /^\/[a-z0-9]{10,32}\/?$/i.test(u.pathname);
+    if (h === 'megadb.net') return /^\/[a-z0-9]{8,32}\/?$/i.test(u.pathname);
+    if (['qiwi.gg', 'ranoz.gg', 'fuckingfast.co'].includes(h)) return u.pathname !== '/';
     if (h === 'buzzheavier.com' || h === 'vikingfile.com' || h === 'datanodes.to' || h === '1fichier.com') return u.pathname !== '/' || u.searchParams.has('id') || u.search.length > 1;
     if (h === 'fileditch.com') return /^\/(?:file|download|d)\//.test(u.pathname);
     if (h === 'mediafire.com') return /^\/file\//.test(u.pathname);
@@ -85,6 +87,13 @@ export function downloadEvidence(ex: PageExtract, limit = 30): DownloadCandidate
   }
   for (const c of downloadControls(ex)) {
     out.push({ url: c.href ?? `${ex.url.split('#')[0]}#cgl-control-${c.i}`, label: c.text, fileName: c.href && isFileUrl(c.href) ? fileName(c.href) : null, platform: platformFrom(c.text), sizeText: null });
+  }
+  // Controls are a bounded AI observation. Host links later in a long page
+  // still belong in the complete comparison, even outside that observation.
+  for (const l of ex.links) {
+    if (l.inContent === false || excluded(l.text) || !isHostLanding(l.href) || out.some(c => c.url === l.href)) continue;
+    if (isCatalogNavigation(ex, { ...l, tag: 'a', inViewport: false, rect: l.rect ?? { x: 0, y: 0, w: 0, h: 0 } })) continue;
+    out.push({ url: l.href, label: l.text || new URL(l.href).hostname, fileName: null, platform: platformFrom(l.text), sizeText: null });
   }
   for (const [i, u] of (ex.game?.uploads ?? []).entries()) {
     if (!u.href && (u.i === null || !Number.isFinite(u.i))) continue;

@@ -120,7 +120,7 @@ export function LibraryTab() {
   const selectedPending = pendingId !== null ? pending.find((d) => d.id === pendingId) ?? null : shown.length === 0 ? shownPending[0] ?? null : null;
   const selectedOwned = !selectedPending ? shownOwned.find((o) => `${o.store}:${o.id}` === ownedKey) ?? (shown.length === 0 ? shownOwned[0] ?? null : null) : null;
   const selected = selectedPending || selectedOwned ? null : shown.find((g) => g.id === selectedId) ?? shown[0] ?? null;
-  const updateCount = games.filter((g) => g.update?.state === 'available').length;
+  const updateCount = games.filter((g) => g.update?.state === 'available' && !g.update.unverified).length;
 
   useEffect(() => {
     if (selectedId !== null && !games.some((g) => g.id === selectedId)) setSelectedId(null);
@@ -354,7 +354,7 @@ const CoverPanel = memo(function CoverPanel({ game, index, selected, onSelect }:
         {game.running && <span className="cover__live">{t('Running')}</span>}
         {!game.running && game.storeUpdate && <span className="cover__update">{t('Update')}</span>}
         {!game.running && game.update && ['available', 'downloading', 'preparing', 'waiting'].includes(game.update.state) && (
-          <span className={`cover__update ${game.update.state === 'available' ? '' : 'is-busy'}`}>{game.update.state === 'available' ? t('Update') : t('Updating')}</span>
+          <span className={`cover__update ${game.update.state === 'available' ? '' : 'is-busy'}`}>{game.update.state === 'available' ? t(game.update.unverified ? 'Build available' : 'Update') : t('Updating')}</span>
         )}
         {game.status !== 'installed' && <span className="cover__attention">{t('Setup needed')}</span>}
       </span>
@@ -404,7 +404,7 @@ function UpdatePanel({ game }: { game: Game }) {
         <Icon name="downloads" size={18} />
         <div>
           <p>
-            <strong>{t('Update available')}{versions ? `: ${versions}` : ''}.</strong> <span className="muted">{u.reason}</span>
+            <strong>{t(u.unverified ? 'Website build available' : 'Update available')}{versions ? `: ${versions}` : ''}.</strong> <span className="muted">{u.reason}</span>
           </p>
           <p className="muted">{t('Your saves are carried over, and the current version is kept until you have played the new one.')}</p>
           <div className="hero__update-actions">

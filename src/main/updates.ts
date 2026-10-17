@@ -1,18 +1,19 @@
 // Game update checks. Installed games are re-checked on their own schedule,
-// independent of the Store tab and without the AI: their page is read over
-// HTTP, the build it offers is fingerprinted (version, download files, page
+// independent of the Store tab and without the AI: their saved page is read
+// in a background Firefox tab and fingerprinted (version, download files, page
 // date), and the originally downloaded file is probed for changed HTTP
 // validators. A newer build is announced in the Library, or installed
 // automatically when the user chose that.
 import type { PageExtract } from '@shared/page-extract';
 import { downloadEvidence } from '@shared/download-evidence';
-import { detectUpdate, fileChanged, fingerprintKey, makeFingerprint, versionLabel, type InstalledFile, type InstalledVersion, type UpdateVerdict, type VersionFingerprint } from '@shared/game-version';
+import { detectUpdate, fileChanged, fingerprintKey, makeFingerprint, versionLabel, type InstalledFile, type UpdateVerdict, type VersionFingerprint } from '@shared/game-version';
 import { hostOf, siteKey } from '@shared/urls';
 import type { CatalogRepo, DownloadRecord, DownloadsRepo, GameRecord, GamesRepo, SettingsRepo, SourcesRepo } from './repos';
 import type { PageFetcher } from './page-fetcher';
 import type { HostRateLimiter } from './rate-limit';
 import { toast } from './bus';
 import { tm } from './i18n';
+import { localInstalledVersion } from './installed-version';
 
 /** The build a game page offers. */
 export function pageFingerprint(ex: PageExtract, candidates: Array<{ fileName: string | null; label: string; sizeText: string | null }>, listingTitle?: string | null): VersionFingerprint {
@@ -46,6 +47,7 @@ export class UpdateService {
       settings: SettingsRepo;
       limiter: HostRateLimiter;
       fetcher: PageFetcher | null;
+      readPage?: (url: string, signal: AbortSignal) => Promise<PageExtract>;
       startUpdate: (gameId: number) => Promise<void> | void;
       isRunning: (gameId: number) => boolean;
       broadcast: () => void;
@@ -69,7 +71,19 @@ export class UpdateService {
 
   /** Installed games from a website, with the catalog entry they came from. */
   private tracked(): GameRecord[] {
-    return this.deps.games.list().filter((g) => g.catalogId !== null && !g.store && g.managed && g.status === 'installed');
+    const out: GameRecord[] = [];
+    for (let g of this.deps.games.list()) {
+      if (g.store || g.status !== 'installed' || !g.installDir) continue;
+      if (g.catalogId === null) {
+        const id = this.deps.catalog.matchInstalled(g.title, g.art?.appid);
+        if (id === null) continue;
+        const entry = this.deps.catalog.raw(id)!;
+        this.deps.games.update(g.id, { catalogId: id, sourceHost: hostOf(entry.pageUrl), updateCheckedAt: null });
+        g = this.deps.games.get(g.id)!;
+      }
+      out.push(g);
+    }
+    return out;
   }
 
   /** "Check for updates" from the Library: everything, now. */
@@ -84,7 +98,7 @@ export class UpdateService {
     if (this.checking) return this.checking;
     this.checking = (async () => {
       const intervalMs = this.deps.settings.get().crawlRefreshHours * 3600_000;
-      const due = this.tracked().filter((g) => !g.updateCheckedAt || Date.now() - Date.parse(g.updateCheckedAt) >= intervalMs);
+      const due = this.tracked().filter((g) => !this.deps.isRunning(g.id) && (!g.updateCheckedAt || Date.now() - Date.parse(g.updateCheckedAt) >= intervalMs));
       for (const g of due) {
         if (this.controller.signal.aborted) break;
         try { await this.checkGame(g.id, this.controller.signal); }
@@ -100,20 +114,35 @@ export class UpdateService {
     const entry = g?.catalogId ? this.deps.catalog.raw(g.catalogId) : null;
     if (!g || !entry) return;
     const source = this.deps.sources.get(entry.sourceId);
+    if (g.store || source?.enabled === false) return;
     let current: VersionFingerprint | null = null;
     const fetcher = this.deps.fetcher;
-    if (fetcher && source?.enabled !== false) {
+    if (this.deps.readPage || fetcher) {
       await this.deps.limiter.wait(siteKey(hostOf(entry.pageUrl)), source?.rateLimitMs ?? 1000, signal);
-      const r = await fetcher.fetch(entry.pageUrl, signal).catch(() => null);
-      if (r?.ok && !r.extract.gates.captcha && !r.extract.gates.blocked) {
-        const evidence = downloadEvidence(r.extract);
+      // Firefox shares the user's website cookies, renders script links, and
+      // reads a dedicated background tab without visiting a homepage/search.
+      const ex = this.deps.readPage ? await this.deps.readPage(entry.pageUrl, signal).catch(() => null)
+        : await fetcher!.fetch(entry.pageUrl, signal).then(r => r.ok ? r.extract : null).catch(() => null);
+      if (signal.aborted) return;
+      const samePage = ex && new URL(ex.url).origin === new URL(entry.pageUrl).origin && new URL(ex.url).pathname.replace(/\/$/, '') === new URL(entry.pageUrl).pathname.replace(/\/$/, '');
+      if (ex && samePage && !ex.gates.captcha && !ex.gates.blocked && !ex.gates.login) {
+        const evidence = downloadEvidence(ex, Number.MAX_SAFE_INTEGER);
         if (evidence.length) {
-          current = pageFingerprint(r.extract, evidence);
-          this.deps.catalog.setVersion(entry.id, current);
+          current = pageFingerprint(ex, evidence);
+          // Keep the indexed bookmark and crawl checkpoint intact. Challenge
+          // tokens in a rendered URL must never become the saved game link.
+          this.deps.catalog.setVersion(entry.id, current, evidence);
         } else {
           // Download buttons drawn by scripts: the Store's next pass reads it in Firefox.
           this.deps.catalog.markStale([entry.id]);
         }
+      }
+      if (!current) {
+        // A failed/gated read must not report a successful check using stale
+        // catalog data. The next check retries after the website is verified.
+        console.warn('[updates] could not verify current game page', g.title);
+        toast('info', tm('Could not check {title}. Open its saved website page in the Store browser to complete any verification, then check again.', { title: g.title }));
+        return;
       }
     }
     // The file the game was installed from, at the same address: changed validators mean a re-upload.
@@ -128,19 +157,19 @@ export class UpdateService {
 
   /** Compares a game's installed build with the page's current one and records the verdict. */
   evaluate(gameId: number, current: VersionFingerprint | null, head?: Parameters<typeof fileChanged>[1]) {
-    const g = this.deps.games.get(gameId);
+    let g = this.deps.games.get(gameId);
     if (!g) return;
     const checkedAt = new Date().toISOString();
     if (!current && !head) { this.deps.games.update(gameId, { updateCheckedAt: checkedAt }); return; }
     if (!g.installedVersion) {
-      // Installed before update tracking: today's page is the baseline.
       const d = g.downloadId ? this.deps.downloads.get(g.downloadId) : null;
-      const base: InstalledVersion = { ...(current ?? { version: null, updated: null, files: [], sizes: [], at: checkedAt }), file: installedFile(d) };
-      this.deps.games.update(gameId, { installedVersion: base, updateCheckedAt: checkedAt });
-      return;
+      this.deps.games.update(gameId, { installedVersion: localInstalledVersion(g, d) });
+      g = this.deps.games.get(gameId)!;
     }
     let verdict: UpdateVerdict = detectUpdate(g.installedVersion, current);
-    const reuploaded = fileChanged(g.installedVersion.file, head ?? null);
+    const unverified = !verdict.update && !g.installedVersion!.version && (!!current?.version || !g.installedVersion!.files.length && !g.installedVersion!.updated);
+    if (unverified && current) verdict = { update: true, from: null, to: versionLabel(current), reason: tm('Installed version unknown. The website build is available to install; a newer version could not be confirmed.') };
+    const reuploaded = fileChanged(g.installedVersion!.file, head ?? null);
     if (!verdict.update && reuploaded) {
       verdict = { update: true, from: versionLabel(g.installedVersion) ?? 'installed build', to: versionLabel(current) ?? 'new build', reason: 'the download file changed on the server' };
     }
@@ -162,14 +191,14 @@ export class UpdateService {
     console.log(`[updates] ${g.title}: ${verdict.reason}`);
     this.deps.games.update(gameId, {
       updateCheckedAt: checkedAt,
-      update: { state: 'available', from: verdict.from, to: verdict.to, reason: verdict.reason, detectedAt: checkedAt, key },
+      update: { state: 'available', from: verdict.from, to: verdict.to, reason: verdict.reason, detectedAt: checkedAt, key, unverified },
     });
     this.deps.broadcast();
-    if (this.deps.settings.get().gameUpdates === 'auto') {
+    if (this.deps.settings.get().gameUpdates === 'auto' && !unverified) {
       toast('info', verdict.to ? tm('Updating {title} to {version}…', { title: g.title, version: verdict.to }) : tm('Updating {title}…', { title: g.title }));
       void Promise.resolve(this.deps.startUpdate(gameId)).catch((e) => toast('error', tm('Could not update {title}: {detail}', { title: g.title, detail: (e as Error).message })));
     } else {
-      toast('info', verdict.from && verdict.to ? tm('Update available for {title}: {from} → {to}. Open the Library to update.', { title: g.title, from: verdict.from, to: verdict.to }) : tm('Update available for {title}. Open the Library to update.', { title: g.title }));
+      toast('info', unverified ? tm('Website build available for {title}. Installed version unknown; review it in the Library.', { title: g.title }) : verdict.from && verdict.to ? tm('Update available for {title}: {from} → {to}. Open the Library to update.', { title: g.title, from: verdict.from, to: verdict.to }) : tm('Update available for {title}. Open the Library to update.', { title: g.title }));
     }
   }
 
@@ -177,6 +206,6 @@ export class UpdateService {
   afterDetail(catalogId: number) {
     const entry = this.deps.catalog.raw(catalogId);
     if (!entry?.version) return;
-    for (const g of this.deps.games.list()) if (g.catalogId === catalogId && !g.store && g.managed && g.status === 'installed') this.evaluate(g.id, entry.version);
+    for (const g of this.deps.games.list()) if (g.catalogId === catalogId && !g.store && g.status === 'installed') this.evaluate(g.id, entry.version);
   }
 }

@@ -424,7 +424,7 @@ function ProtonVersions({ settings, releases, onChanged }: { settings: Settings;
   const autoName = installed.find((p) => p.path === releases?.defaultPath)?.name;
   const pending = downloads.filter((d) => d.compatVersion && d.state !== 'cancelled' && !(d.state === 'completed' && (d.installState === 'installed' || d.installState === 'failed')));
   return (
-    <Group title={t('Installed versions')} aside={<Button size="sm" variant="ghost" icon="folder" onClick={() => void attempt(async () => { const r = await api.invoke('compat:addFolder'); if (r) await reload(); })}>{t('Add a folder…')}</Button>}>
+    <Group title={t('Installed versions')} aside={<div className="st-inline"><Button size="sm" variant="ghost" icon="reload" onClick={() => void attempt(reload)}>{t('Refresh')}</Button><Button size="sm" variant="ghost" icon="folder" onClick={() => void attempt(async () => { const r = await api.invoke('compat:addFolder'); if (r) await reload(); })}>{t('Add a folder…')}</Button></div>}>
       <ul className="proton-list">
         <li className={`proton-list__item ${automatic ? 'is-default' : ''}`}>
           <div className="proton-list__text">
@@ -521,6 +521,7 @@ function CompatSection({ settings }: { settings: Settings }) {
       <Group title={t('Get more versions')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => void attempt(async () => setReleases(await api.invoke('compat:releases', { refresh: true })))}>{t('Refresh')}</Button>}>
         <Row label={t('Provider')} desc={PROVIDER_HINT[provider] ? t(PROVIDER_HINT[provider]) : undefined}>
           <Choice label={t('Proton provider')} value={provider} options={(releases?.providers ?? [{ id: 'ge', name: 'GE-Proton' }, { id: 'cachyos', name: 'CachyOS' }, { id: 'valve', name: 'Valve' }]).map((p) => ({ value: p.id, label: PROVIDER_NAME[p.id] ?? p.name }))} onChange={(v) => { setProvider(v); setReleaseId(''); }} />
+          <p className="muted">{t('This filters available releases. Choose the default runner from Installed versions above. Steam builds are used in place without copying.')}</p>
         </Row>
         <Row stacked label={t('Version')} desc={selected?.unavailableReason ?? t('Verified against the published checksum before it is installed. Installing never changes your default version: make it the default in the list above, or choose it for one game in its Launch options.')}>
           <div className="st-inline">

@@ -261,7 +261,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
             {formatBytes(d.totalBytes)} · {d.installState === 'installed' ? d.installDetail ?? t('In Library') : d.installState === 'installing' ? d.installDetail ?? t('Installing…') : d.installState === 'failed' ? t('Install failed: {detail}', { detail: d.installDetail ?? '' }) : d.catalogId === null ? d.installDetail ?? t('Compatibility package') : t('Waiting to prepare')}
           </p>
         )}
-        {d.mirrorChoice && <p className="dl-row__sub">{t('Fastest tested host: {host} · {speed} ({n} mirrors)', { host: d.mirrorChoice.host, speed: formatSpeed(d.mirrorChoice.speedBps), n: d.mirrorChoice.tested })}</p>}
+        {d.mirrorChoice && <p className="dl-row__sub">{t('Fastest tested host: {host} · {speed} ({n} mirrors)', { host: d.mirrorChoice.host, speed: formatSpeed(d.mirrorChoice.speedBps), n: d.mirrorChoice.tested })}{!!d.mirrorChoice.unavailable && ` · ${t('{n} unavailable or different files', { n: d.mirrorChoice.unavailable })}`}</p>}
         {(d.userPrompt || d.errorDetail) && d.state !== 'completed' && <p className={`dl-row__msg dl-row__msg--${tone}`}>{d.userPrompt?.message ?? d.errorDetail}</p>}
       </div>
       <div className="dl-row__actions">

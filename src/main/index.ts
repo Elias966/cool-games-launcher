@@ -326,6 +326,7 @@ async function main() {
   });
   updateService = new UpdateService({
     games: gamesRepo, catalog: catalogRepo, sources: sourcesRepo, downloads: downloadsRepo, settings: settingsRepo, limiter, fetcher,
+    readPage: (url, signal) => browser.readUpdatePage(url, signal),
     startUpdate: (id) => library.startUpdate(id), isRunning: (id) => library.isRunning(id), broadcast: () => library.broadcast(),
   });
   const updates = updateService;

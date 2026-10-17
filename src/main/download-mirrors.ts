@@ -23,7 +23,7 @@ export interface MirrorComparison {
   failures: Array<{ route: string; reason: string }>;
   browserTransfers?: Array<{ route: string; download: BrowserDownload }>;
   finished?: boolean;
-  selected?: { host: string; speedBps: number; tested: number };
+  selected?: { host: string; speedBps: number; tested: number; measured?: number; unavailable?: number };
 }
 
 export function mirrorRoutes(candidates: DownloadCandidate[]): DownloadCandidate[] {
