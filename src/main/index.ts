@@ -8,7 +8,7 @@ import { LocalGameAgent } from './game-agent';
 // Composition root for the main process.
 import { app, BrowserWindow, dialog, ipcMain, net, shell, session as electronSession, type IpcMainInvokeEvent, Notification } from 'electron';
 import { basename, dirname, join } from 'node:path';
-import { cpus, totalmem } from 'node:os';
+import { cpus, homedir, totalmem } from 'node:os';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { paths, ensureDirs, vendor, vendorStatus, modelPaths, workerPath } from './paths';
@@ -19,6 +19,7 @@ import { StoreSession } from './store-session';
 import { PolicyService } from './policy-service';
 import { AiService } from './ai';
 import { ArtworkCache, ClassificationService } from './classification';
+import { ArtworkThumbnails } from './artwork-thumbnails';
 import { HostRateLimiter } from './rate-limit';
 import { BrowserClient } from './browser-client';
 import { Discovery } from './discovery';
@@ -160,6 +161,7 @@ async function main() {
   const browserWorker = new WorkerHost('browser', workerPath('browser'), 'Cool Games Launcher Browser');
   const downloadsWorker = new WorkerHost('downloads', workerPath('downloads'), 'Cool Games Launcher Downloads');
   const installWorker = new WorkerHost('install', workerPath('install'), 'Cool Games Launcher Installer');
+  const artworkWorker = new WorkerHost('artwork', workerPath('artwork'), 'Cool Games Launcher Artwork');
   const fetcherWorkers = [1, 2, 3].map((n) => new WorkerHost('fetcher', workerPath('fetcher'), `Cool Games Launcher Indexer ${n}`));
 
   const v = vendor();
@@ -224,14 +226,14 @@ async function main() {
     wishlist: { afterDetail: (id) => wishlistService?.afterDetail(id) },
     onVerificationRequired: (sourceId, message) => {
       browserView.show('discovery');
-      publish('browser:attention', { downloadId: 0, sourceId, message });
+      publish('browser:attention', { downloadId: 0, sourceId, message, requiresUser:true });
     },
     isModelReady:()=>models.readyAgents(['analysis','browsing']),
     onVerificationResolved: (sourceId) => publish('browser:verificationResolved', { sourceId }),
   });
   const foreground = new ForegroundWork(session, discovery);
   const storeSearch = new StoreSearch({session,foreground,sources:sourcesRepo,catalog:catalogRepo,policy,browser,agent:gameAgent,discovery,ai,limiter,classification,isModelReady:()=>models.readyAgents(['analysis','browsing']),
-    showBrowser:message=>{browserView.show('discovery');publish('browser:attention',{downloadId:0,message});},
+    showBrowser:message=>{browserView.show('discovery');publish('browser:attention',{downloadId:0,message,requiresUser:true});},
   });
   const downloads = new DownloadManager(downloadsWorker, downloadsRepo, catalogRepo, settingsRepo, policy, browser);
   let storeRequestedActive = false;
@@ -270,9 +272,14 @@ async function main() {
     catalog: catalogRepo,
     downloadWorker: downloadsWorker,
     policy,
-    openDrawer: (reason) => {
+    recoverGamePage: async (catalogId, token) => {
+      browserView.show('discovery');
+      try { return await storeSearch.recoverPage(catalogId, token); }
+      finally { browserView.show('interactive'); }
+    },
+    openDrawer: (reason, requiresUser) => {
       browserView.show();
-      publish('browser:attention', { downloadId: 0, message: reason });
+      publish('browser:attention', { downloadId: 0, message: reason, requiresUser });
     },
     partsSettled: (groupId) => libraryRef?.partsSettled(groupId),
   });
@@ -378,7 +385,7 @@ async function main() {
     publish('catalog:changed', { policyRevision: revision, sourceId: null });
   });
 
-  handleMedia({ artworkDir: paths.artwork, catalog: catalogRepo, policy, browserView });
+  handleMedia({ artworkDir: paths.artwork, catalog: catalogRepo, policy, browserView, thumbnails: new ArtworkThumbnails(paths.artwork, artworkWorker) });
   downloads.recover();
   compat.recover();
   models.recover();
@@ -449,12 +456,19 @@ async function main() {
     prepareGame: (id) => gamesRepo.update(id, { prefixDir: join(paths.prefixes, `game-${id}`) }),
     changed: () => library.broadcast(),
     publish: (s) => publish('stores:changed', s),
+    publishJobs: (jobs) => publish('stores:jobsChanged', jobs),
     cacheImage: async (url) => `cgl-media://artwork/${encodeURIComponent(await artwork.fetch(url, null))}`,
     allowArtwork: (file) => catalogRepo.allowArtwork(file),
+    cachedImage: (url) => { const file = artwork.fileFor(url); return file ? `cgl-media://artwork/${encodeURIComponent(file)}` : null; },
+    downloadConnections: () => settingsRepo.get().downloadConnections,
+    isRunning: (id) => library.isRunning(id) || library.isChanging(id),
+    legacyGogConfigDir: join(process.env.GOGDL_CONFIG_PATH ?? process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'heroic_gogdl'),
   });
   library.storeUpdates = (g) => stores.hasUpdate(g);
+  library.storeBusy = (id) => stores.isBusy(id);
   library.storeLaunchArgs = (g) => stores.launchArgs(g);
   library.onUninstalled = (g) => stores.forget(g);
+  stores.recover();
   setTimeout(() => void stores.refresh().catch((e) => console.warn('[stores]', (e as Error).message)), 8_000).unref();
   setInterval(() => void stores.refresh().catch(() => undefined), 6 * 3600_000).unref();
 
@@ -701,7 +715,7 @@ async function main() {
       storeSearch.cancel();
       foreground.hold('search-input',false);
       const d = downloads.create(catalogId, entry.title, hostOf(entry.pageUrl));
-      if(d.state==='needs-user'){browserView.show('interactive');publish('browser:attention',{downloadId:d.id,message:d.userPrompt?.message??'This download is waiting for your response.'});}
+      if(d.state==='needs-user'){browserView.show('interactive');publish('browser:attention',{downloadId:d.id,requiresUser:true,message:d.userPrompt?.message??'This download is waiting for your response.'});}
       if (d.state === 'resolving' || d.state === 'needs-resolution') resolver.enqueue(d.id);
       return downloads.items().find((x) => x.id === d.id)!;
     },
@@ -819,6 +833,9 @@ async function main() {
       return stores.state();
     },
     'stores:cancel': ({ store, id }) => { stores.cancel(store, id); },
+    'stores:pause': ({ store, id }) => { stores.pause(store, id); },
+    'stores:resume': ({ store, id }) => { stores.resume(store, id); },
+    'stores:remove': ({ store, id }) => { stores.remove(store, id); },
     'stores:adopt': async ({ store, id }) => {
       const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose the folder where the game is installed'), properties: ['openDirectory'] });
       if (r.canceled || !r.filePaths[0]) return null;
@@ -828,8 +845,8 @@ async function main() {
     'stores:linkGame': async ({ store, id, gameId }) => {
       const g = gamesRepo.get(gameId);
       if (!g?.installDir) throw new Error('That game has no folder.');
-      await stores.adopt(store, id, g.installDir);
-      return library.list().find((x) => x.id === gameId) ?? null;
+      const adoptedId = await stores.adopt(store, id, g.installDir);
+      return library.list().find((x) => x.id === adoptedId) ?? null;
     },
     'stores:update': async ({ id }) => {
       void stores.update(id).then(() => toast('success', tm('{title} is up to date.', { title: gamesRepo.get(id)?.title ?? '' })))
@@ -888,7 +905,7 @@ async function main() {
       return true;
     },
     'app:diagnostics': () => {
-      const path = writeDiagnostics({ version: app.getVersion(), logsDir: paths.logs, ai: ai.getStatus(), settings: settingsRepo, sources: sourcesRepo, downloads: downloadsRepo, games: gamesRepo });
+      const path = writeDiagnostics({ version: app.getVersion(), logsDir: paths.logs, ai: ai.getStatus(), settings: settingsRepo, sources: sourcesRepo, downloads: downloadsRepo, games: gamesRepo, storeJobs: stores.state().jobs });
       shell.showItemInFolder(path);
       return { path };
     },
@@ -1008,7 +1025,9 @@ async function main() {
       clearInterval(protonRefreshTimer);
       updates.stop();
       descriptions.stop();
+      resolver.shutdown();
       library.shutdown();
+      await Promise.all([stores.shutdown(), downloads.shutdown()]);
       session.leave();
       try {
         const s = settingsRepo.get();
@@ -1018,7 +1037,7 @@ async function main() {
           }),
           new Promise((r) => setTimeout(r, 4000)),
         ]);
-        for (const w of [inferenceWorker, browserWorker, downloadsWorker, installWorker, ...fetcherWorkers]) w.stop();
+        for (const w of [inferenceWorker, browserWorker, downloadsWorker, installWorker, artworkWorker, ...fetcherWorkers]) w.stop();
         db.close();
         console.log('[main] services stopped');
       } catch (err) {

@@ -1,5 +1,6 @@
 // Downloads utility process: runs transfers independently of the UI, the
 // browser and the AI, so they keep going when the user leaves the Store.
+import { benchmarkMirror, browserFilePrefix } from './mirror-probe';
 import { emit, serve } from './rpc';
 import { probeUrl, runTransfer, TransferError, removePartial, type TransferSpec } from './transfer';
 
@@ -52,6 +53,8 @@ serve({
     }
     return { ok: true };
   },
+  async benchmarkMirror(p: { url: string; headers: Record<string, string> }, signal: AbortSignal) { return benchmarkMirror(p.url, p.headers, signal); },
+  async browserFilePrefix(p: { target: string; partFilePath?: string | null }) { return browserFilePrefix(p.target,p.partFilePath); },
   async probe(p: { url: string; headers: Record<string, string> }, signal: AbortSignal) {
     return probeUrl(p.url, p.headers, signal);
   },

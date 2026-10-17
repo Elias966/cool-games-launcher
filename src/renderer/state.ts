@@ -203,15 +203,16 @@ export async function boot() {
   api.on('app:visibility', ({ visible }) => setState({ appVisible: visible }));
   api.on('browser:snapshot', (snap) => {
     if (snap.policyRevision !== state.policy.revision) return; // produced under an older policy
-    setState((s) => (s.tab === 'store' ? { browser: { ...s.browser, open: true, snapshot: snap, stale: false } } : {}));
+    setState((s) => (s.tab === 'store' ? { ...(snap.verificationRequired ? {detailId:null} : {}), browser: { ...s.browser, open: true, snapshot: snap, stale: false } } : {}));
   });
   api.on('browser:humanMode', ({ active }) => setState((s) => ({ browser: { ...s.browser, humanMode: active, open: s.tab === 'store' ? true : s.browser.open, snapshot: null } })));
   api.on('browser:closed', () => setState((s) => ({ browser: { ...s.browser, open: false, snapshot: null } })));
-  api.on('browser:attention', ({ message, sourceId }) => setState((s) => (s.tab === 'store' ? { browser: { ...s.browser, open: true, attention: message, attentionSourceId: sourceId ?? null } } : {})));
+  api.on('browser:attention', ({ message, sourceId, requiresUser }) => setState((s) => (s.tab === 'store' ? { ...(requiresUser ? {detailId:null} : {}), browser: { ...s.browser, open: true, attention: message, attentionSourceId: sourceId ?? null } } : {})));
   api.on('browser:verificationResolved', ({ sourceId }) => setState((s) => s.browser.attentionSourceId === sourceId ? { browser: { ...s.browser, attention: null, attentionSourceId: null } } : {}));
 
   document.addEventListener('visibilitychange', () => setState({ appVisible: document.visibilityState === 'visible' }));
   api.on('stores:changed', (stores) => setState({ stores }));
+  api.on('stores:jobsChanged', (jobs) => setState((s) => ({ stores: { ...s.stores, jobs } })));
   void api.invoke('stores:state').then((stores) => setState({ stores })).catch(() => undefined);
   void api.invoke('wishlist:list').then((wishlist) => setState({ wishlist })).catch(() => undefined);
   // Also picks up the AI status from before this window subscribed to updates.

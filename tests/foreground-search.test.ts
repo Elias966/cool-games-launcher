@@ -126,7 +126,7 @@ describe('native browser transfer completion',()=>{
   const entry=s.catalog.upsertListing(s.source.id,{pageUrl:game().url,title:'Hidden Orbit',titleKey:'hidden orbit'});
   s.catalog.setRating(entry.id,'safe',0,[],CLASSIFIER_VERSION);
   const d=s.downloadsRepo.create({catalogId:entry.id,title:'Hidden Orbit',sourceHost:'games.test',state:'resolving'});
-  const browser={navigate:vi.fn(async()=>{}),extract:vi.fn(async()=>game()),takeDownloads:vi.fn(async()=>[] as any[])};
+  const browser={snapshot:vi.fn(async()=>({url:game().url})),navigate:vi.fn(async()=>{}),extract:vi.fn(async()=>game()),takeDownloads:vi.fn(async()=>[] as any[])};
   const downloads={broadcastList:vi.fn(),adoptBrowserDownload:vi.fn((id:number)=>s.downloadsRepo.update(id,{state:'active'}))};
   const agent={...fixtureAgent(),transfer:vi.fn(async()=>({kind:'computer',computer:{action:{action:'terminate',answer:'Transfer requested'}}})),actBrowser:vi.fn(async()=>'done')};
   const resolver=new Resolver({...s,browser,downloads,agent,ai:{setStatus:vi.fn()},downloadWorker:{},openDrawer:vi.fn()} as never);
@@ -202,4 +202,44 @@ describe('AI Store search',()=>{
   const s=await searchSetup();expect((await s.service.search('!!!')).id).toBeNull();expect(s.chatJson).not.toHaveBeenCalled();
  });
 
+});
+
+describe('last-resort recovery of a saved game page',()=>{
+ function recoverySetup(){
+  const s=setup(),token=s.session.enter();cleanup.push(()=>s.session.leave());
+  const entry=s.catalog.upsertListing(s.source.id,{pageUrl:'https://games.test/old-orbit',title:'Hidden Orbit',titleKey:'hidden orbit'});s.catalog.setRating(entry.id,'safe',0,[],CLASSIFIER_VERSION);
+  let current=s.source.url;
+  const home=page('<main><a href="/old-orbit">Hidden Orbit</a><a href="/review">Hidden Orbit</a><a href="/new-orbit">Hidden Orbit</a></main>');
+  const browser={navigate:vi.fn(async(_ctx:string,url:string)=>{current=url;}),extract:vi.fn(async()=>current===s.source.url?home:page(`<h1>Hidden Orbit</h1><a href="https://files.test/${current.endsWith('/review')?'press-kit':'orbit'}.zip">Download</a>`,current)),returnToPage:vi.fn(async(_ctx:string,url:string)=>{current=url;return {url,scrollY:0,reused:true};})};
+  const agent={verify:vi.fn(async(ex:PageExtract)=>ex),search:vi.fn(async()=>({cards:[],action:'done',index:null})),confirmGame:vi.fn(async(ex:PageExtract)=>ex.url.endsWith('/review')?null:{isGame:true,title:'Hidden Orbit',description:'Puzzle game',platforms:['linux'],categories:['Puzzle'],tags:[]})};
+  const service=new StoreSearch({...s,browser,agent,ai:{setStatus:vi.fn()},limiter:new HostRateLimiter(),foreground:new ForegroundWork(s.session,{setPaused:async()=>{}}),discovery:{},showBrowser:vi.fn()} as never);
+  return {...s,token,entry,browser,agent,service};
+ }
+ it('skips the old URL and a matching review, verifies the replacement, and leaves indexing untouched',async()=>{
+  const s=recoverySetup(),before=s.catalog.raw(s.entry.id),result=await s.service.recoverPage(s.entry.id,s.token);
+  expect(result?.url).toBe('https://games.test/new-orbit');expect(result?.candidates.map(c=>c.fileName)).toContain('orbit.zip');
+  expect(s.browser.navigate.mock.calls.map(c=>c[1])).toEqual([s.source.url,'https://games.test/review','https://games.test/new-orbit']);
+  expect(s.catalog.raw(s.entry.id)?.pageUrl).toBe('https://games.test/old-orbit'); // Only the download resolver commits a verified replacement.
+  expect(s.catalog.raw(s.entry.id)).toEqual(before);
+ });
+ it('does not mistake a different game for the saved title',async()=>{
+  const s=recoverySetup();s.agent.confirmGame.mockResolvedValue({isGame:true,title:'Hidden Orbit 2',description:'Different game',platforms:[],categories:[],tags:[]});
+  expect(await s.service.recoverPage(s.entry.id,s.token)).toBeNull();expect(s.catalog.raw(s.entry.id)?.pageUrl).toBe('https://games.test/old-orbit');
+ });
+ it('leaves website checks to the user instead of searching through them',async()=>{
+  const s=recoverySetup();s.browser.extract.mockImplementation(async()=>({...page('<h1>Sign in</h1>'),gates:{captcha:false,blocked:false,login:true,ageGate:false,payment:false}}));
+  expect(await s.service.recoverPage(s.entry.id,s.token)).toBeNull();expect(s.agent.search).not.toHaveBeenCalled();expect(s.agent.confirmGame).not.toHaveBeenCalled();
+ });
+});
+
+it('omits already failed indexed links from the recovery search instead of choosing them repeatedly',async()=>{
+ const s=setup(),token=s.session.enter();cleanup.push(()=>s.session.leave());
+ const old='https://games.test/old-orbit',entry=s.catalog.upsertListing(s.source.id,{pageUrl:old,title:'Hidden Orbit',titleKey:'hidden orbit'});
+ const observed=page('<main><a href="/old-orbit/">Hidden Orbit</a><input type="search" placeholder="Search games"></main>');
+ const browser={navigate:vi.fn(async()=>{}),extract:vi.fn(async()=>observed)};
+ const agent={search:vi.fn(async(_ex:PageExtract,_token:unknown,_query:string,_history:string[])=>({cards:[],action:'done',index:null}))};
+ const service=new StoreSearch({...s,browser,agent,ai:{setStatus:vi.fn()},limiter:new HostRateLimiter(),foreground:{hold:vi.fn()},discovery:{},showBrowser:vi.fn()} as never);
+ expect(await service.recoverPage(entry.id,token)).toBeNull();expect(agent.search).toHaveBeenCalledOnce();
+ expect(agent.search.mock.calls[0][0].links).toEqual([]);expect(agent.search.mock.calls[0][0].inputState?.fields).toHaveLength(1);
+ expect(agent.search.mock.calls[0][3][0]).toContain(old);
 });

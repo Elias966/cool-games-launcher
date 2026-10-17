@@ -77,9 +77,10 @@ export function TitleBar() {
 export function Dock() {
   const tab = useApp((s) => s.tab);
   const downloads = useApp((s) => s.downloads);
+  const storeJobs = useApp((s) => s.stores.jobs);
   const { reduced } = useMotionPrefs();
-  const activeDownloads = downloads.filter((d) => d.state === 'active' || d.state === 'queued' || d.state === 'resolving').length;
-  const needsUser = downloads.some((d) => d.state === 'needs-user' || d.state === 'needs-resolution');
+  const activeDownloads = downloads.filter((d) => d.state === 'active' || d.state === 'queued' || d.state === 'resolving').length + storeJobs.filter((j) => j.state === 'active' || j.state === 'queued').length;
+  const needsUser = downloads.some((d) => d.state === 'needs-user' || d.state === 'needs-resolution') || storeJobs.some((j) => j.state === 'failed');
   return (
     <nav className="dock" aria-label={t('Main')}>
       <div className="dock__inner" role="tablist" aria-orientation="horizontal">

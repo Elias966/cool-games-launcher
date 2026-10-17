@@ -1,7 +1,7 @@
 import type { ClassificationService } from './classification';
-import { hostOf } from '@shared/urls';
+import { canonicalUrl, hostOf } from '@shared/urls';
 import { isCancelled } from '@shared/worker-protocol';
-import type { StoreSearchResult } from '@shared/types';
+import type { DownloadCandidate, StoreSearchResult } from '@shared/types';
 import type { StoreSession, SessionToken } from './store-session';
 import type { ForegroundWork } from './foreground';
 import type { SourcesRepo, CatalogRepo } from './repos';
@@ -12,6 +12,9 @@ import type { Discovery } from './discovery';
 import type { AiService } from './ai';
 import type { HostRateLimiter } from './rate-limit';
 import { tm } from './i18n';
+import { downloadEvidence } from '@shared/download-evidence';
+import { isGameBookmark } from '@shared/download-page';
+import { unavailableHostReason } from '@shared/download-host';
 
 // Keep non-Latin titles searchable too; the catalog's legacy titleKey is ASCII.
 const searchTitle=(s:string)=>s.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
@@ -48,6 +51,69 @@ export class StoreSearch {
       throw error;
     } finally { if (this.controller === controller) this.controller = null; }
   }
+  /** Download fallback only: caller has already tried the indexed page and cached hosts. */
+  async recoverPage(catalogId: number, token: SessionToken): Promise<{ url: string; scrollY: number; candidates: DownloadCandidate[] } | null> {
+    const { catalog, sources, session, browser, agent, limiter, ai } = this.deps;
+    const entry = catalog.raw(catalogId), source = entry && sources.get(entry.sourceId);
+    if (!entry || !source?.enabled) return null;
+    const query = searchTitle(entry.title), history: string[] = [`The saved URL ${entry.pageUrl} and its download routes already failed. Do not return it again. Find a replacement page for the same game using observed links or the site search.`];
+    const tried = new Set<string>([canonicalUrl(entry.pageUrl)!]);
+    ai.setStatus({phase:'navigating',context:'discovery',detail:`Saved page or download links unavailable — searching ${source.name} for ${entry.title}`});
+    await limiter.wait(hostOf(source.url), source.rateLimitMs, token.signal);
+    await browser.navigate('discovery', source.url, token.signal);
+    for (let turn = 0; turn < 10; turn++) {
+      session.assertLive(token);
+      let ex = await browser.extract('discovery', token.signal);
+      if (ex.gates.captcha) ex = await agent.verify(ex, 'discovery', token);
+      if (ex.gates.captcha || ex.gates.login || ex.gates.blocked || ex.gates.ageGate || ex.gates.payment) return null;
+      const exact = [...ex.cards, ...ex.links.filter(l => l.inContent !== false).map(l => ({href:l.href,title:l.text,img:l.img,text:'',platforms:[],price:null,author:null,tags:[]}))]
+        .find(c => searchTitle(c.title) === query && isGameBookmark(c.href, entry.pageUrl) && c.href !== ex.url && !tried.has(canonicalUrl(c.href)!));
+      let decision: Awaited<ReturnType<LocalGameAgent['search']>>;
+      const searchPage = {...ex,cards:ex.cards.filter(c=>!tried.has(canonicalUrl(c.href)!)),links:ex.links.filter(l=>!tried.has(canonicalUrl(l.href)!)),controls:ex.controls.filter(c=>!c.href || !tried.has(canonicalUrl(c.href)!))};
+      try { decision = exact ? {cards:[exact],action:'done',index:null} : await agent.search(searchPage, token, entry.title, history); }
+      catch (error) { if (!(error instanceof SearchDecisionRejected)) throw error; history.push(error.message); continue; }
+      let inspected = 0;
+      for (const card of decision.cards) {
+        if (!isGameBookmark(card.href, entry.pageUrl) || !searchTitle(card.title).includes(query) || tried.has(canonicalUrl(card.href)!)) continue;
+        tried.add(canonicalUrl(card.href)!); inspected++;
+        await limiter.wait(hostOf(card.href), source.rateLimitMs, token.signal);
+        await browser.navigate('discovery', card.href, token.signal);
+        const detail = await browser.extract('discovery', token.signal);
+        session.assertLive(token);
+        if (Object.values(detail.gates).some(Boolean) || !isGameBookmark(detail.url, entry.pageUrl) || unavailableHostReason(detail, card.href)) continue;
+        const evidence = downloadEvidence(detail);
+        if (!evidence.length) continue;
+        const checked = await agent.confirmGame(detail, token, entry.title, evidence.map(c=>c.label));
+        session.assertLive(token);
+        if (checked && searchTitle(checked.title) === query) return {url:detail.url,scrollY:detail.viewport.scrollY,candidates:evidence};
+      }
+      if (decision.cards.length) {
+        if (!inspected) return null;
+        await browser.returnToPage('discovery', ex.url, ex.viewport.scrollY, token.signal);
+        history.push('Those results did not verify as the requested downloadable game. Try another observed matching result.');
+        continue;
+      }
+      if (decision.action === 'done') return null;
+      const key = JSON.stringify([ex.url, ex.viewport.scrollY, decision.action, decision.index]);
+      if (history.includes(key)) return null;
+      history.push(key);
+      session.assertLive(token);
+      if (decision.action === 'submit') {
+        await browser.clickElement('discovery', decision.index!, token.signal);
+        await browser.type('discovery', {key:'SelectAll'}, token.signal);
+        await browser.type('discovery', {text:entry.title}, token.signal);
+        await browser.type('discovery', {key:'Enter'}, token.signal);
+      } else if (decision.action === 'click') await browser.clickElement('discovery', decision.index!, token.signal);
+      else if (decision.action === 'scroll') await browser.scroll('discovery', 640, 400, 0, 650, token.signal);
+      else await new Promise<void>((resolve,reject)=>{
+        const abort=()=>{clearTimeout(timer);reject(Object.assign(Error('Cancelled'),{code:'cancelled'}));};
+        const timer=setTimeout(()=>{token.signal.removeEventListener('abort',abort);resolve();},1000);
+        token.signal.addEventListener('abort',abort,{once:true});
+      });
+    }
+    return null;
+  }
+
   private async find(query: string, sourceIds: number[] | undefined, token: SessionToken): Promise<StoreSearchResult> {
     const { session, catalog, sources, policy, browser, agent, discovery, ai, limiter } = this.deps;
     if(!searchTitle(query))return {id:null,message:'Enter a game title to search'};

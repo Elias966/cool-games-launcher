@@ -6,7 +6,7 @@ import { attempt, setState, setTab, useApp } from '../state';
 import { Button, Dialog, EmptyState, IconButton, ProgressRing } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { placeholderStyle } from '../components/GameCard';
-import type { DownloadItem } from '@shared/types';
+import type { DownloadItem, StoreJob } from '@shared/types';
 import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { duration, t, tk, locale } from '../i18n';
@@ -25,14 +25,16 @@ const STATE_LABEL: Record<DownloadItem['state'], string> = {
 
 export function DownloadsTab() {
   const downloads = useApp((s) => s.downloads);
+  const storeJobs = useApp((s) => s.stores.jobs);
   const groups = useMemo(() => {
     const attention = downloads.filter((d) => d.state === 'needs-user' || d.state === 'needs-resolution' || (d.state === 'paused' && d.errorCode === 'disk-full'));
     const live = downloads.filter((d) => ['active', 'queued', 'resolving'].includes(d.state) || (d.state === 'paused' && d.errorCode !== 'disk-full'));
     const done = downloads.filter((d) => d.state === 'completed');
     const failed = downloads.filter((d) => d.state === 'failed');
-    return { attention, live, done, failed };
+    const cancelled = downloads.filter((d) => d.state === 'cancelled');
+    return { attention, live, done, failed, cancelled };
   }, [downloads]);
-  const totalSpeed = downloads.filter((d) => d.state === 'active').reduce((n, d) => n + d.speedBps, 0);
+  const totalSpeed = downloads.filter((d) => d.state === 'active').reduce((n, d) => n + d.speedBps, 0) + storeJobs.filter((j) => j.state === 'active').reduce((n, j) => n + j.speedBps, 0);
 
   return (
     <div className="page page--downloads">
@@ -42,9 +44,9 @@ export function DownloadsTab() {
             <p className="eyebrow">{t('Transfers')}</p>
             <KineticTitle text={t('Downloads')} />
             <p className="page__subtitle">
-              {groups.live.length ? (
+              {groups.live.length || storeJobs.some((j) => ['active', 'queued'].includes(j.state)) ? (
                 <>
-                  {t('{n} active ·', { n: groups.live.filter((d) => d.state === 'active').length })}{' '}<span className="mono">{formatSpeed(totalSpeed)}</span>
+                  {t('{n} active ·', { n: groups.live.filter((d) => d.state === 'active').length + storeJobs.filter((j) => j.state === 'active').length })}{' '}<span className="mono">{formatSpeed(totalSpeed)}</span>
                 </>
               ) : (
                 t('The AI finds, downloads and prepares games in the background — use any tab meanwhile. Transfers resume after a restart.')
@@ -53,15 +55,17 @@ export function DownloadsTab() {
           </div>
         </header>
 
-        {downloads.length === 0 ? (
+        {downloads.length === 0 && storeJobs.length === 0 ? (
           <EmptyState icon="downloads" title={t('No downloads')} action={<Button variant="primary" icon="store" onClick={() => setTab('store')}>{t('Find games')}</Button>}>
             {t('Choose Download on a game in the Store. The AI finds the file, and the transfer appears here.')}</EmptyState>
         ) : (
           <>
+            <StoreTransfers jobs={storeJobs} />
             <TransferMap items={[...groups.live, ...groups.attention]} />
             {groups.attention.length > 0 && <Section title={t('Needs attention')} items={groups.attention} />}
             {groups.live.length > 0 && <Section title={t('Queue')} items={groups.live} reorder />}
             {groups.failed.length > 0 && <Section title={t('Failed')} items={groups.failed} clear="failed" />}
+            {groups.cancelled.length > 0 && <Section title={t('Cancelled')} items={groups.cancelled} />}
             {groups.done.length > 0 && <Section title={t('Completed')} items={groups.done} clear="completed" />}
           </>
         )}
@@ -228,7 +232,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
       </div>
       <div className="dl-row__main">
         <div className="dl-row__head">
-          <h3 className="dl-row__title">{d.title}{d.updateFor ? <span className="dl-row__tag">{t('Update')}</span> : null}{d.groupId && d.partIndex ? <span className="dl-row__tag dl-row__tag--part">{t('Part')}{' '}{d.partIndex}{d.partTotal ? `/${d.partTotal}` : ''}</span> : null}</h3>
+          <h3 className="dl-row__title">{d.title}</h3>{d.updateFor ? <span className="dl-row__tag">{t('Update')}</span> : null}{d.groupId && d.partIndex ? <span className="dl-row__tag dl-row__tag--part">{t('Part')}{' '}{d.partIndex}{d.partTotal ? `/${d.partTotal}` : ''}</span> : null}
           <span className={`state-pill state-pill--${tone}`}>{d.installState === 'installing' ? t('Preparing') : t(STATE_LABEL[d.state])}</span>
         </div>
         <p className="dl-row__sub">
@@ -257,6 +261,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
             {formatBytes(d.totalBytes)} · {d.installState === 'installed' ? d.installDetail ?? t('In Library') : d.installState === 'installing' ? d.installDetail ?? t('Installing…') : d.installState === 'failed' ? t('Install failed: {detail}', { detail: d.installDetail ?? '' }) : d.catalogId === null ? d.installDetail ?? t('Compatibility package') : t('Waiting to prepare')}
           </p>
         )}
+        {d.mirrorChoice && <p className="dl-row__sub">{t('Fastest tested host: {host} · {speed} ({n} mirrors)', { host: d.mirrorChoice.host, speed: formatSpeed(d.mirrorChoice.speedBps), n: d.mirrorChoice.tested })}</p>}
         {(d.userPrompt || d.errorDetail) && d.state !== 'completed' && <p className={`dl-row__msg dl-row__msg--${tone}`}>{d.userPrompt?.message ?? d.errorDetail}</p>}
       </div>
       <div className="dl-row__actions">
@@ -284,7 +289,7 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
         {d.state === 'completed' && <IconButton icon="folder" label={t('Show file')} onClick={() => call(() => api.invoke('download:reveal', { id: d.id }))} />}
         {reorder && !first && <IconButton icon="up" label={t('Move up')} onClick={() => call(() => api.invoke('download:move', { id: d.id, direction: 'up' }))} />}
         {reorder && !last && <IconButton icon="down" label={t('Move down')} onClick={() => call(() => api.invoke('download:move', { id: d.id, direction: 'down' }))} />}
-        {d.state !== 'completed' && d.state !== 'failed' ? (
+        {d.state !== 'completed' && d.state !== 'failed' && d.state !== 'cancelled' ? (
           <IconButton icon="close" label={t('Cancel download')} onClick={() => call(() => api.invoke('download:cancel', { id: d.id }))} />
         ) : (
           <IconButton icon="trash" label={t('Remove from list')} onClick={() => setConfirmRemove(true)} />
@@ -311,4 +316,45 @@ function DownloadRow({ d, first, last, reorder }: { d: DownloadItem; first: bool
       </Dialog>
     </motion.li>
   );
+}
+
+/** Store clients own their chunk checkpoints; their durable jobs share Downloads. */
+function StoreTransfers({ jobs }: { jobs: StoreJob[] }) {
+  if (!jobs.length) return null;
+  return <section className="dl-section" aria-label="GOG · Epic">
+    <div className="section-head"><h2 className="section-title">GOG · Epic <span className="section-title__count">{jobs.length}</span></h2></div>
+    <ul className="dl-list">{jobs.map((j) => <StoreDownloadRow key={`${j.store}:${j.id}`} job={j} />)}</ul>
+  </section>;
+}
+
+function StoreDownloadRow({ job: j }: { job: StoreJob }) {
+  const tone = j.state === 'failed' ? 'danger' : j.state === 'completed' ? 'ok' : j.state === 'paused' ? 'violet' : 'cyan';
+  const call = (channel: 'stores:pause' | 'stores:resume' | 'stores:cancel' | 'stores:remove') => void attempt(() => api.invoke(channel, { store: j.store, id: j.id }));
+  return <li className={`dl-row dl-row--${j.state}`}>
+    <div className="dl-row__visual"><ProgressRing value={j.progress} indeterminate={j.state === 'active' && j.progress === null} size={58} tone={tone}><Icon name="downloads" size={20} /></ProgressRing></div>
+    <div className="dl-row__main">
+      <div className="dl-row__head">
+        <h3 className="dl-row__title">{j.title}</h3>
+        {j.kind === 'update' && <span className="dl-row__tag">{t('Update')}</span>}
+        <span className={`state-pill state-pill--${tone}`}>{t(STATE_LABEL[j.state])}</span>
+      </div>
+      <p className="dl-row__sub">{j.store === 'gog' ? 'GOG' : 'Epic'}</p>
+      <div className="dl-row__stats mono">
+        {j.progress !== null && <span>{Math.round(j.progress * 100)}%</span>}
+        {j.receivedBytes > 0 && <span>{formatBytes(j.receivedBytes)}{j.totalBytes ? ` / ${formatBytes(j.totalBytes)}` : ''}</span>}
+        {j.state === 'active' && <span>{formatSpeed(j.speedBps)}</span>}
+        {j.state === 'active' && <span>{j.workers === 1 ? t('Single connection') : t('Up to {n} parallel downloads', { n: j.workers })}</span>}
+      </div>
+      {j.state === 'active' && <div className="bar" role="progressbar" aria-label={j.title} aria-valuemin={0} aria-valuemax={100} aria-valuenow={j.progress === null ? undefined : Math.round(j.progress * 100)}><span className={j.progress === null ? 'is-indeterminate' : ''} style={{ width: `${j.progress === null ? 30 : j.progress * 100}%` }} /></div>}
+      {j.detail && <p className="dl-row__msg dl-row__msg--danger">{j.detail}</p>}
+    </div>
+    <div className="dl-row__actions">
+      {['active', 'queued'].includes(j.state) && <IconButton icon="pause" label={t('Pause')} onClick={() => call('stores:pause')} />}
+      {j.state === 'paused' && <Button size="sm" variant="primary" icon="resume" onClick={() => call('stores:resume')}>{t('Resume')}</Button>}
+      {j.state === 'failed' && <Button size="sm" icon="retry" onClick={() => call('stores:resume')}>{t('Retry')}</Button>}
+      {['active', 'queued', 'paused'].includes(j.state) && <IconButton icon="close" label={t('Cancel download')} onClick={() => call('stores:cancel')} />}
+      {j.state === 'completed' && <Button size="sm" icon="library" onClick={() => setTab('library')}>{t('Library')}</Button>}
+      {['completed', 'failed', 'cancelled'].includes(j.state) && <IconButton icon="trash" label={t('Remove from list')} onClick={() => call('stores:remove')} />}
+    </div>
+  </li>;
 }

@@ -1,6 +1,10 @@
 // Arabic interface texts, keyed by the English text they replace (see i18n.ts).
 // Placeholders such as {n} must stay as they are.
 export const ar: Record<string, string> = {
+  'Testing download mirror {n} of {total}: {host}': 'اختبار مرآة التنزيل {n} من {total}: {host}',
+  'Testing download speed from {host}': 'اختبار سرعة التنزيل من {host}',
+  'Fastest tested host: {host} · {speed} ({n} mirrors)': 'أسرع مضيف تم اختباره: {host} · {speed} ({n} مرايا)',
+  'Up to {n} parallel downloads': 'حتى {n} تنزيلات متوازية',
   " (pre-release)": " (إصدار تجريبي)",
   " · Imported": " · مستورد",
   " · Update available": " · يتوفر تحديث",

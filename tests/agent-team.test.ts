@@ -195,3 +195,63 @@ describe('specialist agent tools',()=>{
   session.leave();await expect(ai.chatTools(token,'computer',[],[])).rejects.toThrow();expect(worker.call).toHaveBeenCalledTimes(2);
  });
 });
+
+it('rejects a different mirror during a host-specific sample and lets the model retry', async () => {
+ const s=setup({action:'left_click',coordinate:[200,300]});
+ const controls=[{i:1,text:'Download mirror A',href:'https://a.test/game.zip',inContent:true},{i:2,text:'Download mirror B',href:'https://b.test/game.zip',inContent:true}];
+ const observed={...ex,controls} as PageExtract;
+ s.browser.inspectPoint.mockResolvedValueOnce({text:'Download mirror B',password:false,untrustedRegion:false,download:true,index:2} as never);
+ const route={pageUrl:ex.url,url:controls[0].href,alternatives:controls.map(c=>c.href),blockedControls:[2]};
+ const step=await s.agent.next(observed,'interactive',s.token,'Test mirror A');
+ await expect(s.agent.execute(step,observed,s.token,true,route)).rejects.toThrow(/tested separately/);expect(s.browser.pointer).not.toHaveBeenCalled();
+ s.browser.inspectPoint.mockResolvedValueOnce({text:'Download mirror A',password:false,untrustedRegion:false,download:true,index:1} as never);
+ const retry=await s.agent.next(observed,'interactive',s.token,'Test mirror A');
+ await s.agent.execute(retry,observed,s.token,true,route);expect(s.browser.pointer).toHaveBeenCalledOnce();
+});
+
+describe('saved page before any game search',()=>{
+ const scope={pageUrl:ex.url,url:'',alternatives:[],blockedControls:[],gamePageUrl:ex.url};
+ it.each([
+  {action:'visit_url',url:'https://games.test/'},
+  {action:'visit_url',url:'https://games.test/?s=Orbit'},
+  {action:'visit_url',url:'https://games.test/search'},
+  {action:'web_search',query:'Orbit download'},
+  {action:'key',keys:['Control','l']},
+ ])('rejects an unnecessary $action detour while a saved game page exists',async(action)=>{
+  const s=setup(action),step=await s.agent.next(ex,'interactive',s.token,'Download indexed Orbit');
+  await expect(s.agent.execute(step,ex,s.token,true,scope)).rejects.toThrow(/saved|indexed/);
+  expect(s.browser.navigate).not.toHaveBeenCalled();expect(s.browser.type).not.toHaveBeenCalled();
+  s.ai.chatTools.mockResolvedValueOnce(native('computer_use',{action:'wait',time:0},'retry'));
+  await s.agent.execute(await s.agent.next(ex,'interactive',s.token,'Download indexed Orbit'),ex,s.token,true,scope);
+ });
+ it('blocks a homepage link found by screenshot even when extraction omitted its control ID',async()=>{
+  const s=setup({action:'left_click',coordinate:[250,500]});
+  s.browser.inspectPoint.mockResolvedValueOnce({text:'Home',index:null,href:'https://games.test/',password:false,untrustedRegion:false,download:false} as never);
+  await expect(s.agent.execute(await s.agent.next(ex,'interactive',s.token,'Download'),ex,s.token,true,scope)).rejects.toThrow(/indexed/);
+  expect(s.browser.pointer).not.toHaveBeenCalled();
+ });
+ it('prevents typing into an unnecessary game search field',async()=>{
+  const s=setup({action:'type',text:'Orbit'}),observed={...ex,inputState:{fields:[{id:1,label:'Search games',type:'search',value:'',focused:true}]}} as PageExtract;
+  await expect(s.agent.execute(await s.agent.next(observed,'interactive',s.token,'Download'),observed,s.token,true,scope)).rejects.toThrow(/Searching again/);
+  expect(s.browser.type).not.toHaveBeenCalled();
+ });
+ it('allows returning directly from a host to the saved indexed page',async()=>{
+  const s=setup({action:'visit_url',url:ex.url}),host={...ex,url:'https://host.test/file/token',links:[]} as PageExtract;
+  await s.agent.execute(await s.agent.next(host,'interactive',s.token,'Download'),host,s.token,true,scope);
+  expect(s.browser.navigate).toHaveBeenCalledWith('interactive',ex.url,s.token.signal);
+ });
+ it('tells the native agent the stored game URL instead of asking it to find the game',async()=>{
+  const s=setup({action:'wait',time:0}),agent=new LocalGameAgent({...s.ai,specialists:true} as never,s.browser as never,s.session);
+  await agent.transfer(ex,s.token,'Orbit',[],[],'',ex.url);
+  expect(JSON.stringify(s.ai.chatTools.mock.calls[0][2])).toContain('already indexed at '+ex.url);
+  expect(JSON.stringify(s.ai.chatTools.mock.calls[0][2])).toContain('only if the saved page is unavailable');
+ });
+});
+
+it('keeps an observed file-host download query usable while blocking game searches',async()=>{
+ const s=setup({action:'visit_url',url:'https://host.test/?file=token'});
+ const page={...ex,url:'https://host.test/file/token',cards:[],links:[{i:0,href:'https://host.test/?file=token',text:'Download file',download:false,inContent:true,rect:{x:0,y:0,w:1,h:1},img:null}]} as PageExtract;
+ const scope={pageUrl:page.url,url:page.url,alternatives:[],blockedControls:[],gamePageUrl:ex.url};
+ await s.agent.execute(await s.agent.next(page,'interactive',s.token,'Download'),page,s.token,true,scope);
+ expect(s.browser.navigate).toHaveBeenCalledWith('interactive','https://host.test/?file=token',s.token.signal);
+});

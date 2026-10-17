@@ -137,6 +137,14 @@ describe('UpdateService', () => {
     svc.evaluate(game, fp({ files: ['orbit.zip'] }), { status: 200, etag: '"b"', lastModified: null, bytes: 120 });
     expect(games.get(game)?.update).toMatchObject({ state: 'available', reason: 'the download file changed on the server' });
   });
+  it('leaves store-linked copies out of website update checks and announcements', () => {
+    const { svc, games, game, catalog } = service();
+    svc.evaluate(game, fp({ version: '1.2' }));
+    games.update(game, { store: 'gog', storeId: '123' });
+    catalog.setVersion(games.get(game)!.catalogId!, fp({ version: '2.0' }));
+    svc.afterDetail(games.get(game)!.catalogId!);
+    expect(svc.checkNow()).toBe(0); expect(games.get(game)?.update).toBeNull();
+  });
   it('starts the update by itself in automatic mode', () => {
     const { svc, game, startUpdate } = service('auto');
     svc.evaluate(game, fp({ version: '1.2' }));

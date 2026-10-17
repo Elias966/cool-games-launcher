@@ -65,10 +65,11 @@ export class BrowserView {
   /** Open a source on a fresh browser, while preserving a page the user already opened. */
   async showDefault(url: string | null) {
     if (!this.session.active || this.open) return;
-    const shot = await this.browser.snapshot(this.context, false);
-    if (!this.session.active) return;
+    const context = this.context;
+    const shot = await this.browser.snapshot(context, false);
+    if (!this.session.active || this.open || context !== this.context) return;
     if (url && !/^https?:/i.test(shot.url)) {
-      await this.browser.navigate(this.context, url);
+      await this.browser.navigateIfBlank(context, url);
     }
     if (this.session.active) this.show(this.context);
   }
@@ -157,6 +158,7 @@ export class BrowserView {
       width: shot.w,
       height: shot.h,
       loading: shot.loading,
+      verificationRequired: !!(shot.gates?.captcha || shot.gates?.login || shot.gates?.blocked),
       nsfw: verdict.adult,
       policyRevision: policy.revision,
     });

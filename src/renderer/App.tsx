@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
-import { Component, Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, Fragment, lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { boot, pushToast, setState, setTab, useApp } from './state';
 import { Dock, TABS, TitleBar } from './components/Chrome';
 import { Toasts } from './components/ui';
@@ -35,6 +35,8 @@ function webglAvailable(): boolean {
   }
 }
 const WEBGL = webglAvailable();
+
+const Pages = { store: memo(StoreTab), library: memo(LibraryTab), downloads: memo(DownloadsTab), settings: memo(SettingsTab) };
 
 const ACTIVITY: Record<string, number> = { idle: 0, loading: 0.5, thinking: 1, navigating: 0.6, classifying: 0.4, paused: 0.2 };
 
@@ -140,16 +142,15 @@ export function App() {
 
   // While a page scrolls the 3D background holds still (its last frame stays on
   // screen), so the GPU only has the list to draw: smooth scrolling on integrated GPUs.
-  const [scrolling, setScrolling] = useState(false);
   // While a page scrolls, glass panels floating over it drop their live blur
   // (re-blurring moving content every frame is the most expensive effect).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const root = document.documentElement;
     const onScroll = () => {
-      if (!timer) { root.classList.add('is-scrolling'); setScrolling(true); }
+      if (!timer) { root.classList.add('is-scrolling'); }
       else clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; root.classList.remove('is-scrolling'); setScrolling(false); }, 160);
+      timer = setTimeout(() => { timer = null; root.classList.remove('is-scrolling'); }, 650);
     };
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     return () => { window.removeEventListener('scroll', onScroll, { capture: true }); if (timer) clearTimeout(timer); };
@@ -160,6 +161,7 @@ export function App() {
     return Math.min(1, bps / (25 * 1024 * 1024));
   }, [downloads]);
 
+  const Page = Pages[tab];
   const activity = ai.storeActive ? (ACTIVITY[ai.phase] ?? 0) : 0;
 
   return (
@@ -169,7 +171,7 @@ export function App() {
         {WEBGL && (
           <SceneBoundary>
             <Suspense fallback={null}>
-              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible && !gaming && !scrolling} />
+              <OrbitalScene tab={tab} activity={activity} flow={flow} animate={animate} low={low} visible={appVisible && !gaming} />
             </Suspense>
           </SceneBoundary>
         )}
@@ -195,16 +197,13 @@ export function App() {
                 role="tabpanel"
                 aria-labelledby={`tab-${tab}`}
                 className="panel"
-                style={{ transformPerspective: 1400 }}
-                initial={reduced ? false : { opacity: 0, y: 26, scale: 0.975, rotateX: 4, filter: low ? 'none' : 'blur(10px)' }}
-                animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0, filter: 'blur(0px)' }}
-                exit={reduced ? { opacity: 0 } : { opacity: 0, y: -16, scale: 1.015, filter: low ? 'none' : 'blur(8px)' }}
-                transition={{ duration: reduced ? 0 : 0.45, ease: [0.16, 1, 0.3, 1] }}
+
+                initial={reduced ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
+                transition={{ duration: reduced ? 0 : 0.2, ease: [0.16, 1, 0.3, 1] }}
               >
-                {tab === 'store' && <StoreTab />}
-                {tab === 'library' && <LibraryTab />}
-                {tab === 'downloads' && <DownloadsTab />}
-                {tab === 'settings' && <SettingsTab />}
+                <Page />
               </motion.div>
             </AnimatePresence>
           )}

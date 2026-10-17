@@ -2,19 +2,21 @@
 // extraction is consulted only to validate a proposed action, never to pick it.
 import {z} from 'zod';
 import protocol from '@shared/fara-protocol.json';
-import type {PageExtract} from '@shared/page-extract';
+import type {PageExtract,ExtractControl} from '@shared/page-extract';
 import type {AiService,AgentMessage,AgentTool} from './ai';
 import type {BrowserClient,BrowserContext} from './browser-client';
 import type {StoreSession,SessionToken} from './store-session';
 import {CancelledError} from '@shared/worker-protocol';
-import {isCatalogNavigation,isFileUrl} from '@shared/download-evidence';
+import {isCatalogNavigation,isDownloadControl,isFileUrl} from '@shared/download-evidence';
 import {faraSystemPrompt} from '@shared/fara-chat';
 import {hostOf,siteKey} from '@shared/urls';
 import { tm } from './i18n';
+import { isSearchField, isSiteBrowseUrl } from '@shared/download-page';
 
 const actionSchema=z.object({action:z.string(),element:z.number().int().min(0).optional(),coordinate:z.tuple([z.number().min(0).max(1000),z.number().min(0).max(1000)]).optional(),keys:z.array(z.string()).max(4).optional(),text:z.string().max(2000).optional(),pixels:z.number().min(-2000).max(2000).optional(),url:z.string().max(2048).optional(),query:z.string().max(200).optional(),fact:z.string().max(1000).optional(),question:z.string().max(1000).optional(),time:z.number().min(0).max(30).optional(),answer:z.string().max(2000).optional()}).strict();
 export type ComputerAction=z.infer<typeof actionSchema>;
 export interface BrowserAgentAction {action:ComputerAction;context:BrowserContext;width:number;height:number;epoch:number;turn:number;taskKey:string;goal:string;agentRole:'browsing'|'computer'}
+export interface BrowserRouteConstraint { pageUrl: string; url: string; alternatives: string[]; blockedControls: number[]; gamePageUrl?: string }
 export class BrowserActionRejectedError extends Error { override readonly name='BrowserActionRejectedError'; }
 const forbidden=/\b(?:buy|purchase|checkout|subscribe|sign ?(?:in|up)|log ?in|register|advertisement|sponsored|browser extension|driver updater|download manager)\b/i;
 const browserKeys=['Enter','Tab','Escape','Backspace','ArrowUp','ArrowDown','PageUp','PageDown','Home','End'];
@@ -120,12 +122,18 @@ export class BrowserAgent {
     }
   }
 
-  async execute(step:BrowserAgentAction,ex:PageExtract,token:SessionToken,allowDownload:boolean):Promise<'continue'|'done'|'human'>{
+  async execute(step:BrowserAgentAction,ex:PageExtract,token:SessionToken,allowDownload:boolean, route?:BrowserRouteConstraint):Promise<'continue'|'done'|'human'>{
     this.session.assertLive(token,'Fara browser action');
     if(step.epoch!==token.epoch)throw new CancelledError('Stale browser action');
     const pending=this.tasks.get(step.taskKey);
     if(!pending?.pending||pending.turn!==step.turn)throw Error('This browser action has already completed');
     const {action:a,context,width,height}=step;
+    const assertRoute = (control?: ExtractControl, url?: string) => {
+      if (allowDownload && route?.gamePageUrl && hostOf(ex.url) === hostOf(route.gamePageUrl) && control && isSearchField({label: control.text})) throw new BrowserActionRejectedError('This game already has a saved page. Do not open the site search during transfer. Nothing was clicked.');
+      if (allowDownload && route?.gamePageUrl && url && isSiteBrowseUrl(url, route.gamePageUrl)) throw new BrowserActionRejectedError('The game is already indexed. Use its saved game page and download links; homepage/search navigation is not needed. Nothing was opened.');
+      if (!route || ex.url.split('#')[0] !== route.pageUrl.split('#')[0]) return;
+      if (control && route.blockedControls.includes(control.i) || url && url !== route.url && route.alternatives.includes(url)) throw new BrowserActionRejectedError('This mirror is being tested separately. Choose only the requested mirror; nothing was clicked.');
+    };
     const point=()=>{if(!a.coordinate)throw Error('Missing browser coordinates');return {x:Math.min(width-1,Math.round(a.coordinate[0]*width/1000)),y:Math.min(height-1,Math.round(a.coordinate[1]*height/1000))};};
     try{
       if(['left_click','double_click','triple_click','right_click'].includes(a.action)){
@@ -135,12 +143,15 @@ export class BrowserAgent {
         this.session.assertLive(token);
         if(target.password||forbidden.test(target.text)||target.untrustedRegion)throw new BrowserActionRejectedError('Browser tool rejected a login, advertisement or unrelated page region. Nothing was clicked. Observed target: '+target.text);
         const observed=ex.controls.find(c=>c.i===target.index);
+        if (allowDownload && route?.gamePageUrl && hostOf(ex.url) === hostOf(route.gamePageUrl) && isSearchField({label: target.text})) throw new BrowserActionRejectedError('This game already has a saved page. Do not open the site search during transfer. Nothing was clicked.');
+        assertRoute(observed, observed?.href ?? target.href ?? undefined);
         if(observed&&(observed.inContent===false||isCatalogNavigation(ex,observed)))throw new BrowserActionRejectedError('Browser tool rejected an unrelated game or navigation control. Nothing was clicked. Observed target: '+observed.text);
         if(!allowDownload&&target.download)throw Error('Discovery may inspect games but cannot start a transfer');
         const repeats=a.action==='double_click'?2:a.action==='triple_click'?3:1;
         for(let i=0;i<repeats;i++){this.session.assertLive(token);await this.browser.pointer(context,p.x,p.y,a.action==='right_click'?'right':'left',token.signal);}
       }else if(a.action==='click_element'){
         const target=ex.controls.find(c=>c.i===a.element);
+        assertRoute(target, target?.href ?? undefined);
         if(!target)throw new BrowserActionRejectedError('Computer tool rejected an unobserved page control. Nothing was clicked.');
         if(target.inContent===false||forbidden.test(target.text)||isCatalogNavigation(ex,target))throw new BrowserActionRejectedError('Computer tool rejected an unrelated game, login or advertisement. Nothing was clicked. Observed target: '+target.text);
         if(!allowDownload&&target.href&&isFileUrl(target.href))throw new BrowserActionRejectedError('Discovery cannot start a file transfer. Nothing was clicked.');
@@ -155,11 +166,17 @@ export class BrowserAgent {
         // Untrusted pages could plant URLs: allow the current site, observed links and search results only.
         const url=a.url&&/^https?:\/\//.test(a.url)?a.url:a.url&&/^[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(a.url)?'https://'+a.url:null;
         if(!url)throw new BrowserActionRejectedError('Browser tool rejected an invalid URL. Nothing was opened.');
-        const known=[ex.url,...ex.links.map(l=>l.href)].includes(url)||siteKey(hostOf(url))===siteKey(hostOf(ex.url))||/(?:^|\.)bing\.com$/.test(hostOf(ex.url));
+        assertRoute(undefined, url);
+        const linked = ex.links.find(l => l.href === url);
+        const linkControl = linked && { ...linked, tag: 'a', inViewport: true };
+        const fileQuery = linkControl && new URL(url).search && isDownloadControl(linkControl) && !/[?&](?:s|q|query|search)=/i.test(url);
+        if (allowDownload && linkControl && !linked?.download && !fileQuery && isCatalogNavigation(ex, linkControl)) throw new BrowserActionRejectedError('This is unrelated catalog navigation. Continue from the saved game page; nothing was opened.');
+        const known=[ex.url,...ex.links.map(l=>l.href),route?.gamePageUrl,route?.url].includes(url)||!allowDownload&&(siteKey(hostOf(url))===siteKey(hostOf(ex.url))||/(?:^|\.)bing\.com$/.test(hostOf(ex.url)));
         if(!known)throw new BrowserActionRejectedError('Browser tool only opens links observed on the current page or its own site. Nothing was opened.');
         if(!allowDownload&&/\.(?:zip|rar|7z|exe|msi)(?:[?#]|$)/i.test(url))throw Error('Discovery cannot start a transfer');
         await this.browser.navigate(context,url,token.signal);
       }else if(a.action==='web_search'){
+        if (allowDownload) throw new BrowserActionRejectedError('Use the saved indexed game page. The launcher searches only after that page is confirmed unavailable.');
         if(!a.query)throw Error('Missing search query');
         // Same search page Microsoft's harness uses in training and evaluation.
         await this.browser.navigate(context,`https://www.bing.com/search?q=${encodeURIComponent(a.query)}&FORM=QBLH`,token.signal);
@@ -170,12 +187,14 @@ export class BrowserAgent {
         this.session.assertLive(token);this.result(step,`I read the page to answer: ${question}\nAnswer: ${String(r.answer).slice(0,1000)}`);return 'continue';
       }else if(a.action==='type'){
         if(!a.text)throw Error('Missing text');
+        if (allowDownload && route?.gamePageUrl && hostOf(ex.url) === hostOf(route.gamePageUrl) && ex.inputState?.fields.some(f => f.focused && isSearchField(f))) throw new BrowserActionRejectedError('This game already has a saved page. Searching again is not needed; nothing was typed.');
         if(ex.inputState?.fields.some(f=>f.focused)&&!ex.gates.login)await this.browser.type(context,{text:a.text},token.signal);
         else throw new BrowserActionRejectedError('Browser typing requires an observed non-password input. Nothing was typed. Inspect the current screenshot and focus before continuing.');
       }else if(a.action==='key'){
         const keys=a.keys??[];
         // Shortcuts that would close or replace the browser window stay off-limits.
         const mods=keys.filter(k=>/^(?:control|ctrl|alt|meta)$/i.test(k));
+        if (allowDownload && route?.gamePageUrl && (mods.length && keys.some(k=>/^[ld]$|^f6$/i.test(k)) || hostOf(ex.url) === hostOf(route.gamePageUrl) && ex.inputState?.fields.some(f => f.focused && isSearchField(f)))) throw new BrowserActionRejectedError('Continue from the saved indexed game page. Address-bar and game-search shortcuts are unavailable during transfer.');
         if(!keys.length||mods.length&&keys.some(k=>/^[wqtnr]$|^f4$/i.test(k)))throw new BrowserActionRejectedError('Browser tool rejected that keyboard shortcut. Nothing was pressed.');
         await this.browser.type(context,keys.length===1&&browserKeys.includes(keys[0])?{key:keys[0]}:{keys},token.signal);
       }else if(a.action==='wait')await this.wait(Math.min(a.time??1,30)*1000,token.signal);

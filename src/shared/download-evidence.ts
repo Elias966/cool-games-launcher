@@ -76,7 +76,7 @@ export function downloadControls(ex: PageExtract): ExtractControl[] {
   });
 }
 
-export function downloadEvidence(ex: PageExtract): DownloadCandidate[] {
+export function downloadEvidence(ex: PageExtract, limit = 30): DownloadCandidate[] {
   const out: DownloadCandidate[] = [];
   for (const l of ex.fileLinks) {
     const control = ex.controls.find((c) => c.i === l.i);
@@ -90,7 +90,7 @@ export function downloadEvidence(ex: PageExtract): DownloadCandidate[] {
     if (!u.href && (u.i === null || !Number.isFinite(u.i))) continue;
     out.push({ url: u.href ?? `${ex.url.split('#')[0]}#cgl-upload-${i}`, label: u.name, fileName: u.name, platform: (u.platforms[0] as Platform | undefined) ?? platformFrom(u.name), sizeText: u.size });
   }
-  return [...new Map(out.map((c) => [c.url, c])).values()].slice(0, 30);
+  return [...new Map(out.map((c) => [c.url, c])).values()].slice(0, limit);
 }
 
 function fileName(url: string): string | null {

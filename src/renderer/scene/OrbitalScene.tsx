@@ -5,9 +5,8 @@
 // frame is a handful of uniform writes. It never carries information that is
 // not also in the HTML interface.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, ChromaticAberration, EffectComposer, Noise, Vignette } from '@react-three/postprocessing';
-import { BlendFunction } from 'postprocessing';
-import { useEffect, useMemo, useRef } from 'react';
+import { Bloom, EffectComposer } from '@react-three/postprocessing';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { TabId } from '@shared/types';
 import { BlockArena } from './BlockArena';
@@ -88,6 +87,7 @@ vec3 palette(float t,float hue){
 
 /** Volumetric-looking nebula on a large inward sphere, slowly evolving. */
 function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
+  const uniforms1 = useMemo(() => ({ uTime: { value: 0 }, uHue: { value: 0 }, uActivity: { value: 0 } }), []);
   const mat = useRef<THREE.ShaderMaterial>(null);
   useFrame(() => {
     if (!mat.current) return;
@@ -102,7 +102,7 @@ function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
         ref={mat}
         side={THREE.BackSide}
         depthWrite={false}
-        uniforms={{ uTime: { value: 0 }, uHue: { value: 0 }, uActivity: { value: 0 } }}
+        uniforms={uniforms1}
         vertexShader={/* glsl */ `
           varying vec3 vDir;
           void main(){ vDir=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`}
@@ -113,9 +113,10 @@ function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
           void main(){
             vec3 d=vDir;
             float t=uTime*0.012;
-            // Domain-warped clouds, densest toward a band across the view.
-            vec3 q=vec3(fbm(d*1.6+t),fbm(d*1.6-t+3.1),0.0);
-            float n=fbm(d*2.4+q*1.4+vec3(0.0,t*2.0,0.0));
+            // Two cloud scales keep the background soft without fifteen
+            // simplex-noise evaluations for every screen pixel.
+            float n=snoise(d*2.4+vec3(0.0,t*2.0,0.0))*0.55
+              +snoise(d*5.3-vec3(t,0.0,t))*0.25;
             float by=d.y*2.2-0.15; float band=exp(-by*by);
             // Dark voids between clouds keep it cosmic rather than smoky.
             float dens=pow(smoothstep(0.0,0.9,n),1.7)*(0.3+0.7*band);
@@ -133,6 +134,8 @@ function Nebula({ pulse }: { pulse: React.RefObject<Pulse> }) {
 
 /** Stars as twinkling points that stretch into hyperspace streaks while warping. */
 function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> }) {
+  const uniforms1 = useMemo(() => ({ uTime: { value: 0 }, uWarp: { value: 0 } }), []);
+  const uniforms2 = useMemo(() => ({ uWarp: { value: 0 } }), []);
   const pointsMat = useRef<THREE.ShaderMaterial>(null);
   const linesMat = useRef<THREE.ShaderMaterial>(null);
   const { points, lines } = useMemo(() => {
@@ -181,7 +184,7 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
         <shaderMaterial
           ref={pointsMat}
           transparent depthWrite={false} blending={THREE.AdditiveBlending} vertexColors
-          uniforms={{ uTime: { value: 0 }, uWarp: { value: 0 } }}
+          uniforms={uniforms1}
           vertexShader={/* glsl */ `
             attribute float seed; varying vec3 vColor; varying float vTw; uniform float uTime; uniform float uWarp;
             void main(){
@@ -200,7 +203,7 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
         <shaderMaterial
           ref={linesMat}
           transparent depthWrite={false} blending={THREE.AdditiveBlending} vertexColors
-          uniforms={{ uWarp: { value: 0 } }}
+          uniforms={uniforms2}
           vertexShader={/* glsl */ `
             attribute float tail; varying vec3 vColor; varying float vA; uniform float uWarp;
             void main(){
@@ -220,6 +223,7 @@ function Stars({ count, pulse }: { count: number; pulse: React.RefObject<Pulse> 
 
 /** Grid floor with shockwave pulses rolling out from under the core. */
 function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: React.RefObject<THREE.Group | null> }) {
+  const uniforms1 = useMemo(() => ({ uTime: { value: 0 }, uHue: { value: 0 }, uActivity: { value: 0 }, uCenter: { value: new THREE.Vector2(0, -6) } }), []);
   const mat = useRef<THREE.ShaderMaterial>(null);
   useFrame(() => {
     if (!mat.current) return;
@@ -235,7 +239,7 @@ function GridFloor({ pulse, center }: { pulse: React.RefObject<Pulse>; center: R
       <shaderMaterial
         ref={mat}
         transparent depthWrite={false}
-        uniforms={{ uTime: { value: 0 }, uHue: { value: 0 }, uActivity: { value: 0 }, uCenter: { value: new THREE.Vector2(0, -6) } }}
+        uniforms={uniforms1}
         vertexShader={/* glsl */ `varying vec3 vW; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`}
         fragmentShader={/* glsl */ `
           uniform float uTime; uniform float uHue; uniform float uActivity; uniform vec2 uCenter;
@@ -330,6 +334,8 @@ function Rig({ tab, animate, pulse }: { tab: TabId; animate: boolean; pulse: Rea
 
 /** Shockwave shell, flat ring and particle burst fired by interface events. */
 function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
+  const uniforms1 = useMemo(() => ({ uFade: { value: 0 }, uHue: { value: 0 } }), []);
+  const uniforms2 = useMemo(() => ({ uAge: { value: 10 }, uHue: { value: 0 } }), []);
   const shell = useRef<THREE.Mesh>(null);
   const shellMat = useRef<THREE.ShaderMaterial>(null);
   const ring = useRef<THREE.Mesh>(null);
@@ -369,7 +375,7 @@ function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
         <shaderMaterial
           ref={shellMat}
           transparent depthWrite={false} blending={THREE.AdditiveBlending}
-          uniforms={{ uFade: { value: 0 }, uHue: { value: 0 } }}
+          uniforms={uniforms1}
           vertexShader={/* glsl */ `varying vec3 vN; varying vec3 vV; void main(){ vN=normalize(normalMatrix*normal); vec4 mv=modelViewMatrix*vec4(position,1.0); vV=normalize(-mv.xyz); gl_Position=projectionMatrix*mv; }`}
           fragmentShader={/* glsl */ `uniform float uFade; uniform float uHue; varying vec3 vN; varying vec3 vV; ${NOISE}
             void main(){ float f=pow(1.0-abs(dot(vN,vV)),3.0); gl_FragColor=vec4(palette(f,uHue)*2.0,f*uFade); }`}
@@ -383,7 +389,7 @@ function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
         <shaderMaterial
           ref={sparks}
           transparent depthWrite={false} blending={THREE.AdditiveBlending}
-          uniforms={{ uAge: { value: 10 }, uHue: { value: 0 } }}
+          uniforms={uniforms2}
           vertexShader={/* glsl */ `attribute vec4 dir; uniform float uAge; varying float vA; varying float vT;
             void main(){
               float a=uAge; float e=1.0-pow(1.0-clamp(a/1.2,0.0,1.0),3.0);
@@ -403,6 +409,7 @@ function Shockwave({ pulse }: { pulse: React.RefObject<Pulse> }) {
 
 /** Occasional comets streaking across the deep background. */
 function Comets({ pulse }: { pulse: React.RefObject<Pulse> }) {
+  const uniforms1 = useMemo(() => ({ uTime: { value: 0 } }), []);
   const COUNT = 7;
   const mat = useRef<THREE.ShaderMaterial>(null);
   const geo = useMemo(() => {
@@ -423,7 +430,7 @@ function Comets({ pulse }: { pulse: React.RefObject<Pulse> }) {
       <shaderMaterial
         ref={mat}
         transparent depthWrite={false} blending={THREE.AdditiveBlending}
-        uniforms={{ uTime: { value: 0 } }}
+        uniforms={uniforms1}
         vertexShader={/* glsl */ `attribute vec4 seed; uniform float uTime; varying float vA;
           void main(){
             float period=9.0+seed.x*14.0;
@@ -474,8 +481,8 @@ function SceneWatch({ tab }: { tab: TabId }) {
   const lastStall = useRef(0);
   useEffect(() => {
     const canvas = gl.domElement;
-    const lost = () => report('context-lost', 'the GPU dropped the background');
-    const restored = () => report('context-restored', '');
+    const lost = (event: Event) => { event.preventDefault(); canvas.style.opacity = '0'; report('context-lost', 'the GPU dropped the background'); };
+    const restored = () => { canvas.style.opacity = '1'; gl.resetState(); report('context-restored', ''); };
     canvas.addEventListener('webglcontextlost', lost);
     canvas.addEventListener('webglcontextrestored', restored);
     return () => { canvas.removeEventListener('webglcontextlost', lost); canvas.removeEventListener('webglcontextrestored', restored); };
@@ -522,15 +529,31 @@ function Invalidator({ deps }: { deps: unknown[] }) {
  * a white layer flickering.
  */
 function Effects() {
-  const offset = useMemo(() => new THREE.Vector2(0.0006, 0.0009), []);
   return (
     <EffectComposer multisampling={0}>
-      <Bloom mipmapBlur luminanceThreshold={0.18} luminanceSmoothing={0.3} intensity={1.15} radius={0.75} />
-      <ChromaticAberration offset={offset} radialModulation modulationOffset={0.35} />
-      <Noise premultiply blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.35} />
-      <Vignette eskil={false} offset={0.22} darkness={0.75} />
+      <Bloom mipmapBlur resolutionScale={0.5} luminanceThreshold={0.25} luminanceSmoothing={0.3} intensity={0.85} radius={0.65} />
     </EffectComposer>
   );
+}
+
+/** Keep one demand loop for the life of the canvas. Pause invalidations while
+ * scrolling; never restart Fiber's clock or rebuild the renderer/composer. */
+function FrameScheduler({ animate, visible }: { animate: boolean; visible: boolean }) {
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    if (!visible) return;
+    invalidate();
+    if (!animate) return;
+    let raf = 0, last = 0;
+    const tick = (now: number) => {
+      if (document.documentElement.classList.contains('is-scrolling')) { last = now; }
+      else if (now - last >= 1000 / 30) { last = now; invalidate(); }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [animate, visible, invalidate]);
+  return null;
 }
 
 /**
@@ -539,23 +562,25 @@ function Effects() {
  * (black) frame before the next one is drawn; tab switches dip the frame rate
  * long enough to trigger that, so the background blacked out while switching.
  */
-const DPR = Math.min(1.25, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+const DPR = 0.85;
 
-export function OrbitalScene(props: SceneProps) {
+export const OrbitalScene = memo(function OrbitalScene(props: SceneProps) {
   const { tab, activity, flow, animate, low, visible } = props;
-  const frameloop = !visible ? 'never' : animate ? 'always' : 'demand';
+  const camera = useMemo(() => ({ fov: 46, near: 0.1, far: 160, position: CAMERA_TARGETS.store.pos }), []);
+  const renderer = useMemo(() => ({ antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' as const, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }), []);
   const pulse = useRef<Pulse>({ activity: 0, flow: 0, warp: 0, hue: CAMERA_TARGETS[tab].hue, shockAt: -100, focus: 0, shake: 0, time: 0, dt: 0 });
   const structure = useRef<THREE.Group | null>(null);
   return (
     <div className="scene" aria-hidden="true">
       <Canvas
-        frameloop={frameloop}
-        dpr={low ? 1 : DPR}
+        frameloop="demand"
+        dpr={DPR}
         // preserveDrawingBuffer: the compositor can always show the last frame, so
         // layer changes elsewhere on the page (card hover, page transitions) do not flash.
-        gl={{ antialias: !low, alpha: false, preserveDrawingBuffer: true, powerPreference: low ? 'low-power' : 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.25 }}
-        camera={{ fov: 46, near: 0.1, far: 160, position: CAMERA_TARGETS[tab].pos }}
+        gl={renderer}
+        camera={camera}
       >
+        <FrameScheduler animate={animate} visible={visible} />
         <Timebase pulse={pulse} />
         <color attach="background" args={['#05070c']} />
         <fog attach="fog" args={['#070a12', 18, 80]} />
@@ -572,4 +597,4 @@ export function OrbitalScene(props: SceneProps) {
       </Canvas>
     </div>
   );
-}
+});

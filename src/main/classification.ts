@@ -2,7 +2,7 @@
 // cache, runs the ONNX classifier, and combines image and text evidence.
 // Any failure leaves the entry `unknown`, which keeps it hidden.
 import { createHash } from 'node:crypto';
-import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { combineClassification, textAdultSignals } from '@shared/policy';
 import { hostOf } from '@shared/urls';
@@ -24,6 +24,7 @@ const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 export const BROWSER_UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0';
 
 export class ArtworkCache {
+  private pending = new Map<string, Promise<string>>();
   constructor(
     private dir: string,
     private limiter: HostRateLimiter,
@@ -47,8 +48,21 @@ export class ArtworkCache {
   async fetch(url: string, referer: string | null, signal?: AbortSignal): Promise<string> {
     const cached = this.fileFor(url);
     if (cached) return cached;
+    // Requests with their own cancellation keep independent lifetimes.
+    if (signal) return this.download(url, referer, signal);
+    let pending = this.pending.get(url);
+    if (!pending) {
+      pending = this.download(url, referer).finally(() => this.pending.delete(url));
+      this.pending.set(url, pending);
+    }
+    return pending;
+  }
+
+  private async download(url: string, referer: string | null, signal?: AbortSignal): Promise<string> {
     if (!/^https?:\/\//i.test(url)) throw new Error('Unsupported image URL');
     await this.limiter.wait(`img:${hostOf(url)}`, 400, signal);
+    const cached = this.fileFor(url);
+    if (cached) return cached;
     const res = await fetch(url, {
       headers: { 'User-Agent': BROWSER_UA, Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8', ...(referer ? { Referer: referer } : {}) },
       redirect: 'follow',
@@ -63,7 +77,9 @@ export class ArtworkCache {
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > MAX_IMAGE_BYTES || buf.length < 64) throw new Error('Image size out of range');
     const file = `${createHash('sha1').update(url).digest('hex')}.${ext}`;
-    writeFileSync(join(this.dir, file), buf);
+    const temp = join(this.dir, `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+    writeFileSync(temp, buf);
+    renameSync(temp, join(this.dir, file));
     return file;
   }
 }

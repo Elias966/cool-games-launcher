@@ -104,9 +104,9 @@ export function SettingsTab() {
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={section}
-                initial={reduced ? false : { opacity: 0, x: 18, filter: 'blur(6px)' }}
-                animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
-                exit={reduced ? { opacity: 0 } : { opacity: 0, x: -12, filter: 'blur(4px)' }}
+                initial={reduced ? false : { opacity: 0, x: 18 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={reduced ? { opacity: 0 } : { opacity: 0, x: -12 }}
                 transition={{ duration: reduced ? 0 : 0.28, ease: [0.16, 1, 0.3, 1] }}
               >
                 <header className="st__head">

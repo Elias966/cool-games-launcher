@@ -7,7 +7,7 @@ function view(url: string) {
   const session = new StoreSession();
   session.enter();
   const policy = Object.assign(new EventEmitter(), { policy: () => ({ revision: 1, showNsfw: false }) });
-  const browser = { pointer: vi.fn(async () => undefined), scroll: vi.fn(async () => undefined), type: vi.fn(async () => undefined), history: vi.fn(async () => undefined), snapshot: vi.fn(async () => ({ url })), navigate: vi.fn(async () => undefined) };
+  const browser = { pointer: vi.fn(async () => undefined), scroll: vi.fn(async () => undefined), type: vi.fn(async () => undefined), history: vi.fn(async () => undefined), snapshot: vi.fn(async () => ({ url })), navigateIfBlank: vi.fn(async () => undefined), navigate: vi.fn(async () => undefined) };
   const drawer = new BrowserView(browser as never, {} as never, policy as never, {} as never, session);
   drawer.setWindowVisible(false);
   return { drawer, browser, session };
@@ -18,7 +18,7 @@ describe('Store browser initial navigation', () => {
     const { drawer, browser, session } = view('about:blank');
     try {
       await drawer.showDefault('https://games.test/');
-      expect(browser.navigate).toHaveBeenCalledWith('interactive', 'https://games.test/');
+      expect(browser.navigateIfBlank).toHaveBeenCalledWith('interactive', 'https://games.test/');
       expect(drawer.isOpen).toBe(true);
     } finally { session.leave(); }
   });
@@ -55,4 +55,18 @@ describe('Store browser initial navigation', () => {
     expect(browser.navigate).not.toHaveBeenCalled();
     expect(drawer.isOpen).toBe(false);
   });
+});
+
+it('does not overwrite a resolver page when the startup screenshot returns late', async () => {
+  const {drawer,browser,session}=view('about:blank');
+  let complete!: (value:{url:string})=>void;
+  browser.snapshot.mockImplementationOnce(()=>new Promise(r=>{complete=r;}));
+  try {
+    const opening=drawer.showDefault('https://games.test/');
+    drawer.show('interactive');
+    complete({url:'about:blank'});
+    await opening;
+    expect(browser.navigateIfBlank).not.toHaveBeenCalled();
+    expect(browser.navigate).not.toHaveBeenCalled();
+  } finally {session.leave();}
 });

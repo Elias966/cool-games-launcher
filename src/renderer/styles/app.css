@@ -3407,9 +3407,16 @@ kbd {
 .cover__store--local { color: #bfe9ff; border-color: rgba(72, 225, 255, 0.35); }
 
 /* Bought on GOG or Epic, not installed: a grey, see-through veil until it is. */
-.cover--owned .cover__art img, .cover--owned .cover__art .artwork__placeholder { filter: brightness(0.55) saturate(0.55) !important; }
 .cover__veil { display: none; }
-.cover--owned:hover .cover__art img, .cover--owned.is-selected .cover__art img { filter: brightness(0.72) saturate(0.75) !important; }
+.cover--owned .cover__veil {
+  display: block; position: absolute; inset: 0 0 auto; aspect-ratio: 315 / 250;
+  border-radius: 14px; background: rgba(5, 8, 14, 0.4); pointer-events: none;
+}
+.cover--owned:hover .cover__veil, .cover--owned.is-selected .cover__veil { background: rgba(5, 8, 14, 0.25); }
+.cover--owned .cover__float, .cover--owned:hover .cover__float { animation: none; }
+.cover--owned .cover__art, .cover--owned:hover .cover__art { transform: none; transition: none; }
+.artwork--card img, .artwork--card.is-loaded img { opacity: 1; transform: none; filter: none; transition: none; }
+.artwork--card::after { display: none; }
 .cover__owned-state {
   position: absolute; inset-inline-end: 10px; top: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: rgba(72, 225, 255, 0.28); border: 1px solid rgba(72, 225, 255, 0.55);
@@ -3427,3 +3434,43 @@ kbd {
 
 /* Store cards out of view are not laid out or painted until they scroll in. */
 .grid > .grid__cell { content-visibility: auto; contain-intrinsic-size: auto 340px; }
+
+/* Large collections scroll on a flat composited surface. Only cards under the
+   pointer need decorative transforms; live blur never follows moving lists. */
+.scene { background: radial-gradient(ellipse at 75% 35%, #122039, #05070c 75%); }
+.scene canvas { background: transparent; }
+.covers { perspective: none; }
+.cover, .cover__float { transform-style: flat; }
+.cover.is-selected .cover__float { animation: none; }
+:root.is-scrolling .cover__float { animation-play-state: paused; }
+:root.is-scrolling .card { transform: none; }
+:root.is-scrolling .play-week,
+:root.is-scrolling .library-float,
+:root.is-scrolling .dl-row,
+:root.is-scrolling .toolbar { backdrop-filter: none; }
+.page__header { flex-wrap: wrap; }
+.page__titles { min-width: 0; flex: 1 1 280px; }
+.page__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar, .toolbar--compact { flex-wrap: wrap; min-width: 0; }
+.toolbar .chips { min-width: 0; flex-wrap: wrap; }
+.dl-row { grid-template-columns: auto minmax(0, 1fr) auto; backdrop-filter: none; }
+.dl-row__head { flex-wrap: wrap; gap: 6px 10px; }
+.dl-row__title { min-width: 0; flex: 1 1 180px; }
+.dl-row__head > .dl-row__tag, .dl-row__head > .state-pill { flex: 0 0 auto; }
+.dl-row__actions { max-width: 230px; }
+.dl-row__msg, .path-row__value, .field__hint { overflow-wrap: anywhere; }
+.segmented, .hero__actions-row, .launch-row { flex-wrap: wrap; }
+@media (max-width: 1200px) {
+  .dl-row__actions { grid-column: 2 / -1; justify-content: flex-start; max-width: none; }
+  .play-week { margin-inline-start: 0; }
+}
+
+/* Keep the selected settings visible at the launcher's 1080px minimum width. */
+.st__nav { max-height: calc(100dvh - 210px); overflow-y: auto; backdrop-filter: none; }
+@media (max-width: 1100px) and (min-width: 901px) {
+  .st { grid-template-columns: 230px minmax(0, 1fr); gap: 20px; }
+  .st__nav { position: sticky; top: 12px; }
+  .st__tab { padding: 8px; gap: 8px; }
+  .st-row { flex-wrap: wrap; }
+  .st-row__control { max-width: 100%; }
+}

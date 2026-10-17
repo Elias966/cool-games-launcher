@@ -14,9 +14,13 @@ export interface SnapshotResult {
   h: number;
   media: PageExtract['media'];
   adultSignals: string[];
+  gates?: PageExtract['gates'];
 }
 
 export interface BrowserDownload {
+  partFilePath?: string | null;
+  speedBps?: number;
+  startedAt?: number;
   url: string;
   referrer: string | null;
   target: string;
@@ -33,6 +37,15 @@ export class BrowserClient {
   navigate(context: BrowserContext, url: string, signal?: AbortSignal) {
     return this.worker.call<{ url: string; title: string }>('navigate', { context, url }, signal);
   }
+  navigateIfBlank(context: BrowserContext, url: string) {
+    return this.worker.call<{ url: string; title: string }>('navigate', { context, url, onlyIfBlank: true });
+  }
+  returnToPage(context: BrowserContext, url: string, scrollY: number, signal?: AbortSignal) {
+    return this.worker.call<{ url: string; scrollY: number; reused: boolean }>('returnToPage', { context, url, scrollY }, signal);
+  }
+  followLink(context: BrowserContext, sourceUrl: string, url: string, signal?: AbortSignal) {
+    return this.worker.call<{followed:boolean;url:string;scrollY:number}>('followLink', {context,sourceUrl,url}, signal);
+  }
   extract(context: BrowserContext, signal?: AbortSignal) {
     return this.worker.call<PageExtract>('extract', { context }, signal);
   }
@@ -45,7 +58,7 @@ export class BrowserClient {
   pointer(context: BrowserContext, x: number, y: number, button: 'left' | 'middle' | 'right' = 'left', signal?:AbortSignal) {
     return this.worker.call('pointer', { context, x, y, button },signal);
   }
-  inspectPoint(context:BrowserContext,x:number,y:number,signal?:AbortSignal){return this.worker.call<{text:string;index:number|null;password:boolean;untrustedRegion:boolean;download:boolean}>('inspectPoint',{context,x,y},signal);}
+  inspectPoint(context:BrowserContext,x:number,y:number,signal?:AbortSignal){return this.worker.call<{text:string;index:number|null;href?:string|null;password:boolean;untrustedRegion:boolean;download:boolean}>('inspectPoint',{context,x,y},signal);}
   movePointer(context:BrowserContext,x:number,y:number,drag:boolean,signal?:AbortSignal){return this.worker.call('movePointer',{context,x,y,drag},signal);}
   scroll(context: BrowserContext, x: number, y: number, dx: number, dy: number, signal?: AbortSignal) {
     return this.worker.call('scroll', { context, x, y, dx, dy }, signal);

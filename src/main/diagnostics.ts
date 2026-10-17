@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { cpus, homedir, release, totalmem } from 'node:os';
 import { join } from 'node:path';
+import type { StoreJob } from '@shared/types';
 import type { DownloadsRepo, GamesRepo, SettingsRepo, SourcesRepo } from './repos';
 
 function tail(file: string, lines: number): string {
@@ -25,7 +26,7 @@ function downloadsFolder(): string {
 }
 
 export function writeDiagnostics(p: {
-  version: string; logsDir: string; ai: unknown; settings: SettingsRepo; sources: SourcesRepo; downloads: DownloadsRepo; games: GamesRepo;
+  version: string; logsDir: string; ai: unknown; settings: SettingsRepo; sources: SourcesRepo; downloads: DownloadsRepo; games: GamesRepo; storeJobs?: StoreJob[];
 }): string {
   const osName = (() => { try { return /PRETTY_NAME="?([^"\n]+)/.exec(readFileSync('/etc/os-release', 'utf8'))?.[1] ?? 'Linux'; } catch { return 'Linux'; } })();
   const section = (title: string, body: unknown) => `\n===== ${title} =====\n${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}\n`;
@@ -41,7 +42,8 @@ export function writeDiagnostics(p: {
     id: d.id, title: d.title, state: d.state, error: d.errorCode, errorDetail: d.errorDetail, install: d.installState, installDetail: d.installDetail,
     file: d.fileName, bytes: d.totalBytes, received: d.receivedBytes, part: d.groupId ? `${d.partIndex}/${d.partTotal ?? '?'} of ${d.groupId}` : null, resolution: d.resolution ? { page: d.resolution.pageUrl, steps: d.resolution.steps, last: d.resolution.history.slice(-8) } : null,
   })));
-  text += section('Games', games.map((g) => ({ id: g.id, title: g.title, kind: g.kind, runner: g.runner, status: g.status, executable: g.executable, launch: g.launch, runtimes: g.redistDone, update: g.update, playtimeSeconds: g.playtimeSeconds })));
+  text += section('Games', games.map((g) => ({ id: g.id, title: g.title, kind: g.kind, runner: g.runner, status: g.status, store: g.store, storeId: g.storeId, storeBuild: g.storeBuild, installDir: g.installDir, executable: g.executable, launch: g.launch, runtimes: g.redistDone, update: g.update, playtimeSeconds: g.playtimeSeconds })));
+  text += section('Store transfers', p.storeJobs ?? []);
   for (const l of recentLogs) text += section(`Game log ${l.f} (last 120 lines)`, tail(join(p.logsDir, l.f), 120));
   text += section('Launcher log (last 1500 lines)', tail(join(p.logsDir, 'launcher.log'), 1500));
   const home = homedir();

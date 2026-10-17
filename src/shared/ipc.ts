@@ -215,6 +215,9 @@ export const requests = {
   'stores:logout': z.object({ store: z.enum(['gog', 'epic']) }).strict(),
   'stores:install': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
   'stores:cancel': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  'stores:pause': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  'stores:resume': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
+  'stores:remove': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
   /** Link a copy already on disk (a folder picker opens). */
   'stores:adopt': z.object({ store: z.enum(['gog', 'epic']), id: z.string().min(1).max(200) }).strict(),
   'stores:update': z.object({ id }).strict(),
@@ -348,6 +351,9 @@ export interface Responses {
   'stores:logout': StoresState;
   'stores:install': StoresState;
   'stores:cancel': void;
+  'stores:pause': void;
+  'stores:resume': void;
+  'stores:remove': void;
   /** Null when no folder was chosen. */
   'stores:adopt': Game | null;
   'stores:update': void;
@@ -396,12 +402,13 @@ export interface Events {
   'download:progress': Pick<DownloadItem, 'id' | 'receivedBytes' | 'totalBytes' | 'speedBps' | 'etaSeconds' | 'state' | 'connections'>;
   'library:changed': Game[];
   'stores:changed': StoresState;
+  'stores:jobsChanged': import('./types').StoreJob[];
   'ai:status': AiStatus;
   'models:changed': ModelList;
   'browser:snapshot': BrowserSnapshot & { policyRevision: number };
   'browser:humanMode': { active: boolean };
   'browser:closed': { reason: string | null };
-  'browser:attention': { downloadId: number; sourceId?: number; message: string };
+  'browser:attention': { downloadId: number; sourceId?: number; message: string; requiresUser?: boolean };
   'browser:verificationResolved': { sourceId: number };
   'toast': { kind: 'info' | 'success' | 'warning' | 'error'; message: string };
   'app:visibility': { visible: boolean };

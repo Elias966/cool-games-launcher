@@ -69,7 +69,7 @@ export class UpdateService {
 
   /** Installed games from a website, with the catalog entry they came from. */
   private tracked(): GameRecord[] {
-    return this.deps.games.list().filter((g) => g.catalogId !== null && g.managed && g.status === 'installed');
+    return this.deps.games.list().filter((g) => g.catalogId !== null && !g.store && g.managed && g.status === 'installed');
   }
 
   /** "Check for updates" from the Library: everything, now. */
@@ -177,6 +177,6 @@ export class UpdateService {
   afterDetail(catalogId: number) {
     const entry = this.deps.catalog.raw(catalogId);
     if (!entry?.version) return;
-    for (const g of this.deps.games.list()) if (g.catalogId === catalogId && g.managed && g.status === 'installed') this.evaluate(g.id, entry.version);
+    for (const g of this.deps.games.list()) if (g.catalogId === catalogId && !g.store && g.managed && g.status === 'installed') this.evaluate(g.id, entry.version);
   }
 }

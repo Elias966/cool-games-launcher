@@ -98,7 +98,14 @@ export interface OwnedGame {
 }
 
 /** What a store is doing for one game. */
-export interface StoreJob { store: StoreId; id: string; kind: 'install' | 'update' | 'import'; progress: number | null; detail: string | null }
+export interface StoreJob {
+  store: StoreId; id: string; kind: 'install' | 'update' | 'import';
+  progress: number | null; detail: string | null;
+  state: 'queued' | 'active' | 'paused' | 'failed' | 'completed' | 'cancelled';
+  title: string; gameId: number | null; basePath: string;
+  speedBps: number; receivedBytes: number; totalBytes: number | null;
+  workers: number; createdAt: string;
+}
 
 export interface StoreAccount { loggedIn: boolean; user: string | null; error: string | null }
 export interface StoresState { accounts: Record<StoreId, StoreAccount>; owned: OwnedGame[]; jobs: StoreJob[]; refreshing: boolean }
@@ -191,6 +198,8 @@ export type DownloadErrorCode =
 export type InstallState = 'none' | 'installing' | 'installed' | 'failed';
 
 export interface DownloadItem {
+  /** Result of bounded, real transfer measurements for equivalent file mirrors. */
+  mirrorChoice?: { host: string; speedBps: number; tested: number } | null;
   id: number;
   catalogId: number | null;
   /** Set for a Proton build the launcher is installing (its version name). */
@@ -449,6 +458,7 @@ export interface CrawlProgress {
 }
 
 export interface BrowserSnapshot {
+  verificationRequired?: boolean;
   seq: number;
   url: string;
   title: string;

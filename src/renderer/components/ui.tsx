@@ -30,18 +30,20 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const { reduced } = useMotionPrefs();
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
     const t = setTimeout(() => {
-      const el = (initialFocus && ref.current?.querySelector<HTMLElement>(initialFocus)) || ref.current?.querySelector<HTMLElement>('button, [href], input, select, textarea');
+      const el = (initialFocus && ref.current?.querySelector<HTMLElement>(initialFocus)) || ref.current?.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
       el?.focus();
     }, 20);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        closeRef.current();
       }
       if (e.key === 'Tab' && ref.current) {
         const focusables = [...ref.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])')];
@@ -63,7 +65,7 @@ export function Dialog({
       window.removeEventListener('keydown', onKey, true);
       prev?.focus?.();
     };
-  }, [open, onClose, initialFocus]);
+  }, [open, initialFocus]);
   return createPortal(
     <AnimatePresence>
       {open && (
@@ -194,19 +196,20 @@ export function Button({
   icon,
   variant = 'secondary',
   size = 'md',
+  className = '',
   ...rest
 }: { icon?: IconName; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; size?: 'sm' | 'md' | 'lg' } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button className={`btn btn--${variant} btn--${size}`} {...rest}>
+    <button className={`btn btn--${variant} btn--${size} ${className}`} {...rest}>
       {icon && <Icon name={icon} size={size === 'sm' ? 15 : 18} />}
       {children && <span>{children}</span>}
     </button>
   );
 }
 
-export function IconButton({ icon, label, ...rest }: { icon: IconName; label: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+export function IconButton({ icon, label, className = '', ...rest }: { icon: IconName; label: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button className="icon-btn" aria-label={label} title={label} {...rest}>
+    <button className={`icon-btn ${className}`} aria-label={label} title={label} {...rest}>
       <Icon name={icon} size={17} />
     </button>
   );

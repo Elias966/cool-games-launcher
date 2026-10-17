@@ -2,6 +2,8 @@
 // after restarts, and hands transfers to the independent downloads worker.
 // Leaving the Store never touches transfers that already started.
 import { join } from 'node:path';
+import { copyFile, rename, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { existsSync, rmSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { shell } from 'electron';
@@ -31,6 +33,7 @@ export class DownloadManager extends EventEmitter {
   private browserTargets = new Map<number, string>();
   private browserWatch = new Map<number, NodeJS.Timeout>();
   private listTimer: NodeJS.Timeout | null = null;
+  private closing = false;
 
   constructor(
     private worker: WorkerHost,
@@ -91,6 +94,7 @@ export class DownloadManager extends EventEmitter {
     });
     worker.on('event:error', (e: { id: number; code: DownloadErrorCode | 'cancelled'; message: string; retryable: boolean }) => this.onError(e));
     worker.on('exit', () => {
+      if (this.closing) return;
       // The worker restarts by itself; requeue anything that was running.
       for (const d of this.repo.byState('active')) {
         if (this.browserWatch.has(d.id)) continue;
@@ -104,14 +108,31 @@ export class DownloadManager extends EventEmitter {
   /** Called once at startup: everything that was in flight resumes from its checkpoint. */
   recover() {
     for (const d of this.repo.list()) {
-      if (d.state === 'active') {
+      if (['active', 'queued'].includes(d.state) && (d.errorCode === 'browser-only' || (d.url && !/^https?:/i.test(d.url)))) {
+        this.repo.update(d.id, { state: 'failed', errorCode: 'browser-only', errorDetail: 'This browser download was interrupted and cannot resume. Start it again from the Store.' });
+      } else if (d.state === 'active') {
         const partSize = partialBytes(d.partPath);
         this.repo.update(d.id, { state: d.url ? 'queued' : 'needs-resolution', receivedBytes: partSize, errorCode: d.url ? null : 'interrupted' });
       } else if (d.state === 'resolving') {
         this.repo.update(d.id, { state: 'needs-resolution', errorCode: 'interrupted', errorDetail: 'Link resolution was interrupted. It continues automatically.' });
+      } else if (d.state === 'paused' && d.url && d.errorCode && ['network', 'timeout', 'io', 'interrupted'].includes(d.errorCode) && d.retries < MAX_AUTO_RETRIES) {
+        this.repo.update(d.id, { state: 'queued', errorCode: null, errorDetail: null });
       }
     }
     this.pump();
+  }
+
+  /** Let range writers finish and checkpoint before terminating the worker. */
+  async shutdown() {
+    this.closing = true;
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+    if (this.listTimer) { clearTimeout(this.listTimer); this.listTimer = null; }
+    for (const timer of this.browserWatch.values()) clearInterval(timer);
+    await Promise.all(this.repo.byState('active').map(async (d) => {
+      await this.worker.call('stop', { id: d.id }).catch(() => undefined);
+      if (this.repo.get(d.id)?.state === 'active') this.repo.update(d.id, this.browserWatch.has(d.id) ? { state: 'failed', errorCode: 'browser-only', errorDetail: 'This browser download was interrupted and cannot resume. Start it again from the Store.' } : { state: 'queued', receivedBytes: partialBytes(d.partPath) });
+    }));
   }
 
   items(): DownloadItem[] {
@@ -124,6 +145,7 @@ export class DownloadManager extends EventEmitter {
   }
 
   broadcastList() {
+    if (this.closing) return;
     if (this.listTimer) return;
     this.listTimer = setTimeout(() => {
       this.listTimer = null;
@@ -180,46 +202,63 @@ export class DownloadManager extends EventEmitter {
       url: dl.url.slice(0, 200),
       fileName: sanitizeFileName(dl.target.split('/').pop()),
       totalBytes: dl.totalBytes,
+      receivedBytes: dl.currentBytes,
       resumable: false,
       state: 'active',
       userPrompt: null,
-      errorCode: null,
+      errorCode: 'browser-only',
       errorDetail: 'This site creates the file inside the browser, so it downloads through Firefox and cannot be resumed if interrupted.',
     });
     this.broadcastList();
     let polling = false;
+    let lastBytes=dl.currentBytes,lastAt=Date.now();
     const timer = setInterval(async () => {
       if (polling) return;
       polling = true;
       try {
         const list = await this.browser.takeDownloads(false);
+        if (this.closing) return;
         if (this.repo.get(id)?.state !== 'active' || this.browserTargets.get(id) !== dl.target) return;
         const cur = list.find((x) => x.target === dl.target);
         if (!cur || (cur.stopped && !cur.succeeded)) {
           clearInterval(timer);
           this.browserWatch.delete(id);
           this.browserTargets.delete(id);
+          this.live.delete(id);
           this.repo.update(id, { state: 'failed', errorCode: 'browser-only', errorDetail: 'The browser download stopped. Sites that build the file inside the browser cannot be resumed; start it again from the Store.' });
           this.broadcastList();
           return;
         }
-        publish('download:progress', { id, receivedBytes: cur.currentBytes, totalBytes: cur.totalBytes, speedBps: 0, etaSeconds: null, state: 'active' });
+        const now=Date.now(),speedBps=cur.speedBps??Math.max(0,cur.currentBytes-lastBytes)*1000/Math.max(1,now-lastAt);
+        const etaSeconds=speedBps>0&&cur.totalBytes!==null?Math.max(0,cur.totalBytes-cur.currentBytes)/speedBps:null;
+        lastBytes=cur.currentBytes;lastAt=now;
+        this.repo.update(id,{receivedBytes:cur.currentBytes,totalBytes:cur.totalBytes});
+        this.live.set(id,{speedBps,etaSeconds,lastPersist:now,connections:1});
+        publish('download:progress', { id, receivedBytes: cur.currentBytes, totalBytes: cur.totalBytes, speedBps, etaSeconds, state: 'active' });
         if (cur.succeeded) {
           clearInterval(timer);
           this.browserWatch.delete(id);
           const dir = this.settings.get().downloadsDir;
           mkdirSync(dir, { recursive: true });
           const dest = uniquePath(dir, sanitizeFileName(cur.target.split('/').pop()));
-          renameSync(cur.target, dest);
+          await moveBrowserDownload(cur.target, dest);
+          if (this.closing || this.repo.get(id)?.state !== 'active') { rmSync(dest, { force: true }); return; }
           this.browserTargets.delete(id);
-          this.repo.update(id, { state: 'completed', finalPath: dest, receivedBytes: cur.currentBytes, totalBytes: cur.currentBytes, completedAt: new Date().toISOString(), errorDetail: null });
+          this.live.delete(id);
+          this.repo.update(id, { state: 'completed', finalPath: dest, receivedBytes: cur.currentBytes, totalBytes: cur.currentBytes, completedAt: new Date().toISOString(), errorCode: null, errorDetail: null });
           toast('success', tm('Downloaded {title}. Preparing your Library.', { title: this.repo.get(id)?.title ?? tm('the file') }));
           this.emit('completed', id, dest);
           this.broadcastList();
           this.pump();
           await this.browser.takeDownloads(true, dl.target);
         }
-      } catch {
+      } catch (e) {
+        if (this.closing) return;
+        if (!this.browserWatch.has(id) && this.repo.get(id)?.state === 'active') {
+          this.browserTargets.delete(id);
+          this.repo.update(id, { state: 'failed', errorCode: 'io', errorDetail: `Could not save the browser download: ${(e as Error).message}` });
+          this.broadcastList(); this.pump();
+        }
         /* browser busy; try again next tick */
       } finally {
         polling = false;
@@ -229,6 +268,7 @@ export class DownloadManager extends EventEmitter {
   }
 
   pump() {
+    if (this.closing) return;
     const max = this.settings.get().maxConcurrentDownloads;
     const all = this.repo.list();
     let active = all.filter((d) => d.state === 'active').length;
@@ -264,6 +304,7 @@ export class DownloadManager extends EventEmitter {
   }
 
   private onError(e: { id: number; code: DownloadErrorCode | 'cancelled'; message: string; retryable: boolean }) {
+    if (this.closing) return;
     this.live.delete(e.id);
     const d = this.repo.get(e.id);
     if (!d || e.code === 'cancelled') return; // pause/cancel already set the state
@@ -391,5 +432,17 @@ export class DownloadManager extends EventEmitter {
   failResolution(id: number, code: DownloadErrorCode, message: string, state: DownloadRecord['state'] = 'failed') {
     this.repo.update(id, { state, errorCode: code, errorDetail: message, userPrompt: null });
     this.broadcastList();
+  }
+}
+
+/** Firefox and the configured downloads folder can be on different filesystems. */
+export async function moveBrowserDownload(from: string, to: string, io = { rename, copyFile, unlink }) {
+  try { await io.rename(from, to); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+    try { await io.copyFile(from, to, constants.COPYFILE_EXCL); } catch (copyError) {
+      if ((copyError as NodeJS.ErrnoException).code !== 'EEXIST') await io.unlink(to).catch(() => undefined);
+      throw copyError;
+    }
+    await io.unlink(from);
   }
 }

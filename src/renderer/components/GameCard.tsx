@@ -5,6 +5,7 @@ import { useMotionPrefs } from '../hooks/useMotion';
 import { emitScene } from '../scene/events';
 import { Icon } from './Icon';
 import { t } from '../i18n';
+import { cardArtworkUrl } from '@shared/artwork';
 
 /** Deterministic gradient art for entries without artwork. */
 export function placeholderStyle(seed: string): CSSProperties {
@@ -21,12 +22,16 @@ export function placeholderStyle(seed: string): CSSProperties {
   };
 }
 
-export function Artwork({ src, title, className, eager, artRef }: { src: string | null; title: string; className?: string; eager?: boolean; artRef?: React.Ref<HTMLDivElement> }) {
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const showImg = src && !failed;
+const loadedArtwork = new Set<string>();
+
+export function Artwork({ src: originalSrc, title, className, eager, artRef, card = false }: { src: string | null; title: string; className?: string; eager?: boolean; artRef?: React.Ref<HTMLDivElement>; card?: boolean }) {
+  const src = card ? cardArtworkUrl(originalSrc) : originalSrc;
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(src && loadedArtwork.has(src) ? src : null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const loaded = src === loadedSrc;
+  const showImg = src && src !== failedSrc;
   return (
-    <div ref={artRef} className={`artwork ${className ?? ''} ${loaded ? 'is-loaded' : ''}`} style={placeholderStyle(title)}>
+    <div ref={artRef} className={`artwork ${card ? 'artwork--card' : ''} ${className ?? ''} ${loaded ? 'is-loaded' : ''}`} style={placeholderStyle(title)}>
       {!showImg && (
         <div className="artwork__placeholder" aria-hidden="true">
           <span>{title.slice(0, 1).toUpperCase()}</span>
@@ -34,13 +39,14 @@ export function Artwork({ src, title, className, eager, artRef }: { src: string 
       )}
       {showImg && (
         <img
+          key={src}
           src={src}
           alt=""
           loading={eager ? 'eager' : 'lazy'}
           decoding="async"
           draggable={false}
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
+          onLoad={() => { if (loadedArtwork.size > 2000) loadedArtwork.clear(); loadedArtwork.add(src!); setLoadedSrc(src); }}
+          onError={() => setFailedSrc(src)}
         />
       )}
     </div>

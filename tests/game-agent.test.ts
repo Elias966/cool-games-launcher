@@ -56,3 +56,10 @@ describe('local model owns page decisions',()=>{
   vi.useRealTimers();
  });
 });
+
+it('asks the local model for the playable mirror variant and rejects invented file choices', async () => {
+ const s=setup({index:1});const routes=[{url:'https://host.test/setup.exe',label:'Installer',fileName:'setup.exe',platform:'windows',sizeText:null},{url:'https://other.test/Orbit.part1.rar',label:'Portable part 1',fileName:'Orbit.part1.rar',platform:'windows',sizeText:null}] as const;
+ expect(await s.agent.mirrorVariant(s.token,'Orbit',[...routes])).toBe(1);
+ expect(((s.chatJson.mock.calls as unknown as Array<[unknown,{user:string}]>)[0][1]).user).toContain('every other part will be queued separately');
+ s.chatJson.mockResolvedValueOnce({index:99});await expect(s.agent.mirrorVariant(s.token,'Orbit',[...routes])).rejects.toThrow(/could not select/);
+});

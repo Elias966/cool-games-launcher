@@ -92,6 +92,8 @@ export interface PageExtract {
   about?: string | null;
   /** Text of the main article only (no menus or sidebars), for counters like "12K downloads". */
   mainText?: string | null;
+  /** Short visible headings/alerts, excluding navigation and help sections. */
+  notices?: string[];
   /** When the page was first published (ISO), if it says. */
   published?: string | null;
   /** Lists under headings like "Popular games" or "Trending", in page order. */
@@ -708,6 +710,10 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     menuLinks,
     about,
     mainText,
+    notices: [...doc.querySelectorAll('h1,h2,[role="alert"],.alert,.error-message')]
+      .filter(el => !markupHidden(el) && !el.closest('nav,header,footer,aside,[class*="faq"],[class*="comment"],[class*="related"]'))
+      .map(el => clean((el as HTMLElement).innerText || el.textContent, 301))
+      .filter(text => text.length > 0 && text.length <= 300).slice(0, 16),
     published,
     rankedSections,
     viewport: { w: vw, h: vh, scrollY: Math.round(win.scrollY), docH: Math.round(doc.documentElement.scrollHeight) },

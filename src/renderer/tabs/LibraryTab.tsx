@@ -1,6 +1,6 @@
 import { KineticTitle } from '../components/KineticTitle';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
@@ -61,6 +61,7 @@ export function LibraryTab() {
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const allOwned = useApp((s) => s.stores.owned);
   const stats = usePlayStats();
   const scrollRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
@@ -73,13 +74,30 @@ export function LibraryTab() {
     const io = new IntersectionObserver(([e]) => setHeroHidden(!e.isIntersecting), { root: scrollRef.current, threshold: 0, rootMargin: '-120px 0px 0px 0px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [games.length > 0 || pending.length > 0]);
+  }, [games.length > 0 || pending.length > 0 || allOwned.length > 0]);
   const toTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   /** Scrolled down, a clicked game opens in a pop-up instead of the panel at the top. */
   const [popup, setPopup] = useState<{ gameId?: number; owned?: string } | null>(null);
+  const selectGame = useCallback((id: number) => { setPendingId(null); setOwnedKey(null); setSelectedId(id); if (heroHidden) setPopup({ gameId: id }); }, [heroHidden]);
+  const selectOwned = useCallback((key: string) => { setPendingId(null); setOwnedKey(key); if (heroHidden) setPopup({ owned: key }); }, [heroHidden]);
   const popupGame = popup?.gameId !== undefined ? games.find((g) => g.id === popup.gameId) ?? null : null;
-  const allOwned = useApp((s) => s.stores.owned);
   const popupOwned = popup?.owned ? allOwned.find((o) => `${o.store}:${o.id}` === popup.owned && o.gameId === null) ?? null : null;
+  useEffect(() => {
+    if (!popup) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const modal = document.querySelector<HTMLElement>('.library-popup__card');
+    modal?.querySelector<HTMLElement>('button')?.focus();
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setPopup(null); }
+      if (e.key !== 'Tab' || !modal) return;
+      const controls = [...modal.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]')].filter((el) => el.getClientRects().length);
+      const first = controls[0], last = controls.at(-1);
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener('keydown', key);
+    return () => { window.removeEventListener('keydown', key); previous?.focus(); };
+  }, [popup]);
 
   const shown = useMemo(
     () =>
@@ -100,8 +118,8 @@ export function LibraryTab() {
   const shownPending = useMemo(() => pending.filter((d) => (filter === 'all') && (!search.trim() || d.title.toLowerCase().includes(search.trim().toLowerCase()))), [pending, filter, search]);
   // With nothing installed yet, the game on its way fills the big panel.
   const selectedPending = pendingId !== null ? pending.find((d) => d.id === pendingId) ?? null : shown.length === 0 ? shownPending[0] ?? null : null;
-  const selectedOwned = !selectedPending && ownedKey ? stores.owned.find((o) => `${o.store}:${o.id}` === ownedKey && o.gameId === null) ?? null : null;
-  const selected = selectedPending || selectedOwned ? null : games.find((g) => g.id === selectedId) ?? shown[0] ?? null;
+  const selectedOwned = !selectedPending ? shownOwned.find((o) => `${o.store}:${o.id}` === ownedKey) ?? (shown.length === 0 ? shownOwned[0] ?? null : null) : null;
+  const selected = selectedPending || selectedOwned ? null : shown.find((g) => g.id === selectedId) ?? shown[0] ?? null;
   const updateCount = games.filter((g) => g.update?.state === 'available').length;
 
   useEffect(() => {
@@ -188,10 +206,10 @@ export function LibraryTab() {
                   <PendingCover key={`dl-${d.id}`} d={d} parts={partsOf(d)} index={i} selected={selectedPending?.id === d.id} onSelect={() => setPendingId(d.id)} />
                 ))}
                 {shown.map((g, i) => (
-                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={() => { setPendingId(null); setOwnedKey(null); setSelectedId(g.id); if (heroHidden) setPopup({ gameId: g.id }); }} />
+                  <CoverPanel key={g.id} game={g} index={i + shownPending.length} selected={!selectedPending && selected?.id === g.id} onSelect={selectGame} />
                 ))}
                 {shownOwned.map((o, i) => (
-                  <OwnedCover key={`own-${o.store}-${o.id}`} o={o} index={i + shown.length + shownPending.length} selected={selectedOwned === o || (!!selectedOwned && selectedOwned.store === o.store && selectedOwned.id === o.id)} onSelect={() => { setPendingId(null); setOwnedKey(`${o.store}:${o.id}`); if (heroHidden) setPopup({ owned: `${o.store}:${o.id}` }); }} />
+                  <OwnedCover key={`own-${o.store}-${o.id}`} o={o} index={i + shown.length + shownPending.length} selected={selectedOwned === o || (!!selectedOwned && selectedOwned.store === o.store && selectedOwned.id === o.id)} onSelect={selectOwned} />
                 ))}
                 {shown.length === 0 && shownPending.length === 0 && shownOwned.length === 0 && <p className="muted">{t('No games match.')}</p>}
               </div>
@@ -202,7 +220,7 @@ export function LibraryTab() {
       <AnimatePresence>
         {(popupGame || popupOwned) && (
           <motion.div key="popup" className="library-popup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={(e) => { if (e.target === e.currentTarget) setPopup(null); }}>
-            <div className="library-popup__card" role="dialog" aria-modal="true">
+            <div className="library-popup__card" role="dialog" aria-modal="true" aria-label={popupGame?.title ?? popupOwned?.title}>
               <button type="button" className="library-popup__close" aria-label={t('Close')} onClick={() => setPopup(null)}><Icon name="close" size={18} /></button>
               {popupGame ? <LibraryHero key={popupGame.id} game={popupGame} /> : popupOwned && <OwnedHero key={`own-${popupOwned.store}-${popupOwned.id}`} o={popupOwned} />}
             </div>
@@ -247,22 +265,17 @@ function FloatingGame({ game, onDetails }: { game: Game; onDetails: () => void }
 
 /** A game being downloaded or prepared: locked until it is ready to play. */
 function PendingCover({ d, parts, index, selected, onSelect }: { d: DownloadItem; parts: DownloadItem[]; index: number; selected: boolean; onSelect: () => void }) {
-  const { reduced } = useMotionPrefs();
   const st = pendingStatus(d, parts);
   return (
-    <motion.button
+    <button
       role="option"
       aria-selected={selected}
       aria-label={`${d.title}: ${st.label}${st.pct !== null ? ` ${Math.round(st.pct * 100)}%` : ''}`}
       className={`cover cover--pending ${selected ? 'is-selected' : ''} ${st.failed ? 'is-failed' : ''}`}
       onClick={onSelect}
-      onFocus={onSelect}
-      initial={reduced ? false : { opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced ? 0 : 0.5, delay: reduced ? 0 : Math.min(index, 12) * 0.05 }}
     >
       <span className="cover__float">
-        <Artwork src={d.artwork} title={d.title} className="cover__art" />
+        <Artwork card src={d.artwork} title={d.title} className="cover__art" />
         <span className="cover__lock" aria-hidden="true">
           <ProgressRing value={st.pct} indeterminate={st.pct === null && !st.failed && !st.waiting} size={64} stroke={4} tone={st.failed ? 'danger' : st.waiting ? 'warn' : 'cyan'}>
             <span className="mono cover__pct">{st.pct !== null ? `${Math.round(st.pct * 100)}%` : <Icon name={st.failed ? 'alert' : 'downloads'} size={18} />}</span>
@@ -271,7 +284,7 @@ function PendingCover({ d, parts, index, selected, onSelect }: { d: DownloadItem
         </span>
         <span className="cover__title">{d.title}</span>
       </span>
-    </motion.button>
+    </button>
   );
 }
 
@@ -308,15 +321,14 @@ function PendingHero({ d, parts }: { d: DownloadItem; parts: DownloadItem[] }) {
   );
 }
 
-function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: number; selected: boolean; onSelect: () => void }) {
-  const { reduced } = useMotionPrefs();
+const CoverPanel = memo(function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: number; selected: boolean; onSelect: (id: number) => void }) {
   return (
-    <motion.button
+    <button
       id={`cover-${game.id}`}
       role="option"
       aria-selected={selected}
       className={`cover ${selected ? 'is-selected' : ''} ${game.running ? 'is-running' : ''}`}
-      onClick={onSelect}
+      onClick={() => onSelect(game.id)}
       onKeyDown={(e) => {
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
           e.preventDefault();
@@ -327,14 +339,10 @@ function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: nu
           (e.currentTarget.previousElementSibling as HTMLElement | null)?.focus();
         }
       }}
-      onFocus={onSelect}
       style={{ ['--float-delay' as string]: `${(index % 7) * -0.9}s` }}
-      initial={reduced ? false : { opacity: 0, y: 30, rotateY: -14 }}
-      animate={{ opacity: 1, y: 0, rotateY: 0 }}
-      transition={{ duration: reduced ? 0 : 0.6, delay: reduced ? 0 : Math.min(index, 12) * 0.05, ease: [0.16, 1, 0.3, 1] }}
     >
       <span className="cover__float">
-        <Artwork src={game.images.cover ?? game.art?.capsule ?? game.artwork} title={game.title} className="cover__art" />
+        <Artwork card src={game.images.cover ?? game.art?.capsule ?? game.artwork} title={game.title} className="cover__art" />
         <span className="cover__edge" aria-hidden="true" />
         <span className="cover__title">{game.title}</span>
         <span className={`cover__store cover__store--${game.store ?? 'local'}`}>{sourceTag(game)}</span>
@@ -350,9 +358,9 @@ function CoverPanel({ game, index, selected, onSelect }: { game: Game; index: nu
         )}
         {game.status !== 'installed' && <span className="cover__attention">{t('Setup needed')}</span>}
       </span>
-    </motion.button>
+    </button>
   );
-}
+});
 
 function PlayControl({ game }: { game: Game }) {
   const { reduced } = useMotionPrefs();
@@ -621,7 +629,7 @@ function LibraryHero({ game }: { game: Game }) {
   const [coverOpen, setCoverOpen] = useState(false);
   const [imagesOpen, setImagesOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
-  const storeJob = useApp((s) => (game.store ? s.stores.jobs.find((j) => j.store === game.store && j.id === game.storeId) : undefined));
+  const storeJob = useApp((s) => (game.store ? s.stores.jobs.find((j) => j.store === game.store && j.id === game.storeId && ['active', 'queued'].includes(j.state)) : undefined));
   // A game from disk that the person also owns on GOG or Epic: offer to merge it.
   const storeTwin = useApp((s) => (game.store ? undefined : s.stores.owned.find((o) => o.gameId === null && o.title.toLowerCase().replace(/[^a-z0-9]+/g, '') === game.title.toLowerCase().replace(/[^a-z0-9]+/g, ''))));
   const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
@@ -985,23 +993,18 @@ function RenameGame({ game, open, onClose }: { game: Game; open: boolean; onClos
 }
 
 /** A game bought on GOG or Epic that is not installed: greyed, with its store and install progress. */
-function OwnedCover({ o, index, selected, onSelect }: { o: OwnedGame; index: number; selected: boolean; onSelect: () => void }) {
-  const { reduced } = useMotionPrefs();
-  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id));
+const OwnedCover = memo(function OwnedCover({ o, index, selected, onSelect }: { o: OwnedGame; index: number; selected: boolean; onSelect: (id: string) => void }) {
+  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id && ['active', 'queued'].includes(j.state)));
   return (
-    <motion.button
+    <button
       role="option"
       aria-selected={selected}
       aria-label={`${o.title}: ${STORE_LABEL[o.store]}, ${job ? t('installing') : t('not installed')}`}
       className={`cover cover--owned ${selected ? 'is-selected' : ''}`}
-      onClick={onSelect}
-      onFocus={onSelect}
-      initial={reduced ? false : { opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduced ? 0 : 0.5, delay: reduced ? 0 : Math.min(index, 12) * 0.04 }}
+      onClick={() => onSelect(`${o.store}:${o.id}`)}
     >
       <span className="cover__float">
-        <Artwork src={o.cover} title={o.title} className="cover__art" />
+        <Artwork card src={o.cover} title={o.title} className="cover__art" />
         <span className="cover__veil" aria-hidden="true" />
         <span className="cover__title">{o.title}</span>
         <span className={`cover__store cover__store--${o.store}`}>{STORE_LABEL[o.store]}</span>
@@ -1010,13 +1013,13 @@ function OwnedCover({ o, index, selected, onSelect }: { o: OwnedGame; index: num
         </span>
         {job?.progress != null && <span className="cover__progress" style={{ width: `${Math.round(job.progress * 100)}%` }} aria-hidden="true" />}
       </span>
-    </motion.button>
+    </button>
   );
-}
+});
 
 /** The big panel of a GOG or Epic game that is not installed: install it, or link a copy already on disk. */
 function OwnedHero({ o }: { o: OwnedGame }) {
-  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id));
+  const job = useApp((s) => s.stores.jobs.find((j) => j.store === o.store && j.id === o.id && ['active', 'queued'].includes(j.state)));
   const store = STORE_LABEL[o.store];
   // The same game already in the Library from disk: offer to link it, or remove it.
   const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '');

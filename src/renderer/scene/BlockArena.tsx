@@ -164,6 +164,8 @@ function useSparks() {
 
 /** The well: faint cell grid on the back, glowing rails, corner brackets and a rising scan line. */
 function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
+  const uniforms1 = useMemo(() => ({ uTime: { value: 0 }, uHue: { value: 0 }, uBoost: { value: 0 } }), []);
+  const uniforms2 = useMemo(() => ({ uTime: { value: 0 }, uHue: { value: 0 }, uBoost: { value: 0 } }), []);
   const back = useRef<THREE.ShaderMaterial>(null);
   const rails = useRef<THREE.ShaderMaterial>(null);
   const railGeo = useMemo(() => {
@@ -205,7 +207,7 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
         <shaderMaterial
           ref={back}
           transparent depthWrite={false} blending={THREE.AdditiveBlending}
-          uniforms={{ uTime: { value: 0 }, uHue: { value: 0 }, uBoost: { value: 0 } }}
+          uniforms={uniforms1}
           vertexShader={/* glsl */ `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`}
           fragmentShader={/* glsl */ `
             uniform float uTime; uniform float uHue; uniform float uBoost; varying vec2 vUv;
@@ -228,7 +230,7 @@ function Well({ pulse }: { pulse: React.RefObject<ArenaPulse> }) {
         <shaderMaterial
           ref={rails}
           transparent depthWrite={false} blending={THREE.AdditiveBlending}
-          uniforms={{ uTime: { value: 0 }, uHue: { value: 0 }, uBoost: { value: 0 } }}
+          uniforms={uniforms2}
           vertexShader={/* glsl */ `attribute float aAlong; varying float vAlong; void main(){ vAlong=aAlong; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`}
           fragmentShader={/* glsl */ `
             uniform float uTime; uniform float uBoost; varying float vAlong;

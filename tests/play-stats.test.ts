@@ -43,3 +43,15 @@ describe('play statistics', () => {
     expect(games.playStats().weekSeconds).toBe(0);
   });
 });
+
+it('keeps calendar days correct across daylight-saving changes and excludes future days', () => {
+  const previous = process.env.TZ; process.env.TZ = 'Europe/Berlin';
+  try {
+    const { games, add } = repo(); const game = add('DST');
+    games.recordPlay(game.id, 60, new Date(2026, 2, 30, 12));
+    games.recordPlay(game.id, 99, new Date(2026, 3, 2, 12));
+    const stats = games.playStats(new Date(2026, 3, 1, 12));
+    expect(stats.days.find(d => d.date === '2026-03-30')?.seconds).toBe(60);
+    expect(stats.weekSeconds).toBe(60); expect(stats.games[0].seconds).toBe(60);
+  } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
+});

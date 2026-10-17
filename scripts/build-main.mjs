@@ -32,6 +32,7 @@ const configs = [
       downloads: resolve(root, 'src/workers/downloads.ts'),
       install: resolve(root, 'src/workers/install.ts'),
       fetcher: resolve(root, 'src/workers/fetcher.ts'),
+      artwork: resolve(root, 'src/workers/artwork.ts'),
     },
     outdir: resolve(root, 'out/workers'),
   },

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import type { Db } from './db';
 import { Statements, tx } from './db';
 import { COVER_THRESHOLD, NSFW_IMAGE_THRESHOLD, coverCondition, coverVisible, visibleRatings, type VisibilityPolicy } from '@shared/policy';
-import { hostOf } from '@shared/urls';
+import { canonicalUrl, hostOf } from '@shared/urls';
 import type { SiteRecipe } from '@shared/site-recipe';
 import { compareVersions, findVersion, type InstalledVersion, type VersionFingerprint } from '@shared/game-version';
 import { popularScore, trendingScore, usefulTag, type PopularitySignals, type RankKind } from '@shared/popularity';
@@ -550,6 +550,14 @@ export class CatalogRepo {
     this.st.get('UPDATE catalog SET version_json = ? WHERE id = ?').run(JSON.stringify(version), id);
   }
 
+  /** A verified replacement for a missing game page; listing/indexing stays unchanged. */
+  saveRecoveredPage(id: number, url: string, candidates: DownloadCandidate[] = []) {
+    const pageUrl = canonicalUrl(url);
+    const entry = this.raw(id);
+    if (!entry || !pageUrl || hostOf(pageUrl) !== hostOf(entry.pageUrl)) throw new Error('Invalid replacement game page');
+    this.st.get('UPDATE catalog SET page_url = ?, candidates_json = ?, detail_fetched_at = NULL, detail_attempts = 0 WHERE id = ?').run(pageUrl, JSON.stringify(candidates), id);
+  }
+
   /** Available games, most popular first, for description repair. */
   idsNeedingDescription(limit: number): number[] {
     return (this.db.prepare(`SELECT id FROM catalog WHERE download_status = 'available' ORDER BY (tags_json LIKE '%"top"%' OR tags_json LIKE '%"popular"%') DESC, discovered_at DESC, id DESC LIMIT ?`).all(limit) as Array<{ id: number }>).map((r) => r.id);
@@ -863,6 +871,7 @@ export class CatalogRepo {
   /** Cached store images (GOG/Epic covers) the launcher may always show. */
   private extraArtwork = new Set<string>();
   allowArtwork(file: string) { this.extraArtwork.add(file); }
+  isStoreArtwork(file: string) { return this.extraArtwork.has(file); }
 
   artworkVisible(file: string, policy: VisibilityPolicy): boolean {
     if (this.extraArtwork.has(file)) return true;
@@ -981,13 +990,23 @@ export interface DownloadRecord {
 
 /** Saved progress of AI download resolution, so it can resume after leaving the Store. */
 export interface ResolutionCheckpoint {
+  /** Tested mirror routes; saved across interrupted website navigation. */
+  mirrors?: import('./download-mirrors').MirrorComparison;
   pageUrl: string;
   steps: number;
   history: string[];
+  /** Observed source link currently being followed, even after host redirects. */
+  routeUrl?: string;
+  /** A missing indexed page gets one controlled search, after cached routes fail. */
+  pageRecoveryAttempted?: boolean;
+  /** The actual game/download-links page and viewport before opening a host. */
+  linkPage?: { url: string; scrollY: number };
   /** Mirror hosts that showed a human check; the agent tries others first. */
   gatedHosts?: string[];
   /** A direct link to this part seen next to an earlier part. */
   partUrl?: string;
+  /** All observed mirrors for this archive part; other parts are separate jobs. */
+  mirrorCandidates?: DownloadCandidate[];
   /** Example file name of the wanted part ("game.part2.rar"), for the AI's instructions. */
   partName?: string;
 }
@@ -1341,17 +1360,19 @@ export class GamesRepo {
   /** Play time of the last seven days (local days, today last), per day and per game. */
   playStats(today = new Date()): PlayStats {
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
-    const rows = this.st.get('SELECT s.game_id AS gameId, s.started_at AS startedAt, s.seconds AS seconds FROM play_sessions s JOIN games g ON g.id = s.game_id WHERE s.started_at >= ? ORDER BY s.started_at')
-      .all(start.toISOString()) as Array<{ gameId: number; startedAt: string; seconds: number }>;
+    const rows = this.st.get('SELECT s.game_id AS gameId, s.started_at AS startedAt, s.seconds AS seconds FROM play_sessions s JOIN games g ON g.id = s.game_id WHERE s.started_at >= ? AND s.started_at < ? ORDER BY s.started_at')
+      .all(start.toISOString(), new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString()) as Array<{ gameId: number; startedAt: string; seconds: number }>;
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
       return { date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, seconds: 0 };
     });
     const games = new Map<number, { seconds: number; sessions: number }>();
+    const dayIndexes = new Map(days.map((d, i) => [d.date, i]));
     for (const r of rows) {
       const at = new Date(r.startedAt);
-      const i = Math.floor((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - start.getTime()) / 86_400_000);
-      if (i >= 0 && i < 7) days[i].seconds += r.seconds;
+      const key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+      const i = dayIndexes.get(key);
+      if (i !== undefined) days[i].seconds += r.seconds;
       const g = games.get(r.gameId) ?? { seconds: 0, sessions: 0 };
       g.seconds += r.seconds;
       g.sessions++;
@@ -1452,6 +1473,7 @@ export class ImageClassRepo {
 
 export function toDownloadItem(d: DownloadRecord, live?: { speedBps: number; etaSeconds: number | null; connections?: number }): DownloadItem {
   return {
+    mirrorChoice: d.resolution?.mirrors?.selected ?? null,
     id: d.id,
     catalogId: d.catalogId,
     compatVersion: d.compatPackage?.version ?? null,

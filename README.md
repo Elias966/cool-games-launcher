@@ -15,6 +15,37 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ## What's new in 0.2.18
 
+- **Fastest website mirror**: the local AI selects the game's playable package, then
+  the resolver tests all observed matching hosts using short, bounded file transfers.
+  It chooses the fastest working mirror and keeps slower choices as fallbacks.
+  Multipart games retain every required part; mirrors compete separately for each
+  part, and the existing grouped download/extraction flow remains in use.
+  Downloads shows the selected host and measured speed.
+- **Verified store updates**: GOG updates target the exact installed folder, with a
+  private repair manifest for imported copies. Epic imports use repair and update
+  together. Both stores check the resulting build and executable before reporting
+  success; merges retain the existing game's settings and play history.
+- **Reliability fixes**: cancelled downloads remain accessible; interrupted browser-only
+  downloads fail clearly, and browser files can be saved across drives. Game starts,
+  uninstalls and updates cannot race over the same files. Dialogs retain keyboard focus
+  through refreshes, and shared buttons preserve their base styling.
+- **Resumable store updates**: GOG and Epic installs and updates now save their jobs
+  on disk and resume after closing and reopening the launcher. Deliberately paused
+  jobs stay paused. Downloads shows their progress, speed, Update tag and controls;
+  both clients use the configured number of parallel download workers.
+- **Small cached Library covers**: cards use persistent thumbnails bounded at
+  480×384, generated in a separate artwork worker. GOG/Epic artwork is cacheable
+  across tab changes, and uninstalled cards use a simple veil instead of image
+  filters and reveal animations. Full-size originals stay available for backgrounds.
+- **Library artwork and scrolling**: store covers and backgrounds reuse the disk
+  cache during account refresh and restart, including already installed games.
+  The 3D background uses stable shader uniforms, a fixed render resolution and
+  a capped render loop that rests during scrolling. Large collections avoid
+  per-card entrance animations and whole-page blur transitions.
+- **Layout fixes**: Settings keeps the selected page beside its navigation at the
+  minimum window width; download tags remain visible with long titles. Custom
+  image files display correctly, and Library filters keep selection in the shown games.
+
 - **GOG and Epic Games**: Settings → GOG & Epic connects your accounts (you log in on the
   store's own page). The games you bought appear in the Library under a grey veil with an
   Install button; installed ones lose the veil. Every game carries its source: Local, GOG

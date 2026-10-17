@@ -17,6 +17,7 @@ import type { WorkerHost } from './worker-host';
 import type { CatalogRepo, DownloadRecord, DownloadsRepo, GamesRepo, GameRecord, PreviousBuild, SettingsRepo } from './repos';
 import type { ExecCandidate } from '../workers/exec-scan';
 import { findVersion, versionLabel, fingerprintKey, type InstalledVersion } from '@shared/game-version';
+import { sameInstall } from './store-builds';
 import { installedFile } from './updates';
 import { createShortcut, removeShortcuts } from './shortcuts';
 import type { CompatManager } from './compat';
@@ -124,6 +125,10 @@ export function detectWine(): string | null {
 
 export class Library {
   private pendingLaunch = new Set<number>();
+  private launching = new Set<number>();
+  private removing = new Set<number>();
+  private applying = new Set<number>();
+  storeBusy: ((id: number) => boolean) | null = null;
   private installingRuntimes = new Set<number>();
   private runningIds = new Set<number>();
   private installing = new Set<number>();
@@ -474,6 +479,7 @@ export class Library {
     if (this.installing.has(downloadId)) return;
     if (d.gameId && this.games.get(d.gameId)) throw new Error('Already installed');
     const updating = d.updateGameId ? this.games.get(d.updateGameId) : null;
+    if (updating?.store) throw new Error('This game is now linked to a store; use its store update instead.');
     if (updating) return this.prepareUpdate(d, updating);
     if (!this.agentContext.session.active) { this.pausePreparation(downloadId); return; }
     this.installing.add(downloadId);
@@ -559,7 +565,7 @@ export class Library {
   /** Downloads the newer build of an installed game. */
   startUpdate(id: number) {
     const g = this.games.get(id);
-    if (!g?.catalogId || !g.managed || !g.installDir) throw new Error('Only games the launcher installed from a website can be updated');
+    if (!g?.catalogId || g.store || !g.managed || !g.installDir) throw new Error('Only games the launcher installed from a website can be updated');
     const current = this.updateView(g);
     if (current && UPDATE_BUSY.has(current.state)) return;
     const entry = this.catalog.raw(g.catalogId);
@@ -622,7 +628,7 @@ export class Library {
       const kind = selected.kind === 'exe' ? 'windows' : 'linux';
       if (kind === 'linux') chmodSync(selected.path, 0o755);
       const prepared: PreparedBuild = { installDir: r.installDir, executable: selected.path, kind, candidates: r.candidates.map((c) => c.path), downloadId: d.id };
-      if (this.runningIds.has(old.id)) {
+      if (this.isRunning(old.id)) {
         this.setUpdate(old.id, { state: 'waiting', prepared, detail: tm('Installs when you close the game') });
         this.downloadsRepo.update(d.id, { installState: 'installing', installDetail: 'Update ready — installs when the game closes' });
         toast('info', tm('The update for {title} is ready and installs when you close the game.', { title: old.title }));
@@ -649,9 +655,16 @@ export class Library {
 
   /** Carries saves into the prepared build and makes it the installed one. */
   private async applyUpdate(id: number, prepared: PreparedBuild) {
+    if (this.isRunning(id)) { this.setUpdate(id, { state: 'waiting', prepared }); return; }
+    if (this.applying.has(id) || this.removing.has(id)) return;
+    this.applying.add(id);
+    try { await this.applyPreparedUpdate(id, prepared); } finally { this.applying.delete(id); }
+  }
+
+  private async applyPreparedUpdate(id: number, prepared: PreparedBuild) {
     const g = this.games.get(id);
     if (!g) return;
-    if (this.runningIds.has(id)) { this.setUpdate(id, { state: 'waiting', prepared }); return; }
+    if (g.store) throw new Error('Use the linked store to update this game.');
     if (!existsSync(prepared.executable)) throw new Error('The prepared update is missing; download it again');
     this.setUpdate(id, { state: 'preparing', detail: tm('Moving your saves to the new version…') });
     if (this.settings.get().saveBackups) await this.backupSaves(id, 'before updating');
@@ -836,6 +849,18 @@ export class Library {
   }
 
   async launch(id: number) {
+    if (this.removing.has(id) || this.applying.has(id)) throw new Error('Wait for the current Library operation to finish.');
+    if (this.runningIds.has(id) || this.launching.has(id)) throw new Error('This game is already starting or running');
+    if (this.storeBusy?.(id)) throw new Error('Finish or cancel the store transfer before starting this game.');
+    this.launching.add(id);
+    try { await this.launchGame(id); } finally {
+      this.launching.delete(id);
+      const pending = this.games.get(id)?.update;
+      if (!this.isRunning(id) && pending?.state === 'waiting' && pending.prepared) void this.applyUpdate(id, pending.prepared).catch((e) => this.failUpdate(id, e));
+    }
+  }
+
+  private async launchGame(id: number) {
     const g = this.games.get(id);
     if (!g) throw new Error('Game not found');
     if (!g.executable) throw new Error('Choose the executable first');
@@ -860,6 +885,7 @@ export class Library {
     const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
     // Free the GPU (AI model and classifier) before the game starts, not after.
     await this.beforeGame?.().catch(() => undefined);
+    this.work.signal.throwIfAborted();
     await this.worker.call('launch', {
       gameId: id,
       executable: g.executable,
@@ -975,7 +1001,7 @@ export class Library {
     if (patch.launch) {
       const launch = { ...g.launch, ...patch.launch };
       if (launch.protonPath && !this.compat.installed().some((p) => p.path === launch.protonPath)) throw new Error('That Proton version is not installed');
-      this.games.update(id, { launch });
+      // Committed with the other fields after every validation succeeds.
     }
     if (patch.executable !== undefined) {
       const ok =
@@ -995,6 +1021,7 @@ export class Library {
     if (runner === 'native' && kind === 'windows') throw new Error('Windows games need Wine or Proton');
     if (runner !== 'native' && kind === 'linux') throw new Error('Linux games run natively');
     this.games.update(id, {
+      launch: patch.launch ? { ...g.launch, ...patch.launch } : undefined,
       title: patch.title,
       executable: patch.executable,
       args: patch.args,
@@ -1013,9 +1040,18 @@ export class Library {
   }
 
   async uninstall(id: number, removePrefix: boolean) {
+    if (this.removing.has(id) || this.applying.has(id)) throw new Error('Wait for the current Library operation to finish.');
+    this.removing.add(id);
+    try { await this.uninstallGame(id, removePrefix); } finally { this.removing.delete(id); }
+  }
+
+  private async uninstallGame(id: number, removePrefix: boolean) {
     const g = this.games.get(id);
     if (!g) return;
-    if (this.runningIds.has(id)) throw new Error('Stop the game before uninstalling it');
+    if (this.runningIds.has(id) || this.launching.has(id) || this.pendingLaunch.has(id)) throw new Error('Stop the game before uninstalling it');
+    if (this.storeBusy?.(id)) throw new Error('Finish or cancel the store transfer before uninstalling this game.');
+    const updating = this.updateView(g);
+    if (updating && UPDATE_BUSY.has(updating.state)) throw new Error('Finish or cancel the Library update before uninstalling this game.');
     // Kept after uninstalling: reinstalling and restoring brings the progress back.
     if (this.settings.get().saveBackups) await this.backupSaves(id, 'before uninstalling');
     const s = this.settings.get();
@@ -1046,6 +1082,8 @@ export class Library {
     });
     if (res.canceled || !res.filePaths[0]) return null;
     const exe = res.filePaths[0];
+    const existing = this.games.list().find((g) => g.executable && sameInstall(g.executable, exe));
+    if (existing) return this.list().find((g) => g.id === existing.id) ?? null;
     const kind = await this.worker.call<string>('packageType', { path: exe });
     if (kind === 'unsupported' || kind === 'archive') throw new Error('Choose an executable (Linux program, AppImage, script or Windows .exe)');
     const isWin = kind === 'windows-exe' || kind === 'windows-installer';
@@ -1089,8 +1127,10 @@ export class Library {
     if (target && existsSync(target)) shell.showItemInFolder(target);
   }
 
+  isChanging(id: number) { return this.removing.has(id) || this.applying.has(id); }
+
   isRunning(id: number) {
-    return this.runningIds.has(id);
+    return this.runningIds.has(id) || this.launching.has(id) || this.pendingLaunch.has(id);
   }
 }
 

@@ -79,7 +79,7 @@ export function vendorStatus(): Record<string, boolean> {
   };
 }
 
-export function workerPath(name: 'inference' | 'browser' | 'downloads' | 'install' | 'fetcher'): string {
+export function workerPath(name: 'inference' | 'browser' | 'downloads' | 'install' | 'fetcher' | 'artwork'): string {
   return join(__dirname, '..', 'workers', `${name}.js`);
 }
 
