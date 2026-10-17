@@ -13,7 +13,7 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 
 ![Store](docs/images/store.png)
 
-## What's new in 0.2.18
+## What's new in 0.2.19
 
 - **Fastest website mirror**: the local AI selects the game's playable package, then
   the resolver tests all observed matching hosts using short, bounded file transfers.
@@ -45,6 +45,8 @@ stored outside the AppImage. There is no cloud inference, no account and no tele
 - **Layout fixes**: Settings keeps the selected page beside its navigation at the
   minimum window width; download tags remain visible with long titles. Custom
   image files display correctly, and Library filters keep selection in the shown games.
+
+## What's new in 0.2.18
 
 - **GOG and Epic Games**: Settings → GOG & Epic connects your accounts (you log in on the
   store's own page). The games you bought appear in the Library under a grey veil with an
@@ -365,11 +367,11 @@ sha256sum -c SHA256SUMS
 ```
 
 ```bash
-chmod +x Cool-Games-Launcher-0.2.18-x86_64.AppImage
+chmod +x Cool-Games-Launcher-0.2.19-x86_64.AppImage
 ```
 
 ```bash
-./Cool-Games-Launcher-0.2.18-x86_64.AppImage
+./Cool-Games-Launcher-0.2.19-x86_64.AppImage
 ```
 
 The launcher updates itself from the same releases (Settings → About → Launcher
