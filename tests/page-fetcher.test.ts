@@ -41,3 +41,24 @@ describe('fast authenticated indexing reads',()=>{
   expect((await reader.fetch('https://games.test/game',signal())).ok).toBe(false);expect(call).toHaveBeenCalledOnce();
  });
 });
+
+
+describe('website network failures during verification', () => {
+  it('uses Firefox batches after transport errors and avoids repeating the failing transport for every game', async () => {
+    const call = vi.fn(async (method: string, p: any) => method === 'fetchPage'
+      ? { ok: false, status: 0, url: p.url, ms: 3000, reason: 'network', detail: 'net::ERR_HTTP2_PROTOCOL_ERROR' }
+      : response(p.url));
+    const fetchPages = vi.fn(async (urls: string[]) => urls.map(url => ({ url, status: 200, html, ms: 20 })));
+    const reader = new PageFetcher([{ call } as any], { sessionCookies: async () => ({ cookies: [], userAgent: 'Firefox' }), fetchPages } as any);
+    expect((await Promise.all(Array.from({ length: 6 }, (_, i) => reader.fetch('https://games.test/game/' + i, signal())))).every(r => r.ok)).toBe(true);
+    expect(fetchPages).toHaveBeenCalledTimes(1);
+    await reader.fetch('https://games.test/game/next', signal());
+    expect(call.mock.calls.filter(c => c[0] === 'fetchPage')).toHaveLength(6);
+  });
+
+  it('keeps a transport error when the Firefox reader cannot verify the page', async () => {
+    const error = { ok: false, status: 0, url: 'https://games.test/game', ms: 1, reason: 'network', detail: 'offline' };
+    const reader = new PageFetcher([{ call: async () => error } as any], { sessionCookies: async () => ({ cookies: [], userAgent: 'Firefox' }), fetchPages: async () => [{ url: error.url, status: 200, html: '<title>Just a moment</title>', ms: 1 }] } as any);
+    expect(await reader.fetch(error.url, signal())).toEqual(error);
+  });
+});

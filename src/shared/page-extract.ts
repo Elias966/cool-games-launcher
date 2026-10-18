@@ -208,7 +208,7 @@ export function extractPage(opts: { maxLinks?: number; maxCards?: number; maxCon
     for (const c of cands) {
       if (c && !c.startsWith('data:')) {
         const a = abs(c);
-        if (a) return a;
+        if (a && !/\/(?:flags?|avatars?|icons?)\/|\/(?:favicon|site-logo)[^/]*$/i.test(new URL(a).pathname)) return a;
       }
     }
     return null;
@@ -510,11 +510,16 @@ export function extractPage(opts: { maxLinks?: number; maxCards?: number; maxCon
     const groups = new Map<string, Array<{ a: HTMLAnchorElement; card: Element }>>();
     doc.querySelectorAll('a[href]').forEach((a) => {
       if (inChrome(a)) return;
+      // Language selectors can link to the current game's translated page.
+      // They are navigation, not six new game cards with flag-SVG covers.
+      const linkedImage = a.querySelector('img');
+      if (linkedImage && /\/(?:flags?|avatars?|icons?)\//i.test(linkedImage.getAttribute('src') || '') && !a.querySelector('h1,h2,h3,h4,h5')) return;
       const href = abs(a.getAttribute('href'));
       if (!href) return;
       try {
         const u = new URL(href);
         if (u.hostname.replace(/^www\./, '') !== host) return;
+        if (/^\/(?:lang|language|locale)\/[a-z]{2,3}(?:[-_][a-z]{2,4})?\/?$/i.test(u.pathname)) return;
         if (u.pathname === '/' || u.pathname === location.pathname) return;
       } catch {
         return;
@@ -545,7 +550,7 @@ export function extractPage(opts: { maxLinks?: number; maxCards?: number; maxCon
           card.querySelector('h1, h2, h3, h4, h5') ??
           card.querySelector('.title, .name, [class~="game-title"], [class~="game_title"], [itemprop="name"]') ??
           card.querySelector('[class*="title"], [class*="name"]');
-        const img = card.querySelector('img');
+        const img = [...card.querySelectorAll('img')].find((im) => imgSrc(im)) ?? null;
         const title = clean(heading?.textContent || a.getAttribute('title') || img?.getAttribute('alt') || a.textContent, 200)
           .replace(/^(?:Build\s+\d+\s*)?(?:\d{4}\s*\|\s*)?[\d.]+\s*(?:GB|MB|KB)\s*/i, '');
         const prev = byHref.get(href);

@@ -105,11 +105,12 @@ export class ClassificationService {
       file = await this.artwork.fetch(url, referer, signal);
       const fetched = Date.now();
       const [score] = cached && !cached.failed ? [cached.score!] : await this.ai.classify({ path: this.artwork.path(file) }, signal);
-      if (process.env.CGL_DEBUG) console.log('[verification] image', { fetchMs: fetched - started, modelAndQueueMs: Date.now() - fetched, cachedScore: !!cached && !cached.failed });
+      if (process.env.CGL_DEBUG || Date.now() - started > 1000) console.log('[verification] image', { fetchMs: fetched - started, modelAndQueueMs: Date.now() - fetched, cachedScore: !!cached && !cached.failed });
       this.images.set(url, CLASSIFIER_VERSION, score);
       return { score, file };
     } catch (e) {
       if (signal?.aborted) throw e;
+      console.warn('[verification] image failed', { ms: Date.now() - started, error: (e as Error).message });
       this.images.set(url, CLASSIFIER_VERSION, null);
       return { score: null, file };
     }
@@ -119,6 +120,10 @@ export class ClassificationService {
   async classifyEntry(id: number, signal?: AbortSignal) {
     const raw = this.catalog.raw(id);
     if (!raw) return null;
+    // Listing/rank passes revisit the same entries. Honour the same retry
+    // budget as the backlog instead of fetching broken images hundreds of times.
+    // An explicit page refresh resets the budget through invalidateRating().
+    if (raw.rating === 'unknown' && raw.classifierVersion === CLASSIFIER_VERSION && raw.classifyAttempts >= 4) return 'unknown';
     const scores: number[] = [];
     let failures = 0;
     // Cover and screenshots download and score concurrently: indexing speed

@@ -214,6 +214,8 @@ async function main() {
   const limiter = new HostRateLimiter();
   const artwork = new ArtworkCache(paths.artwork, limiter);
   const classification = new ClassificationService(ai, artwork, catalogRepo, imageClass);
+  const repairedCovers = catalogRepo.repairDecorativeCovers();
+  if (repairedCovers) console.log('[verification] repaired invalid cover listings', { games: repairedCovers });
   const coverModel = new CoverModel({ modelsDir: paths.models, fetch: (url, init) => net.fetch(url, init) });
   const coverCheck = new CoverCheckService({
     ai, artwork, catalog: catalogRepo, settings: settingsRepo, model: coverModel,
@@ -674,7 +676,7 @@ async function main() {
       policy.emit('changed', { showNsfw: policy.policy().showNsfw, revision: s.policyRevision });
       return s;
     },
-    'content:coverStatus': () => ({ ...catalogRepo.coverCounts(settingsRepo.policy().coverThreshold), enabled: settingsRepo.get().hideWomenCovers, model: coverModel.status() }),
+    'content:coverStatus': () => ({ ...catalogRepo.coverCounts(settingsRepo.policy().coverThreshold), failed: coverCheck.failed(), paused: ai.paused, enabled: settingsRepo.get().hideWomenCovers, model: coverModel.status() }),
     'sources:list': () => sourcesRepo.list(),
     'sources:add': ({ url, name }) => {
       if (sourcesRepo.list().some((s) => s.url === url)) throw new Error('This website is already in your sources');
@@ -1074,6 +1076,7 @@ async function main() {
       shuttingDown = true;
       storeRequestedActive = false;
       clearInterval(protonRefreshTimer);
+      coverCheck.stop();
       siteDates.stop();
       updates.stop();
       descriptions.stop();

@@ -97,3 +97,15 @@ it('excludes RSS and data feeds from HTML listing routes',()=>{
   for(const url of ['https://games.test/rss/3-new-games.xml/','https://games.test/feed/','https://games.test/updates.atom','https://games.test/games.json'])expect(isListingRoute(url)).toBe(false);
   expect(isListingRoute('https://games.test/all-games/?page=2')).toBe(true);
 });
+
+it('excludes language switch endpoints even from an older broad game recipe, while retaining translated game pages', () => {
+  const ex = { url: 'https://g.test/', cards: [], links: [
+    { href: 'https://g.test/lang/pt', text: 'Mortal Kombat 1', inContent: true },
+    { href: 'https://g.test/en/game/orbit', text: 'Orbit', inContent: true },
+  ] } as unknown as PageExtract;
+  const broad = { ...recipe([]), game: [{ host: '^g\\.test$', path: '^/.*$' }] };
+  expect(recipeCards(ex, broad).map(c => c.href)).toEqual(['https://g.test/en/game/orbit']);
+  expect(isListingRoute('https://g.test/lang/en')).toBe(false);
+  expect(isListingRoute('https://g.test/language/pt-BR/')).toBe(false);
+  expect(isListingRoute('https://g.test/en/game/orbit')).toBe(true);
+});

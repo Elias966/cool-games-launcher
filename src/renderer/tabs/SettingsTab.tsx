@@ -627,7 +627,7 @@ function DownloadSection({ settings }: { settings: Settings }) {
   );
 }
 
-type CoverStatus = { checked: number; women: number; pending: number; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
+type CoverStatus = { checked: number; women: number; pending: number; failed: number; paused: boolean; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
 
 /** Hide games whose cover shows a woman; an image model scores every cover. */
 function CoverFilterRow({ settings }: { settings: Settings }) {
@@ -645,8 +645,11 @@ function CoverFilterRow({ settings }: { settings: Settings }) {
     const m = status.model;
     if (m.state === 'downloading') progress = t('Downloading the cover model ({size}): {p}%. Games stay hidden until their cover is checked.', { size: formatBytes(m.size), p: Math.round((m.received / (m.size || 1)) * 100) });
     else if (m.state === 'error') progress = t('Could not download the cover model: {detail} It is tried again in a minute.', { detail: m.error ?? '' });
+    else if (status.paused && status.pending > status.failed) progress = t('Cover checks are paused while a game is running.');
+    else if (status.pending && status.pending === status.failed) progress = t('Could not check {failed} covers. They stay hidden; retry after restarting the launcher.', { failed: status.failed });
     else if (status.pending) progress = t('Checking covers: {done} of {total} done, {women} hidden so far. Games appear in the Store as soon as their cover is checked.', { done: status.checked, total: status.checked + status.pending, women: status.women });
     else progress = t('All {total} covers checked: {women} games are hidden.', { total: status.checked, women: status.women });
+    if (status.failed && status.pending > status.failed) progress += ' ' + t('{failed} unreadable covers stay hidden.', { failed: status.failed });
   }
   return (
     <>

@@ -179,3 +179,15 @@ it('reads complete single-page catalogs when indexing without enlarging ordinary
   const full=dom.window.eval(`(${extractPage.toString()})({maxCards:10000,maxLinks:20000})`) as PageExtract;
   expect(full.cards).toHaveLength(180);expect(new Set(full.cards.map(c=>c.href)).size).toBe(180);
 });
+
+
+describe('game covers versus language navigation', () => {
+  it('ignores translated-page links with flags and chooses the game image after a flag inside a real card', () => {
+    const flags = ['de', 'ja', 'fr', 'pt', 'es', 'tr'].map(lang => `<div class="language"><a href="/${lang}/game"><img src="/static/img/flags/${lang}.svg" alt="${lang} flag"></a></div>`).join('');
+    const games = [1,2,3].map(i => `<article><a href="/game-${i}"><h2>Orbit ${i}</h2><img src="/static/img/flags/en.svg"><img src="/cover-${i}.jpg"></a></article>`).join('');
+    load('<main>'+flags+games+'</main>', 'https://games.test/');
+    const ex = extract();
+    expect(ex.cards.map(c => c.title)).toEqual(['Orbit 1', 'Orbit 2', 'Orbit 3']);
+    expect(ex.cards.map(c => c.img)).toEqual([1,2,3].map(i => `https://games.test/cover-${i}.jpg`));
+  });
+});

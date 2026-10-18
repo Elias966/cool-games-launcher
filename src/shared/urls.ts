@@ -2,6 +2,12 @@
 
 const TRACKING_PARAMS = /^(utm_[a-z]+|fbclid|gclid|mc_[a-z]+|ref|ref_src|igshid|_ga|yclid|msclkid|si|snr)$/i;
 
+/** A language switch redirects to the session's last page, so it cannot be a stable game URL. */
+export function languageSwitchUrl(url: string): boolean {
+  try { return /^\/(?:lang|language|locale)\/[a-z]{2,3}(?:[-_][a-z]{2,4})?\/?$/i.test(new URL(url).pathname); }
+  catch { return false; }
+}
+
 /** Canonical form of a page URL for duplicate detection. */
 export function canonicalUrl(input: string, base?: string): string | null {
   let u: URL;

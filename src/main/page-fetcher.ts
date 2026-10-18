@@ -72,7 +72,10 @@ export class PageFetcher {
     const r = await worker.call<FetchPageResult>('fetchPage', { url, cookie: auth.cookie, userAgent: auth.userAgent, referer }, signal);
     this.stats.http++;
     this.stats.ms += r.ms;
-    if(r.status===403||r.ok&&(r.extract.gates.captcha||r.extract.gates.blocked)){
+    // Some hosts reject Chromium's TLS/HTTP connection without returning an
+    // HTTP status. Firefox can still read them; batch those reads just like
+    // 403s instead of forcing a full rendered navigation for every game.
+    if(r.status===403||!r.ok&&r.reason==='network'||r.ok&&(r.extract.gates.captcha||r.extract.gates.blocked)){
       const read=await this.fetchInBrowser(url,signal);
       if(read){this.browserHttpUntil.set(origin,Date.now()+5*60_000);return read;}
     }

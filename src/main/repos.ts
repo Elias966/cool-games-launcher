@@ -8,13 +8,14 @@ import { createHash } from 'node:crypto';
 import type { Db } from './db';
 import { Statements, tx } from './db';
 import { COVER_THRESHOLD, NSFW_IMAGE_THRESHOLD, coverCondition, coverVisible, visibleRatings, type VisibilityPolicy } from '@shared/policy';
-import { canonicalUrl, hostOf } from '@shared/urls';
+import { canonicalUrl, hostOf, languageSwitchUrl } from '@shared/urls';
 import type { SiteRecipe } from '@shared/site-recipe';
 import { compareVersions, findVersion, type InstalledVersion, type VersionFingerprint } from '@shared/game-version';
 import { popularScore, trendingScore, usefulTag, type PopularitySignals, type RankKind } from '@shared/popularity';
 import { titleSimilarity } from '@shared/fuzzy';
 import { sameGame } from './descriptions';
 import { DEFAULT_LAUNCH, type LaunchOptions, type SteamMedia } from '@shared/types';
+import { decorativeArtwork } from '@shared/artwork';
 import type {
   CatalogEntry,
   CatalogQuery,
@@ -408,8 +409,19 @@ const CATALOG_ORDER: Record<NonNullable<CatalogQuery['sort']>, string> = {
 
 export class CatalogRepo {
   private st: Statements;
+  private coverListeners = new Set<(id: number) => void>();
   constructor(private db: Db) {
     this.st = new Statements(db);
+  }
+
+  /** Wake the cover queue after eligibility/artwork changes, without polling indexing. */
+  onCoverPending(listener: (id: number) => void): () => void {
+    this.coverListeners.add(listener);
+    return () => { this.coverListeners.delete(listener); };
+  }
+
+  private coverPending(id: number) {
+    for (const listener of this.coverListeners) listener(id);
   }
 
   private toRaw(r: CatalogRow): CatalogRaw {
@@ -593,6 +605,7 @@ export class CatalogRepo {
    */
   markListed(ids: number[]) {
     for (const id of ids) this.st.get("UPDATE catalog SET download_status = 'listed' WHERE id = ? AND download_status = 'pending'").run(id);
+    for (const id of ids) this.coverPending(id);
   }
 
   setVersion(id: number, version: VersionFingerprint, candidates?: DownloadCandidate[]) {
@@ -651,6 +664,19 @@ export class CatalogRepo {
     this.st.get("UPDATE catalog SET rating = 'unknown', classifier_version = NULL, classify_attempts = 0 WHERE id = ?").run(id);
   }
 
+  /** Retire language-switch listings; repair decorative covers on actual game pages once.
+   * Preserve records so installed/download associations survive. */
+  repairDecorativeCovers(): number {
+    const rows = this.db.prepare("SELECT id, page_url, thumbnail_url FROM catalog WHERE download_status IN ('available','listed') AND (rating = 'unknown' OR page_url LIKE '%/lang/%' OR page_url LIKE '%/language/%' OR page_url LIKE '%/locale/%')").all() as Array<{ id: number; page_url: string; thumbnail_url: string | null }>;
+    const invalid = rows.filter(r => languageSwitchUrl(r.page_url)).map(r => r.id);
+    const ids = rows.filter(r => !languageSwitchUrl(r.page_url) && decorativeArtwork(r.thumbnail_url)).map(r => r.id);
+    tx(this.db, () => {
+      for (const id of invalid) this.st.get("UPDATE catalog SET download_status = 'unavailable', detail_fetched_at = COALESCE(detail_fetched_at, ?) WHERE id = ?").run(now(), id);
+      for (const id of ids) this.st.get('UPDATE catalog SET thumbnail_url = NULL, artwork_file = NULL, cover_score = NULL, detail_fetched_at = NULL, detail_attempts = 0, classifier_version = NULL, classify_attempts = 0 WHERE id = ?').run(id);
+    });
+    return ids.length + invalid.length;
+  }
+
   setDetail(
     id: number,
     d: {
@@ -676,7 +702,10 @@ export class CatalogRepo {
       .get(
         `UPDATE catalog SET title = COALESCE(NULLIF(?, ''), title), description = COALESCE(?, description), author = COALESCE(?, author),
            price_text = COALESCE(?, price_text), platforms_json = CASE WHEN ? != '[]' THEN ? ELSE platforms_json END,
-           tags_json = CASE WHEN ? != '[]' THEN ? ELSE tags_json END, thumbnail_url = COALESCE(?, thumbnail_url),
+           tags_json = CASE WHEN ? != '[]' THEN ? ELSE tags_json END,
+           cover_score = CASE WHEN ? IS NOT NULL AND thumbnail_url IS NOT ? THEN NULL ELSE cover_score END,
+           artwork_file = CASE WHEN ? IS NOT NULL AND thumbnail_url IS NOT ? THEN NULL ELSE artwork_file END,
+           thumbnail_url = COALESCE(?, thumbnail_url),
            screenshots_json = ?, candidates_json = ?, download_status = ?, version_json = COALESCE(?, version_json), detail_fetched_at = ?, updated_at = ? WHERE id = ?`,
       )
       .run(
@@ -688,6 +717,10 @@ export class CatalogRepo {
         JSON.stringify(d.platforms ?? []),
         JSON.stringify(this.raw(id)?.tags ?? []),
         JSON.stringify(this.raw(id)?.tags ?? []),
+        d.thumbnailUrl ?? null,
+        d.thumbnailUrl ?? null,
+        d.thumbnailUrl ?? null,
+        d.thumbnailUrl ?? null,
         d.thumbnailUrl ?? null,
         JSON.stringify(d.screenshots ?? []),
         JSON.stringify(d.candidates ?? []),
@@ -705,6 +738,7 @@ export class CatalogRepo {
     // A description chosen from the page itself replaces one looked up elsewhere.
     if (d.description) this.st.get('UPDATE catalog SET description_source = NULL WHERE id = ?').run(id);
     this.rescore(id);
+    this.coverPending(id);
   }
 
   /** A real description found after verification (the page's article, or a public game database). */
@@ -769,7 +803,8 @@ export class CatalogRepo {
   }
 
   setArtwork(id: number, file: string | null) {
-    this.st.get('UPDATE catalog SET artwork_file = ? WHERE id = ?').run(file, id);
+    this.st.get('UPDATE catalog SET cover_score = CASE WHEN artwork_file IS NOT ? THEN NULL ELSE cover_score END, artwork_file = ? WHERE id = ?').run(file, file, id);
+    this.coverPending(id);
   }
 
   setScreenshotFiles(id: number, files: Array<{ file: string; score: number }>) {
@@ -780,6 +815,7 @@ export class CatalogRepo {
     this.st
       .get('UPDATE catalog SET rating = ?, rating_score = ?, rating_reasons_json = ?, classifier_version = ?, classify_attempts = classify_attempts + 1, updated_at = ? WHERE id = ?')
       .run(rating, score, JSON.stringify(reasons), classifierVersion, now(), id);
+    this.coverPending(id);
   }
 
   raw(id: number): CatalogRaw | null {
@@ -799,6 +835,7 @@ export class CatalogRepo {
 
   /** Records how likely the entry's cover shows a woman (0..1). */
   setCoverScore(id: number, score: number) {
+    if (!Number.isFinite(score)) throw new Error('Invalid cover score');
     this.st.get('UPDATE catalog SET cover_score = ? WHERE id = ?').run(Math.max(0, Math.min(1, score)), id);
   }
 

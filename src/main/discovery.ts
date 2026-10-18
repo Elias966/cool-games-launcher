@@ -1,7 +1,7 @@
 // Website discovery. Runs only while the Store is active: crawls the user's
 // sources incrementally (checkpointed). DOM extraction supplies observations;
 // the local vision model chooses games, navigation and download routes.
-import { canonicalUrl, hostOf, siteKey, titleKey } from '@shared/urls';
+import { canonicalUrl, hostOf, siteKey, titleKey, languageSwitchUrl } from '@shared/urls';
 import { textAdultSignals } from '@shared/policy';
 import { downloadEvidence } from '@shared/download-evidence';
 import { catalogLinks, isListingRoute, inducePatterns, matchesAny, moreFromExamples, paginationLinks, recentListingLinks, recipeCards, recipeRoutes, ROUTES_VERSION, type SiteRecipe } from '@shared/site-recipe';
@@ -23,6 +23,7 @@ import type { PolicyService } from './policy-service';
 import { publish } from './bus';
 import { isCancelled } from '@shared/worker-protocol';
 import { tm } from './i18n';
+import { decorativeArtwork } from '@shared/artwork';
 
 const DETAILS_PER_PASS = 48;
 /** Game pages read at once. Per-host spacing still applies to every request. */
@@ -672,7 +673,11 @@ export class Discovery {
   }
 
   private async classifyListed(ids: number[], token: SessionToken) {
-    const todo = ids.filter((id) => this.deps.catalog.raw(id)?.rating === 'unknown');
+    const todo = ids.filter((id) => {
+      const e = this.deps.catalog.raw(id);
+      return e?.rating === 'unknown' && e.downloadStatus !== 'unavailable'
+        && (e.classifyAttempts < 4 || e.classifierVersion !== CLASSIFIER_VERSION);
+    });
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(8, todo.length) }, async () => {
       while (next < todo.length) {
@@ -901,7 +906,7 @@ export class Discovery {
 
   storeCard(sourceId: number, card: ExtractCard, page: PageExtract) {
     const pageUrl = canonicalUrl(card.href, page.url);
-    if (!pageUrl || !card.title.trim()) return null;
+    if (!pageUrl || languageSwitchUrl(pageUrl) || !card.title.trim()) return null;
     const signals = textAdultSignals(card.title, card.text, [...card.tags, ...(card.categories ?? [])].join(' ')).map((s) => `text:${s}`);
     return this.deps.catalog.upsertListing(sourceId, {
       pageUrl,
@@ -1039,8 +1044,9 @@ export class Discovery {
     const entry = catalog.raw(id);
     if (!entry) return;
     session.assertLive(token, 'detail checkpoint');
+    if (languageSwitchUrl(entry.pageUrl)) { catalog.setDetail(id, { downloadStatus: 'unavailable' }); return; }
     if (entry.detailFetchedAt && !options.refresh) {
-      if (entry.downloadStatus === 'available' && entry.rating === 'unknown') {
+      if (entry.downloadStatus === 'available' && entry.rating === 'unknown' && (entry.classifyAttempts < 4 || entry.classifierVersion !== CLASSIFIER_VERSION)) {
         await this.deps.classification.classifyEntry(id, token.signal);
         this.notifyCatalog(entry.sourceId);
       }
@@ -1050,6 +1056,7 @@ export class Discovery {
   }
 
   private async inspectDetail(id: number, token: SessionToken) {
+    const started = Date.now();
     const { catalog, session, sources } = this.deps;
     const entry = catalog.raw(id);
     if (!entry) return;
@@ -1073,6 +1080,7 @@ export class Discovery {
       }
     }
 
+    const pageReadMs = Date.now() - started;
     let game = ex.game;
     if (evidence.length && !game) {
       // Sitemap entries carry a placeholder from the URL; prefer the page's own title.
@@ -1104,7 +1112,7 @@ export class Discovery {
       platforms: asPlatforms([...new Set([...(game?.platforms ?? []), ...candidates.map((c) => c.platform).filter(Boolean)])]),
       tags: game?.tags ?? [],
       categories: game?.categories ?? [],
-      thumbnailUrl: entry.thumbnailUrl ? null : game?.cover ?? ex.meta['og:image'] ?? null,
+      thumbnailUrl: entry.thumbnailUrl && !decorativeArtwork(entry.thumbnailUrl) ? null : game?.cover ?? ex.meta['og:image'] ?? null,
       screenshots: game?.screenshots ?? [],
       candidates,
       downloadStatus: game && candidates.length ? 'available' : 'unavailable',
@@ -1114,7 +1122,13 @@ export class Discovery {
       observedAt: ex.observedAt,
     });
     if (signals.length) catalog.addTextSignals(id, signals);
+    const classificationStarted = Date.now();
     if (game && candidates.length) await this.deps.classification.classifyEntry(id, token.signal);
+    if (process.env.CGL_DEBUG || Date.now() - started > 2000) console.log('[verification] game', {
+      id, sourceId: source.id, via, pageReadMs,
+      routeMs: classificationStarted - started - pageReadMs,
+      classificationMs: Date.now() - classificationStarted, totalMs: Date.now() - started,
+    });
     // After the content check: an automatic update may start downloading right away.
     if (game && candidates.length) { this.deps.updates?.afterDetail(id); this.deps.wishlist?.afterDetail(id); }
     this.notifyCatalog(entry.sourceId);

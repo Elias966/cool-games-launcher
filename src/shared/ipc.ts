@@ -290,7 +290,7 @@ export interface Responses {
   'sounds:read': Uint8Array | null;
   'consent:get': ConsentRecord & { showNsfw: boolean; policyRevision: number };
   'content:setHideWomenCovers': Settings;
-  'content:coverStatus': { checked: number; women: number; pending: number; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
+  'content:coverStatus': { checked: number; women: number; pending: number; failed: number; paused: boolean; enabled: boolean; model: { state: 'missing' | 'downloading' | 'ready' | 'error'; received: number; size: number; error: string | null } };
   'content:setCoverStrictness': Settings;
   'sources:list': Source[];
   'sources:add': Source;

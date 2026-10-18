@@ -1,6 +1,9 @@
 // Arabic interface texts, keyed by the English text they replace (see i18n.ts).
 // Placeholders such as {n} must stay as they are.
 export const ar: Record<string, string> = {
+  "Cover checks are paused while a game is running.": "فحص الأغلفة متوقف مؤقتًا أثناء تشغيل لعبة.",
+  "Could not check {failed} covers. They stay hidden; retry after restarting the launcher.": "تعذر فحص {failed} غلافًا. تبقى مخفية؛ أعد المحاولة بعد إعادة تشغيل المشغّل.",
+  "{failed} unreadable covers stay hidden.": "يبقى {failed} غلافًا غير قابل للقراءة مخفيًا.",
   'All available download hosts require CAPTCHA and were skipped.': 'تتطلب جميع مستضيفات التنزيل المتاحة اختبار CAPTCHA وتم تجاوزها.',
   'Found {n} games on this page — checking covers': 'عُثر على {n} لعبة في هذه الصفحة — جارٍ فحص الأغلفة',
   'Complete the website check in Firefox. The window hides and work resumes automatically after verification.': 'أكمل التحقق من الموقع في Firefox. ستختفي النافذة ويُستأنف العمل تلقائيًا بعد التحقق.',

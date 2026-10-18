@@ -3,6 +3,7 @@
 // choices we induce URL patterns, so later pages of the same site are indexed
 // instantly without another model call. The AI is asked again only when a
 // recipe stops matching.
+import { languageSwitchUrl } from './urls';
 import type { ExtractCard, ExtractLink, PageExtract } from './page-extract';
 
 export interface UrlPattern {
@@ -130,11 +131,11 @@ export function recipeCards(ex: PageExtract, recipe: SiteRecipe): ExtractCard[] 
   const out = new Map<string, ExtractCard>();
   const listings = new Set(catalogLinks(ex));
   for (const card of ex.cards) {
-    if (!listings.has(card.href.split('#')[0]) && matchesAny(card.href, recipe.game) && !sameDoc(card.href, ex.url)) out.set(card.href.split('#')[0], card);
+    if (!languageSwitchUrl(card.href) && !listings.has(card.href.split('#')[0]) && matchesAny(card.href, recipe.game) && !sameDoc(card.href, ex.url)) out.set(card.href.split('#')[0], card);
   }
   const byHref = new Map<string, ExtractLink[]>();
   for (const l of ex.links) {
-    if (l.inContent === false || listings.has(l.href.split('#')[0]) || sameDoc(l.href, ex.url) || !matchesAny(l.href, recipe.game)) continue;
+    if (languageSwitchUrl(l.href) || l.inContent === false || listings.has(l.href.split('#')[0]) || sameDoc(l.href, ex.url) || !matchesAny(l.href, recipe.game)) continue;
     const key = l.href.split('#')[0];
     byHref.set(key, [...(byHref.get(key) ?? []), l]);
   }
@@ -155,6 +156,7 @@ const PAGE_HREF = /(?:\/page\/\d+\/?$|[?&](?:page|p|paged|pg|pagenum)=\d+)/i;
 /** WordPress random-post buttons can look like pagination but redirect to a
  * random game. They must never expand the listing crawl. */
 export function isListingRoute(url: string): boolean {
+  if (languageSwitchUrl(url)) return false;
   try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.searchParams.has('random-post') && !/\.(?:xml|rss|atom|json)\/?$/i.test(u.pathname) && !/\/(?:rss|feed|feeds)(?:\/|$)/i.test(u.pathname); }
   catch { return false; }
 }

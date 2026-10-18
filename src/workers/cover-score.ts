@@ -46,7 +46,7 @@ export function pixels(vips: any, buf: Buffer): Float32Array {
 }
 
 export interface CoverScorer {
-  score(path: string): Promise<number>;
+  score(path: string, signal?: AbortSignal): Promise<number>;
   release(): Promise<void>;
   device: 'gpu' | 'cpu';
 }
@@ -68,13 +68,68 @@ export async function createCoverScorer(modelPath: string, vips: any, log: (...a
   log('cover model ready', { device });
   let queue: Promise<unknown> = Promise.resolve();
   const exclusive = <T>(fn: () => Promise<T>) => { const r = queue.then(fn, fn); queue = r.catch(() => undefined); return r; };
+  type Job = { path: string; signal?: AbortSignal; resolve: (score: number) => void; reject: (e: unknown) => void };
+  const pending: Job[] = [];
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let closing = false;
+  // Up to eight uses the same fp16 results as single-image checks on the
+  // tested backend. Larger batches can select different, less precise kernels.
+  let batchSize = device === 'gpu' ? 8 : 1;
+  const infer = async (inputs: Float32Array[]) => {
+    const data = new Float32Array(inputs.length * 3 * SIZE * SIZE);
+    inputs.forEach((input, i) => data.set(input, i * input.length));
+    const r = await session.run({ pixel_values: new ort.Tensor('float32', data, [inputs.length, 3, SIZE, SIZE]) });
+    const embeds = r.image_embeds.data as Float32Array;
+    if (embeds.length !== inputs.length * 512) throw new Error('Invalid cover embeddings');
+    return inputs.map((_, i) => womanScore(embeds.subarray(i * 512, (i + 1) * 512)));
+  };
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    while (pending.length) {
+      const jobs = pending.splice(0, batchSize);
+      void exclusive(async () => {
+        const ready: Job[] = [], inputs: Float32Array[] = [];
+        for (const job of jobs) {
+          try {
+            job.signal?.throwIfAborted();
+            inputs.push(pixels(vips, readFileSync(job.path)));
+            ready.push(job);
+          } catch (e) { job.reject(e); }
+        }
+        if (!ready.length) return;
+        try {
+          let scores: number[];
+          try { scores = await infer(inputs); }
+          catch (e) {
+            if (ready.length === 1) throw e;
+            log('cover batch unavailable, using single-image checks', (e as Error).message.slice(0, 200));
+            batchSize = 1;
+            scores = [];
+            for (let i = 0; i < ready.length; i++) {
+              if (ready[i].signal?.aborted) { scores.push(0); continue; }
+              scores.push((await infer([inputs[i]]))[0]);
+            }
+          }
+          ready.forEach((job, i) => job.signal?.aborted ? job.reject(job.signal.reason) : job.resolve(scores[i]));
+        } catch (e) { ready.forEach(job => job.reject(e)); }
+      });
+    }
+  };
+  let release: Promise<void> | null = null;
   return {
     device,
-    score: (path) => exclusive(async () => {
-      const input = new ort.Tensor('float32', pixels(vips, readFileSync(path)), [1, 3, SIZE, SIZE]);
-      const r = await session.run({ pixel_values: input });
-      return womanScore(r.image_embeds.data as Float32Array);
-    }),
-    release: () => exclusive(() => session.release()),
+    score: (path, signal) => {
+      if (closing) return Promise.reject(new Error('Cover model is closing'));
+      return new Promise<number>((resolve, reject) => {
+        pending.push({ path, signal, resolve, reject });
+        if (pending.length >= batchSize) flush();
+        else timer ??= setTimeout(flush, 2);
+      });
+    },
+    release: () => {
+      if (!release) { closing = true; flush(); release = exclusive(() => session.release()); }
+      return release;
+    },
   };
 }

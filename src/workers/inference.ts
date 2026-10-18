@@ -457,7 +457,7 @@ async function coverScore(p: { modelPath: string; imagePath: string }, signal: A
   }
   const scorer = await coverScorer.scorer;
   throwIfAborted(signal);
-  return { score: await scorer.score(p.imagePath) };
+  return { score: await scorer.score(p.imagePath, signal) };
 }
 
 async function classify(p: ClassifyParams, signal: AbortSignal): Promise<{ scores: number[] }> {
