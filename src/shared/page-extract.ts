@@ -18,6 +18,7 @@ export interface ExtractLink {
   rect: ExtractRect;
   download: boolean;
   inContent?: boolean;
+  inDialog?: boolean;
 }
 
 export interface ExtractCard {
@@ -40,6 +41,7 @@ export interface ExtractControl {
   rect: ExtractRect;
   inViewport: boolean;
   inContent?: boolean;
+  inDialog?: boolean;
 }
 
 export interface ExtractUpload {
@@ -64,6 +66,8 @@ export interface ExtractGame {
 }
 
 export interface PageExtract {
+  /** Trusted browser recovery metadata, never read from website content. */
+  navigationRecovery?: 'closed-tab';
   url: string;
   title: string;
   site: string | null;
@@ -102,10 +106,16 @@ export interface PageExtract {
   rankedSections?: Array<{ kind: 'popular' | 'trending'; heading: string; links: string[] }>;
 }
 
-export function extractPage(opts: { maxLinks?: number; maxControls?: number; mark?: boolean; fast?: boolean } = {}): PageExtract {
+export function extractPage(opts: { maxLinks?: number; maxCards?: number; maxControls?: number; mark?: boolean; fast?: boolean } = {}): PageExtract {
   const doc = document;
   const win = window;
+  // Keep page shims of closest() from losing controls, dialogs and article scope.
+  const closest = (el: Element | null | undefined, selector: string): Element | null => {
+    for (let node = el; node; node = node.parentElement) if (win.Element.prototype.matches.call(node, selector)) return node;
+    return null;
+  };
   const maxLinks = opts.maxLinks ?? 400;
+  const maxCards = Math.max(0,Math.min(10000,opts.maxCards ?? 150));
   const maxControls = opts.maxControls ?? 80;
   const vw = win.innerWidth || 1280;
   const vh = win.innerHeight || 800;
@@ -118,9 +128,10 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     if (dateCache.has(root)) return dateCache.get(root)!;
     let found: string | null = null;
     const selector = '[itemprop="datePublished"],time,[data-published],[data-date],[data-timestamp],.date,.time,.post-time,.entry-time,.timestamp,.post-meta,.entry-meta,.post-date,.entry-date,.posted-on,.published,.timeago,[class*="post_date"],[class*="post-date"],[class*="time-ago"],[class*="time_ago"]';
-    const nodes = [...(root.matches(selector) ? [root] : []), ...root.querySelectorAll(selector)].slice(0, 30);
+    // Named form controls can shadow methods such as matches/querySelectorAll.
+    const nodes = [...(win.Element.prototype.matches.call(root,selector) ? [root] : []), ...win.Element.prototype.querySelectorAll.call(root,selector)].slice(0, 30);
     for (const node of nodes) {
-      if (node.closest('aside,footer,nav,[class*="related"],[class*="comment"],[class*="release-date"],[class*="release_date"]')) continue;
+      if (closest(node,'aside,footer,nav,[class*="related"],[class*="comment"],[class*="release-date"],[class*="release_date"]')) continue;
       const label = `${node.className} ${node.getAttribute('itemprop') ?? ''} ${node.textContent ?? ''}`;
       if (/updated|modified|release|copyright/i.test(label) && !/datePublished|\bpublished\b/.test(label)) continue;
       const relative = clean([...node.childNodes].map(n=>n.textContent).join(' '),300).match(/\b(?:just now|yesterday|(?:\d+(?:\.\d+)?|an?|one)\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|[smhdw])\s+ago)\b/i)?.[0];
@@ -150,7 +161,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
   };
   // Without a layout engine (tests under jsdom) every rect is empty.
-  const hasLayout = doc.documentElement.getBoundingClientRect().width > 0;
+  const hasLayout = !!doc.documentElement && doc.documentElement.getBoundingClientRect().width > 0;
   // HTTP-fetched pages have no layout engine, and jsdom's getComputedStyle is
   // far too slow to call per element and ancestor. Fast mode reads only
   // markup-level hiding, memoised per ancestor.
@@ -251,9 +262,9 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
   const links: ExtractLink[] = [];
   const fileLinks: ExtractLink[] = [];
   const fileRe = /\.(zip|tar|tgz|tar\.gz|tar\.xz|tar\.bz2|txz|7z|rar|appimage|x86_64|sh|run|exe|msi|deb|rpm|apk|dmg|love|jar|(?:zip|7z|rar|tar)\.\d{3}|r\d{2})$/i;
-  const inChrome = (el: Element) => !!el.closest('nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"]');
+  const inChrome = (el: Element) => !!closest(el,'nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"]');
 
-  const relevant = (el: Element) => !inChrome(el) && !el.closest('aside, [role="complementary"], .related-posts, .related_games, .related, .relatedposts, .rpwe-block, .widget, .recommendations, .advertisement, [data-ad], [aria-label="Advertisement"]');
+  const relevant = (el: Element) => !inChrome(el) && !closest(el,'aside, [role="complementary"], .related-posts, .related_games, .related, .relatedposts, .rpwe-block, .widget, .recommendations, .advertisement, [data-ad], [aria-label="Advertisement"]');
   // HTMX hosts use anchors without href: clicking invokes hx-get with the
   // host's request headers/token handling, so retain these as click controls.
   doc.querySelectorAll('a[href], a[onclick], [hx-get], [data-hx-get], button, input[type="submit"], input[type="button"], [role="button"]').forEach((el) => {
@@ -265,6 +276,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       120,
     );
     const i = counter++;
+    const inDialog=!!closest(el,'[role="dialog"], [aria-modal="true"], dialog[open]');
     controlIds.set(el, i);
     if (opts.mark !== false) el.setAttribute('data-cgl-i', String(i));
     if (href) {
@@ -277,6 +289,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
           rect: r,
           download: el.hasAttribute('download'),
           inContent: relevant(el),
+          inDialog,
         };
         links.push(link);
         let path = '';
@@ -298,8 +311,9 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
           rect: r,
           inViewport: r.y + r.h > 0 && r.y < vh && r.x + r.w > 0 && r.x < vw,
           inContent: relevant(el),
+          inDialog,
         },
-        modal: !!el.closest('[role="dialog"], [aria-modal="true"], dialog[open], .lightbox, .modal, [class*="lightbox"], [class*="modal"]'),
+        modal: inDialog,
       });
     }
   });
@@ -317,7 +331,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], iframe[src*="arkoselabs"], .g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, #cf-challenge-running',
     )].some((el) => {
       if (!visible(el)) return false;
-      const root = el.closest('form') ?? el.parentElement ?? el;
+      const root = closest(el,'form') ?? el.parentElement ?? el;
       const response = root.querySelector<HTMLInputElement | HTMLTextAreaElement>('[name="cf-turnstile-response"], [name="g-recaptcha-response"], [name="h-captcha-response"]');
       return !response?.value.trim();
     }) || /just a moment|attention required|verify you are human|are you a robot/.test(lowerTitle);
@@ -579,7 +593,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     if (best.items.length && best.score > 0) {
       // Homepages often use different cards for latest, popular and genre
       // sections. Retain each credible group instead of only the largest one.
-      cards = [...new Map([...best.items, ...additional.flat()].map((c) => [c.href, c])).values()].slice(0, 150);
+      cards = [...new Map([...best.items, ...additional.flat()].map((c) => [c.href, c])).values()].slice(0, maxCards);
       const withImg = cards.filter((c) => c.img).length / cards.length;
       cardConfidence = Math.min(1, (cards.length >= 6 ? 0.5 : 0.25) + withImg * 0.5);
       // Two competing groups mean the layout is ambiguous: let the vision model decide.
@@ -603,7 +617,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
       explicit.set(link.href, { href: link.href, title, img, text: '', platforms: [], price: null, author: null, tags: [], categories: [] });
     }
     if (explicit.size >= 3) {
-      cards = [...new Map([...cards, ...explicit.values()].map((c) => [c.href, c])).values()].slice(0, 150);
+      cards = [...new Map([...cards, ...explicit.values()].map((c) => [c.href, c])).values()].slice(0, maxCards);
       cardConfidence = Math.max(cardConfidence, 0.8);
     }
   }
@@ -673,8 +687,8 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
   let about: string | null = null;
   for (const h of doc.querySelectorAll('h1,h2,h3,h4,h5,h6,strong,b')) {
     const heading = clean(h.textContent, 80);
-    if (!ABOUT.test(heading) || heading.length > 40 || markupHidden(h) || h.closest(offTopic)) continue;
-    const start = /^(?:STRONG|B)$/.test(h.tagName) ? h.closest('p,div') ?? h : h;
+    if (!ABOUT.test(heading) || heading.length > 40 || markupHidden(h) || closest(h,offTopic)) continue;
+    const start = /^(?:STRONG|B)$/.test(h.tagName) ? closest(h,'p,div') ?? h : h;
     const parts: string[] = [];
     // "Overview: text…" in the same paragraph as an inline heading.
     if (start !== h) { const rest = prose(start).slice(heading.length).replace(/^[\s:–—-]+/, ''); if (rest.length >= 40 && !SEO.test(rest)) parts.push(rest); }
@@ -688,7 +702,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
   if (!about && mainScope) {
     const paras: string[] = [];
     for (const p of mainScope.querySelectorAll('p')) {
-      if (p.closest(offTopic) || markupHidden(p)) continue;
+      if (closest(p,offTopic) || markupHidden(p)) continue;
       const t = prose(p);
       if (t.length < 100 || SEO.test(t) || SPECS.test(t) || !/[.!?](?:\s|$)/.test(t)) continue;
       paras.push(t);
@@ -698,7 +712,10 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
   }
   const mainText = mainScope ? clean((mainScope as HTMLElement).innerText || mainScope.textContent || '', 20000) : null;
   const ldPublished = (jsonLd as Array<Record<string, unknown>>).map((o) => o?.datePublished).find((v) => typeof v === 'string') as string | undefined;
-  const published = meta['article:published_time'] || meta['datepublished'] || ldPublished || (mainScope ? dateIn(mainScope.closest('article') ?? mainScope) : null);
+  // Some host scripts replace closest() with a shim returning false instead
+  // of null. Only accept an actual Element as a date scope.
+  const articleScope=closest(mainScope,'article');
+  const published = meta['article:published_time'] || meta['datepublished'] || ldPublished || (mainScope ? dateIn(articleScope instanceof win.Element ? articleScope : mainScope) : null);
   const RANK_POPULAR = /\b(?:most\s+)?popular\b|most\s+(?:downloaded|played|viewed)|\btop\s+(?:games|downloads|rated|\d+)\b|^top$|best\s+(?:games|of)|all[- ]time/i;
   const RANK_TRENDING = /\btrending\b|\bhot\b|this\s+week|rising|new\s+(?:and|&)\s+popular|right\s+now/i;
   const recentGameLinks: string[] = [];
@@ -709,7 +726,7 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     const kind = RANK_TRENDING.test(heading) ? 'trending' : RANK_POPULAR.test(heading) ? 'popular' : null;
     const recent = /^(?:recently added(?: games)?|newly added(?: games)?|latest games|new games|new releases|recent games)$/i.test(heading);
     if (!recent && (!kind || rankedSections.some((r) => r.kind === kind))) continue;
-    const box = h.parentElement?.closest('section,aside,.widget,[class*="widget"],[class*="popular"],[class*="trending"],[class*="block"]') ?? h.parentElement;
+    const box = closest(h.parentElement,'section,aside,.widget,[class*="widget"],[class*="popular"],[class*="trending"],[class*="block"]') ?? h.parentElement;
     if (!box || box === doc.body || box === doc.documentElement) continue;
     const hrefs: string[] = [];
     for (const a of box.querySelectorAll('a[href]')) {
@@ -744,14 +761,14 @@ export function extractPage(opts: { maxLinks?: number; maxControls?: number; mar
     about,
     mainText,
     notices: [...doc.querySelectorAll('h1,h2,[role="alert"],.alert,.error-message')]
-      .filter(el => !markupHidden(el) && !el.closest('nav,header,footer,aside,[class*="faq"],[class*="comment"],[class*="related"]'))
+      .filter(el => !markupHidden(el) && !closest(el,'nav,header,footer,aside,[class*="faq"],[class*="comment"],[class*="related"]'))
       .map(el => clean((el as HTMLElement).innerText || el.textContent, 301))
       .filter(text => text.length > 0 && text.length <= 300).slice(0, 16),
     published,
     observedAt,
     recentGameLinks: [...new Set(recentGameLinks)],
     rankedSections,
-    viewport: { w: vw, h: vh, scrollY: Math.round(win.scrollY), docH: Math.round(doc.documentElement.scrollHeight) },
+    viewport: { w: vw, h: vh, scrollY: Math.round(win.scrollY), docH: Math.round(doc.documentElement?.scrollHeight??0) },
     inputState,
   };
 }

@@ -1,8 +1,9 @@
 import { partOf, partFromLabel } from '@shared/parts';
 import type { DownloadCandidate } from '@shared/types';
-import { platformFrom } from '@shared/download-evidence';
+import { platformFrom, excludedDownloadLabel,isTorrentDownload } from '@shared/download-evidence';
 import type { MirrorSample } from '../workers/mirror-probe';
 import type { BrowserDownload } from './browser-client';
+import {downloadPageKey} from '@shared/download-page';
 
 export interface MeasuredMirror extends MirrorSample {
   browserDownload?: BrowserDownload;
@@ -27,9 +28,26 @@ export interface MirrorComparison {
 }
 
 export function mirrorRoutes(candidates: DownloadCandidate[]): DownloadCandidate[] {
-  const usable = candidates.filter(c => /^https?:\/\//i.test(c.url) && !['macos', 'android', 'web'].includes(c.platform ?? ''));
+  const usable = candidates.filter(c => /^https?:\/\//i.test(c.url) && !excludedDownloadLabel(c.label) && !isTorrentDownload(c.fileName??'',c.url) && !['macos', 'android', 'web'].includes(c.platform ?? ''));
   const rank = (c: DownloadCandidate) => c.platform === 'linux' ? 0 : c.platform === 'windows' ? 1 : 2;
   return [...new Map(usable.map(c => [c.url, c])).values()].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Keep completed measurements attached to their host when a reload changes
+ * numeric DOM IDs. Script fragments identify a trial; clicks rebind by label. */
+export function resumeMirrorRoutes(saved:DownloadCandidate[],observed:DownloadCandidate[]):DownloadCandidate[]{
+  const script=(r:DownloadCandidate)=>/#cgl-control-\d+$/.test(r.url);
+  const same=(a:DownloadCandidate,b:DownloadCandidate)=>script(a)&&script(b)&&downloadPageKey(a.url)===downloadPageKey(b.url)&&a.label.replace(/\s+/g,' ').trim().toLowerCase()===b.label.replace(/\s+/g,' ').trim().toLowerCase();
+  const result=[...saved],used=new Set(saved.map(r=>r.url));
+  let next=Math.max(0,...[...saved,...observed].map(r=>Number(r.url.match(/#cgl-control-(\d+)$/)?.[1]??0)))+1;
+  for(const r of observed){
+    const matches=saved.filter(s=>same(s,r));
+    if(matches.length===1&&observed.filter(o=>same(o,r)).length===1)continue;
+    if(result.some(s=>s.url===r.url&&(!script(r)||same(s,r))))continue;
+    const route=script(r)&&used.has(r.url)?{...r,url:r.url.replace(/#cgl-control-\d+$/,'#cgl-control-'+next++)}:r;
+    result.push(route);used.add(route.url);
+  }
+  return mirrorRoutes(result);
 }
 
 /** Compare only the same bytes, size and platform; a faster patch/part is not a mirror. */

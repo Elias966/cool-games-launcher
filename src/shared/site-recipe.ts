@@ -35,6 +35,8 @@ export interface SiteRecipe {
   rankAt?: string;
   recentPages?: string[];
   siteDatesVersion?: number;
+  /** 2 reads complete one-page catalogs instead of truncating at 150 cards. */
+  listingExtractVersion?: number;
 }
 
 // 3: the AI also sees menu links when choosing routes (catalogs often live there).
@@ -153,7 +155,7 @@ const PAGE_HREF = /(?:\/page\/\d+\/?$|[?&](?:page|p|paged|pg|pagenum)=\d+)/i;
 /** WordPress random-post buttons can look like pagination but redirect to a
  * random game. They must never expand the listing crawl. */
 export function isListingRoute(url: string): boolean {
-  try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.searchParams.has('random-post'); }
+  try { const u = new URL(url); return /^https?:$/.test(u.protocol) && !u.searchParams.has('random-post') && !/\.(?:xml|rss|atom|json)\/?$/i.test(u.pathname) && !/\/(?:rss|feed|feeds)(?:\/|$)/i.test(u.pathname); }
   catch { return false; }
 }
 

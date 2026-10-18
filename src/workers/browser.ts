@@ -1,24 +1,32 @@
 // Browser utility process: drives the bundled Firefox through geckodriver with
-// a dedicated profile and uBlock Origin. Exposes only navigation, inspection
+// a dedicated profile, uBlock Origin and Cookie-Editor. Exposes only navigation, inspection
 // and input forwarding — nothing here can touch the filesystem or a shell on
 // behalf of a web page.
 import { existsSync, mkdirSync, copyFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WebDriver } from 'selenium-webdriver';
 import { extractPage, type PageExtract } from '@shared/page-extract';
-import { downloadEvidence, isFileUrl, isHostLanding } from '@shared/download-evidence';
+import {closestElement} from '@shared/dom-ancestor';
+import {downloadPageKey,withoutChallengeTokens} from '@shared/download-page';
+import { downloadEvidence, isFileUrl, isHostLanding,isTorrentDownload } from '@shared/download-evidence';
 import { emit, log, serve, throwIfAborted } from './rpc';
+import {connectInstalledFirefox} from './installed-firefox';
+import { NormalFirefox } from './normal-firefox';
+import { VerificationResume, type VerificationObservation } from '@shared/verification-resume';
 
 process.title = 'cgl-browser';
 process.env.SE_OFFLINE = 'true'; // never let Selenium Manager reach the network
 
-type ContextName = 'interactive' | 'discovery' | 'updates' | 'dates';
+type ContextName = 'interactive' | 'discovery' | 'updates' | 'dates' | 'index';
 
 interface InitParams {
   firefoxPath: string;
   geckodriverPath: string;
   profileDir: string;
   ublockXpi: string;
+  cookieEditorXpi?: string;
+  browserMode?: 'ai' | 'normal' | 'installed';
+    installedBinary?:string;
   stagingDir: string;
   doNotTrack: boolean;
   width: number;
@@ -28,21 +36,31 @@ interface InitParams {
 
 let cfg: InitParams | null = null;
 let driver: WebDriver | null = null;
+let normalFirefox: NormalFirefox | null = null;
 let starting: Promise<WebDriver> | null = null;
-let liveHuman: { context: ContextName; handle: string; lastUrl: string } | null = null;
+let stopping=false;
+let liveHuman: { context: ContextName; handle: string; lastUrl: string; verification?: VerificationResume } | null = null;
 let humanMonitor: ReturnType<typeof setInterval> | null = null;
 const headless = () => cfg?.headless ?? !(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 const resumeUrls = new Map<ContextName, string>();
 const windows = new Map<ContextName, string>();
+const savedSourceTabs=new Map<string,string>();
+const closedContexts=new Set<ContextName>();
+const latePopups=new Map<ContextName,{handle:string;old:Set<string>;before:string;expected:string|null;expires:number}>();
 let current: ContextName | null = null;
 let chain: Promise<unknown> = Promise.resolve();
 
 /** Native visibility does not destroy the document or its CAPTCHA session. */
 async function nativeVisibility(d: WebDriver, visible: boolean) {
+  if(normalFirefox){await normalFirefox.nativeVisibility(visible);return;}
   const firefox = d as import('selenium-webdriver/firefox').Driver;
   await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
   try {
     await firefox.executeScript(`
+      const dir=Services.dirsvc.get('GreD',Ci.nsIFile);dir.append('cgl-browser');
+      Services.io.getProtocolHandler('resource').QueryInterface(Ci.nsIResProtocolHandler).setSubstitution('cgl-browser',Services.io.newFileURI(dir));
+      ChromeUtils.importESModule('resource://cgl-browser/CglBackground.sys.mjs').hiddenRenderer(window).touch(!arguments[0]);
+      Services.prefs.setBoolPref('cgl.browser.userControl', arguments[0]);
       Services.prefs.setBoolPref('browser.tabs.loadDivertedInBackground', !arguments[0]);
       Services.prefs.setIntPref('browser.link.open_newwindow.restriction', arguments[0] ? 2 : 0);
       if (arguments[0]) {
@@ -121,16 +139,22 @@ function prefs(c: InitParams): string {
 function prepareProfile(c: InitParams) {
   mkdirSync(join(c.profileDir, 'extensions'), { recursive: true, mode: 0o700 });
   mkdirSync(c.stagingDir, { recursive: true });
-  const target = join(c.profileDir, 'extensions', 'uBlock0@raymondhill.net.xpi');
-  if (existsSync(c.ublockXpi) && (!existsSync(target) || statSync(target).size !== statSync(c.ublockXpi).size)) {
-    copyFileSync(c.ublockXpi, target);
+  for (const [id, source] of [
+    ['uBlock0@raymondhill.net', c.ublockXpi],
+    ['{c3c10168-4186-445c-9c5b-63f12b8e2c87}', c.cookieEditorXpi],
+  ]) {
+    const target = join(c.profileDir, 'extensions', `${id}.xpi`);
+    if (source && existsSync(source) && (!existsSync(target) || statSync(target).size !== statSync(source).size)) {
+      copyFileSync(source, target);
+    }
   }
   writeFileSync(join(c.profileDir, 'user.js'), prefs(c));
   // A stale lock after a crash would stop Firefox from reusing the profile.
-  for (const f of ['lock', '.parentlock']) rmSync(join(c.profileDir, f), { force: true });
+  if(c.browserMode!=='installed')for (const f of ['lock', '.parentlock']) rmSync(join(c.profileDir, f), { force: true });
 }
 
 async function getDriver(): Promise<WebDriver> {
+  if(stopping)throw Error('The launcher browser is shutting down.');
   if (liveHuman) throw new Error('Firefox is under direct human control. Return to the launcher before resuming AI.');
   if (driver) return driver;
   if (starting) return starting;
@@ -139,6 +163,15 @@ async function getDriver(): Promise<WebDriver> {
   starting = (async () => {
     if (!existsSync(c.firefoxPath)) throw new Error('Bundled Firefox is missing');
     prepareProfile(c);
+    if (c.browserMode === 'normal'||c.browserMode === 'installed') {
+      normalFirefox = c.browserMode==='installed' ? await connectInstalledFirefox({bridgeDir:require('node:path').dirname(c.firefoxPath),profileDir:c.profileDir,binary:c.installedBinary}) : await NormalFirefox.start({...c,headless:headless()});
+      const d = normalFirefox.asDriver();
+      if (!headless()) await nativeVisibility(d, false);
+      windows.clear(); windows.set('interactive', await d.getWindowHandle());
+      current = 'interactive'; driver = d;
+      log(c.browserMode==='installed'?'installed Firefox connected (dedicated launcher profile, no WebDriver)':'normal Firefox session started (local bridge, no WebDriver)');
+      return d;
+    }
     const { Builder } = require('selenium-webdriver') as typeof import('selenium-webdriver');
     const firefox = require('selenium-webdriver/firefox') as typeof import('selenium-webdriver/firefox');
     const opts = new firefox.Options()
@@ -159,7 +192,9 @@ async function getDriver(): Promise<WebDriver> {
     return d;
   })();
   try {
-    return await starting;
+    const d=await starting;
+    if(stopping){await shutdownDriver();throw Error('The launcher browser is shutting down.');}
+    return d;
   } finally {
     starting = null;
   }
@@ -168,9 +203,37 @@ async function getDriver(): Promise<WebDriver> {
 async function useContext(ctx: ContextName): Promise<WebDriver> {
   const d = await getDriver();
   let handle = windows.get(ctx);
-  const handles = await d.getAllWindowHandles();
+  let handles = await d.getAllWindowHandles();
+  const live=handle&&handles.includes(handle)?handle:handles[0];
+  if(live)await d.switchTo().window(live);
+  let chromeDialog=false;
+  if(normalFirefox)chromeDialog=await normalFirefox.hasDialog();
+  else {
+    const f=d as import('selenium-webdriver/firefox').Driver;
+    try{await f.setContext('chrome' as import('selenium-webdriver/firefox').Context);chromeDialog=await d.executeScript<boolean>("return document.documentElement.hasAttribute('window-modal-open')");}
+    finally{await f.setContext('content' as import('selenium-webdriver/firefox').Context);}
+  }
+  if(chromeDialog){
+    if(!headless())await revealHuman(d,{context:current??'interactive'});
+    throw Error('Firefox setup needs your attention. Complete it in Firefox and return control to the launcher.');
+  }
+  const late=latePopups.get(ctx);
+  const otherContexts=new Set([...windows.entries()].filter(([name])=>name!==ctx).map(([,h])=>h));
+  if(late){
+    if(late.expires<Date.now()||late.handle!==handle||!handles.includes(late.handle))latePopups.delete(ctx);
+    else if(handles.some(h=>!late.old.has(h)&&!otherContexts.has(h))){
+      latePopups.delete(ctx);
+      await d.switchTo().window(late.handle);
+      await adoptClickPopup(d,ctx,late.old,late.before,late.expected,true,AbortSignal.timeout(15000));
+      handle=windows.get(ctx);
+      handles=await d.getAllWindowHandles();
+    }
+  }
   if (!handle || !handles.includes(handle)) {
-    if (handles.length && !windows.size) {
+    const recovered=handle&&[...savedSourceTabs.entries()].reverse().find(([key,h])=>key.startsWith(ctx+'|')&&handles.includes(h))?.[1];
+    if(handle)closedContexts.add(ctx);
+    if(recovered){handle=recovered;await d.switchTo().window(handle);}
+    else if (handles.length && !windows.size) {
       handle = handles[0];
     } else {
       await d.switchTo().newWindow('tab');
@@ -188,7 +251,7 @@ async function useContext(ctx: ContextName): Promise<WebDriver> {
   current = ctx;
   // Close stray popups the page may have opened in this session.
   if (handles.length > windows.size + 2) {
-    const known = new Set(windows.values());
+    const known = new Set([...windows.values(),...savedSourceTabs.values()]);
     for (const h of handles) {
       if (!known.has(h)) {
         await d.switchTo().window(h);
@@ -219,6 +282,7 @@ function pageLocation(url: string) {
 async function navigate(p: { context: ContextName; url: string; onlyIfBlank?: boolean }, signal: AbortSignal) {
   if (!isHttp(p.url)) throw new Error('Only http(s) pages can be opened');
   return exclusive(async () => {
+    latePopups.delete(p.context);
     throwIfAborted(signal);
     const d = await useContext(p.context);
     // Check inside the serialized browser operation, not a stale screenshot.
@@ -244,10 +308,11 @@ async function navigate(p: { context: ContextName; url: string; onlyIfBlank?: bo
 /** Restore the observed links viewport, reusing a source tab left by a popup. */
 async function returnToPage(p: { context: ContextName; url: string; scrollY: number }, signal: AbortSignal) {
   if (!isHttp(p.url) || !Number.isFinite(p.scrollY) || p.scrollY < 0) throw new Error('Invalid return page');
+  const target=withoutChallengeTokens(p.url),isTarget=(url:string)=>downloadPageKey(url)===downloadPageKey(target);
   return exclusive(async () => {
     throwIfAborted(signal);
     const d = await useContext(p.context);
-    let reused = await d.getCurrentUrl() === p.url;
+    let reused = isTarget(await d.getCurrentUrl());
     if (!reused) {
       const original = await d.getWindowHandle();
       const otherContexts = new Set([...windows.entries()].filter(([ctx]) => ctx !== p.context).map(([, handle]) => handle));
@@ -255,7 +320,7 @@ async function returnToPage(p: { context: ContextName; url: string; scrollY: num
         if (handle === original || otherContexts.has(handle)) continue;
         throwIfAborted(signal);
         await d.switchTo().window(handle);
-        if (await d.getCurrentUrl() === p.url) {
+        if (isTarget(await d.getCurrentUrl())) {
           windows.set(p.context, handle); current = p.context; reused = true;
           break;
         }
@@ -273,33 +338,33 @@ async function returnToPage(p: { context: ContextName; url: string; scrollY: num
             const browser = gBrowser.selectedBrowser, history = browser.browsingContext.sessionHistory;
             if (!history) return false;
             for (let i = history.index - 1; i >= 0; i--) {
-              if (history.getEntryAtIndex(i).URI.spec === arguments[0]) {
+              if ((${withoutChallengeTokens.toString()})(history.getEntryAtIndex(i).URI.spec) === arguments[0]) {
                 browser.webNavigation.gotoIndex(i); return true;
               }
             }
             return false;
-          `, p.url);
+          `, target);
         } catch { /* A new session or unsupported history API uses the saved URL. */ }
         finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context); }
         if (jumped) {
           try {
             await d.wait(async () => {
               throwIfAborted(signal);
-              return await d.getCurrentUrl() === p.url && await d.executeScript('return document.readyState !== "loading"');
+              return isTarget(await d.getCurrentUrl()) && await d.executeScript('return document.readyState !== "loading"');
             }, 3000, 'Waiting for the saved game page', 50);
             reused = true;
           } catch { throwIfAborted(signal); }
         }
         if (!reused) {
           throwIfAborted(signal);
-          try { await d.get(p.url); } catch (error) {
+          try { await d.get(target); } catch (error) {
             if (!/timeout|NS_BINDING_ABORTED|NS_ERROR_WONT_HANDLE_CONTENT/i.test((error as Error).message)) throw error;
           }
         }
       }
     }
     throwIfAborted(signal);
-    if (await d.getCurrentUrl() !== p.url) throw new Error('The saved game download-links page redirected elsewhere.');
+    if (!isTarget(await d.getCurrentUrl())) throw new Error('The saved game download-links page redirected elsewhere.');
     // Absolute positioning avoids an AI scroll/search loop. Retry briefly when
     // late images increase the document height after a reload.
     const scrollY = await d.executeAsyncScript<number>(`
@@ -312,6 +377,12 @@ async function returnToPage(p: { context: ContextName; url: string; scrollY: num
       restore();
     `, p.scrollY);
     throwIfAborted(signal);
+    const sourceKey=p.context+'|'+downloadPageKey(p.url);
+    savedSourceTabs.delete(sourceKey);savedSourceTabs.set(sourceKey,await d.getWindowHandle());
+    closedContexts.delete(p.context);
+    // Retain the live links document across host popups, including its expanded
+    // controls and dismissed warnings, without accumulating tabs indefinitely.
+    while(savedSourceTabs.size>4)savedSourceTabs.delete(savedSourceTabs.keys().next().value!);
     return { url: await d.getCurrentUrl(), scrollY, reused };
   });
 }
@@ -367,7 +438,14 @@ async function extract(p: { context: ContextName }) {
         if (!/timeout|NS_BINDING_ABORTED|NS_ERROR_WONT_HANDLE_CONTENT/i.test(e.message)) throw e;
       });
     }
-    const ex = (await d.executeScript(`return (${extractPage.toString()})(arguments[0])`, {})) as PageExtract;
+    // A popup can acquire its destination URL before the HTML parser creates
+    // its root. Let that transient state settle instead of rejecting a host.
+    for(let n=0;n<40;n++){
+      if(await d.executeScript('return !!document.documentElement && document.readyState !== "loading"'))break;
+      await d.sleep(50);
+    }
+    const ex = (await d.executeScript(`return (${extractPage.toString()})(arguments[0])`, p.context === 'discovery' ? {maxLinks:20000,maxCards:10000} : {})) as PageExtract;
+    if(closedContexts.delete(p.context))ex.navigationRecovery='closed-tab';
     if (process.env.CGL_DEBUG) log('observed', {context:p.context,url:pageLocation(ex.url),title:ex.title,gates:ex.gates});
     return ex;
   });
@@ -400,6 +478,36 @@ async function readUpdatePage(p: { url: string }, signal: AbortSignal) {
 }
 
 /** Deterministic rendering for date metadata: no model, links or AI actions. */
+async function fetchPages(p:{urls:string[]},signal:AbortSignal){
+  if(!p.urls.length||p.urls.length>6||p.urls.some(url=>!isHttp(url)||new URL(url).origin!==new URL(p.urls[0]).origin||isFileUrl(url)||isTorrentDownload('',url)))throw Error('Invalid indexing page batch');
+  return exclusive(async()=>{
+    throwIfAborted(signal);
+    if(liveHuman)return p.urls.map(url=>({url,status:0,html:null,ms:0}));
+    const previous=current,d=await useContext('index');
+    try{
+      if(new URL(await d.getCurrentUrl()).origin!==new URL(p.urls[0]).origin){
+        await d.manage().setTimeouts({pageLoad:15000});
+        try{await d.get(p.urls[0]);}catch(error){if(!/timeout|NS_BINDING_ABORTED/i.test((error as Error).message))throw error;}
+        finally{await d.manage().setTimeouts({pageLoad:30000});}
+      }
+      if(new URL(await d.getCurrentUrl()).origin!==new URL(p.urls[0]).origin)return p.urls.map(url=>({url,status:0,html:null,ms:0}));
+      // Same-origin page fetches use Firefox's real network/session without
+      // navigating each game, executing its scripts or consulting the AI.
+      const out=await d.executeAsyncScript(`
+        const urls=arguments[0],done=arguments[arguments.length-1];
+        Promise.all(urls.map(async url=>{const start=Date.now();try{
+          const r=await window.fetch(url,{credentials:'same-origin',mode:'same-origin',signal:window.AbortSignal.timeout(8000)});
+          if(!/html|xml/i.test(r.headers.get('content-type')||'')){await r.body?.cancel();return {url:r.url,status:r.status,html:null,ms:Date.now()-start};}
+          const reader=r.body.getReader(),chunks=[];let bytes=0;
+          for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.length;if(bytes>8*1024*1024){await reader.cancel();return {url:r.url,status:r.status,html:null,ms:Date.now()-start};}chunks.push(part.value);}
+          const data=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.length;}
+          return {url:r.url,status:r.status,html:new TextDecoder().decode(data),ms:Date.now()-start};
+        }catch{return {url,status:0,html:null,ms:Date.now()-start};}})).then(done);`,p.urls);
+      throwIfAborted(signal);return out as import('../main/browser-client').BrowserHtml[];
+    }finally{if(previous&&windows.has(previous))await useContext(previous).catch(()=>undefined);}
+  });
+}
+
 async function readDatePage(p: {url: string; detail?: boolean}, signal: AbortSignal) {
   if (!isHttp(p.url)) throw new Error('Invalid date page URL');
   return exclusive(async () => {
@@ -450,10 +558,10 @@ async function pointer(p: { context: ContextName; x: number; y: number; button?:
     throwIfAborted(signal);
     const d = await useContext(p.context);
     const before=await d.getCurrentUrl(),oldHandles=new Set(await d.getAllWindowHandles());
-    const target=await d.executeScript(`const hit=document.elementFromPoint(arguments[0],arguments[1]);const el=hit?.closest('a,button,[role="button"]');return {href:el?.href||null,text:el?.innerText||''}`,p.x,p.y) as {href:string|null;text:string};
+    const target=await d.executeScript(`const el=(${closestElement.toString()})(document.elementFromPoint(arguments[0],arguments[1]),'a,button,[role="button"]');return {href:el?.href||null,text:el?.innerText||''}`,p.x,p.y) as {href:string|null;text:string};
     throwIfAborted(signal);
     if(p.button !== 'right' && p.button !== 'middle') {
-      const element = await d.executeScript("return document.elementFromPoint(arguments[0],arguments[1])?.closest('a,button,input,[role=button],[hx-get],[data-hx-get]') || null",p.x,p.y);
+      const element = await d.executeScript(`return (${closestElement.toString()})(document.elementFromPoint(arguments[0],arguments[1]),'a,button,input,[role=button],[hx-get],[data-hx-get]')`,p.x,p.y);
       await watchDownloadRequest(d,element);
     }
     const { Origin, Button } = require('selenium-webdriver/lib/input') as typeof import('selenium-webdriver/lib/input');
@@ -466,7 +574,7 @@ async function pointer(p: { context: ContextName; x: number; y: number; button?:
       .perform();
     if(p.button!=='right'&&p.button!=='middle'){
       await d.sleep(600);throwIfAborted(signal);
-      await adoptClickPopup(d,p.context,oldHandles,before,target.href,true,signal);
+      await adoptClickPopup(d,p.context,oldHandles,before,target.href,!!target.href||/download|mirror|get (?:the )?(?:game|file)/i.test(target.text),signal);
     }
   });
 }
@@ -476,13 +584,14 @@ async function inspectPoint(p:{context:ContextName;x:number;y:number}){
     const d=await useContext(p.context);
     return d.executeScript(`
       const hit=document.elementFromPoint(arguments[0],arguments[1]);
-      const el=hit?.closest('a,button,input,textarea,[role="button"],[role="link"]')||hit;
+      const closest=(${closestElement.toString()});
+      const el=closest(hit,'a,button,input,textarea,[role="button"],[role="link"]')||hit;
       const text=(el?.innerText||el?.getAttribute('aria-label')||el?.getAttribute('placeholder')||'').slice(0,240);
       // Forms can shadow DOM methods through named child controls. Invoke the
       // Element methods directly rather than trusting properties on the page.
-      const marked=el instanceof Element?Element.prototype.closest.call(el,'[data-cgl-i]'):null;
+      const marked=closest(el,'[data-cgl-i]');
       const id=marked instanceof Element?Element.prototype.getAttribute.call(marked,'data-cgl-i'):null;
-      return {text,index:id==null?null:Number(id),href:el?.href||null,password:el?.type==='password',untrustedRegion:!el||!!el.closest('aside,[data-ad],.advertisement,.sponsored'),download:!!el?.hasAttribute('download')||/\\.(zip|rar|7z|exe|msi)([?#]|$)/i.test(el?.href||'')};
+      return {text,index:id==null?null:Number(id),href:el?.href||null,password:el?.type==='password',untrustedRegion:!el||!!closest(el,'aside,[data-ad],.advertisement,.sponsored'),download:!!el?.hasAttribute('download')||/\\.(zip|rar|7z|exe|msi)([?#]|$)/i.test(el?.href||'')};
     `,p.x,p.y);
   });
 }
@@ -504,9 +613,19 @@ async function scroll(p: { context: ContextName; x: number; y: number; dx: numbe
     throwIfAborted(signal);
     const d = await useContext(p.context);
     throwIfAborted(signal);
+    const scroller = `let target=document.elementFromPoint(arguments[0],arguments[1]);
+      while(target){const style=getComputedStyle(target);if(/auto|scroll|overlay/.test(style.overflowY+' '+style.overflowX)&&(target.scrollHeight>target.clientHeight||target.scrollWidth>target.clientWidth))break;target=target.parentElement;}`;
+    const before=await d.executeScript(`${scroller} return [location.href,scrollX,scrollY,target?.scrollLeft??null,target?.scrollTop??null]`,p.x,p.y);
     // Wheel actions exist at runtime but are missing from the bundled typings.
     const actions = d.actions({ async: true }) as unknown as { scroll(x: number, y: number, dx: number, dy: number): { perform(): Promise<void> } };
     await actions.scroll(Math.round(p.x), Math.round(p.y), Math.round(p.dx), Math.round(p.dy)).perform();
+    // Native hiding can suspend Firefox's APZ wheel animation in either mode.
+    // Fall back only when the wheel left the page and its scroll container still.
+    await d.sleep(80);throwIfAborted(signal);
+    await d.executeScript(`${scroller}
+      const before=arguments[2];
+      if(location.href===before[0]&&scrollX===before[1]&&scrollY===before[2]&&(target?.scrollLeft??null)===before[3]&&(target?.scrollTop??null)===before[4])
+        (target||window).scrollBy({left:arguments[3],top:arguments[4],behavior:'instant'});`,p.x,p.y,before,p.dx,p.dy);
   });
 }
 
@@ -595,7 +714,7 @@ async function clickElement(p: { context: ContextName; index: number }, signal: 
     await d.sleep(600);
     throwIfAborted(signal);
     await adoptClickPopup(d,p.context,oldHandles,before,expected,downloadButton,signal);
-    return { before, after: await d.getCurrentUrl() };
+    return { before, after: await d.getCurrentUrl().catch(()=>before) };
   });
 }
 
@@ -628,8 +747,11 @@ async function adoptClickPopup(d:WebDriver,context:ContextName,oldHandles:Set<st
     // Script-driven host links may open a new tab instead of navigating the
     // original page. Adopt a related destination and close unrelated ad popups.
     const original = windows.get(context)!;
-    const opened = (await d.getAllWindowHandles()).filter((h) => !oldHandles.has(h));
+    const otherContexts=new Set([...windows.entries()].filter(([name])=>name!==context).map(([,h])=>h));
+    const opened = (await d.getAllWindowHandles()).filter((h) => !oldHandles.has(h)&&!otherContexts.has(h));
     let adopted: string | null = null;
+    if(!opened.length&&downloadButton){latePopups.set(context,{handle:original,old:oldHandles,before,expected,expires:Date.now()+15000});return;}
+    latePopups.delete(context);
     for (const h of opened) {
       throwIfAborted(signal);
       await d.switchTo().window(h);
@@ -658,6 +780,8 @@ async function adoptClickPopup(d:WebDriver,context:ContextName,oldHandles:Set<st
 async function takeBrowserDownloads(p: { cancel: boolean; target?: string }) {
   return exclusive(async () => {
     const d = (await getDriver()) as import('selenium-webdriver/firefox').Driver;
+    const handles=await d.getAllWindowHandles(),selected=await d.getWindowHandle().catch(()=>null);
+    if(handles.length&&!handles.includes(selected??''))await d.switchTo().window(handles[0]);
     await d.setContext('chrome' as import('selenium-webdriver/firefox').Context);
     try {
       return (await d.executeAsyncScript(
@@ -665,7 +789,7 @@ async function takeBrowserDownloads(p: { cancel: boolean; target?: string }) {
          const cancel = arguments[0]; const target = arguments[1];
          const { Downloads } = ChromeUtils.importESModule("resource://gre/modules/Downloads.sys.mjs");
          Downloads.getList(Downloads.ALL).then(async (list) => {
-           const all = (await list.getAll()).filter((dl) => !target || dl.target.path === target);
+           const all = (await list.getAll()).filter((dl) => (typeof cglOwnsDownload !== 'function' || cglOwnsDownload(dl)) && (!target || dl.target.path === target));
            const out = all.map((dl) => ({
              url: dl.source.url,
              referrer: dl.source.referrerInfo?.originalReferrer?.spec ?? null,
@@ -691,7 +815,7 @@ async function takeBrowserDownloads(p: { cancel: boolean; target?: string }) {
   });
 }
 
-async function cookieHeader(p: { context: ContextName; url: string }) {
+async function cookieHeader(p: { context: ContextName; url: string; allPaths?: boolean }) {
   return exclusive(async () => {
     const d = await useContext(p.context);
     const target = new URL(p.url);
@@ -699,23 +823,28 @@ async function cookieHeader(p: { context: ContextName; url: string }) {
     // own cookie jar for the target host after a cross-site download redirect.
     const firefox = d as import('selenium-webdriver/firefox').Driver;
     await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
-    let matching: Array<{ name: string; value: string }>;
+    let matching: Array<{ name: string; value: string; host:string; path:string; secure:boolean }>;
     try {
       matching = await d.executeScript(`
         const target = new URL(arguments[0]);
         const Services = window.Services;
-        return [...Services.cookies.getCookiesFromHost(target.hostname, {})].filter((c) => {
+        const attrs=gBrowser.selectedBrowser.contentPrincipal?.originAttributes??{};
+        const top = new URL(gBrowser.selectedBrowser.currentURI.spec);
+        const partition=protocol=>{let host=protocol.hostname;try{host=Services.eTLD.getBaseDomainFromHost(host)}catch{}return '('+protocol.protocol.slice(0,-1)+','+host+')'};
+        const jars=[attrs,{...attrs,partitionKey:partition(target)},...(/^https?:$/.test(top.protocol)?[{...attrs,partitionKey:partition(top)}]:[])];
+        const seen=new Set();
+        return jars.flatMap(a=>[...Services.cookies.getCookiesFromHost(target.hostname,a)]).filter((c) => {const id=c.host+'|'+c.path+'|'+c.name;if(seen.has(id))return false;seen.add(id);
           const domain = c.host.replace(/^\\./, '');
           const hostOk = target.hostname === domain || c.isDomain && target.hostname.endsWith('.' + domain);
           const path = c.path || '/';
           const pathOk = target.pathname === path || target.pathname.startsWith(path.endsWith('/') ? path : path + '/');
-          return hostOk && pathOk && (!c.isSecure || target.protocol === 'https:') && (c.isSession || c.expiry > Date.now()/1000);
-        }).map((c) => ({ name: c.name, value: c.value }));`, target.href) as Array<{ name: string; value: string }>;
+          return hostOk && (arguments[1] || pathOk) && (!c.isSecure || target.protocol === 'https:') && (c.isSession || (c.expiry>1e12?c.expiry:c.expiry*1000) > Date.now());
+        }).map((c) => ({ name: c.name, value: c.value, host:c.host,path:c.path,secure:c.isSecure }));`, target.href,!!p.allPaths) as typeof matching;
     } finally {
       await firefox.setContext('content' as import('selenium-webdriver/firefox').Context);
     }
     const ua = (await d.executeScript('return navigator.userAgent')) as string;
-    return { cookie: matching.map((c) => `${c.name}=${c.value}`).join('; '), userAgent: ua, currentUrl: await d.getCurrentUrl() };
+    return { cookie: matching.map((c) => `${c.name}=${c.value}`).join('; '), cookies:matching, userAgent: ua, currentUrl: await d.getCurrentUrl() };
   });
 }
 
@@ -752,11 +881,14 @@ async function closeContext(p: { context: ContextName }) {
 }
 
 /** Reveal the actual page, retaining its JavaScript, forms and verification state. */
-async function beginHuman(p: { context: ContextName }) {
+async function beginHuman(p: { context: ContextName; resumeAfterVerification?: boolean }) {
   if (headless()) throw new Error('Direct browsing requires a desktop display.');
   return exclusive(async () => {
     if (liveHuman) return { active: true };
-    const d = await useContext(p.context);
+    return revealHuman(await useContext(p.context),p);
+  });
+}
+async function revealHuman(d:WebDriver,p:{context:ContextName;resumeAfterVerification?:boolean}) {
     const handle = await d.getWindowHandle();
     await nativeVisibility(d, true);
     await d.manage().window().maximize();
@@ -766,7 +898,9 @@ async function beginHuman(p: { context: ContextName }) {
       await firefox.executeScript('window.focus();');
     } finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context); }
     liveHuman = { context: p.context, handle, lastUrl: await d.getCurrentUrl() };
-    emit('humanMode', { active: true });
+    if(p.resumeAfterVerification)liveHuman.verification=new VerificationResume(liveHuman.lastUrl);
+    log('human control started', {context:p.context,automaticReturn:!!p.resumeAfterVerification});
+    emit('humanMode', { active: true, automaticReturn: !!p.resumeAfterVerification });
     humanMonitor = setInterval(() => {
       void exclusive(async () => {
         if (!liveHuman || !driver) return;
@@ -776,10 +910,24 @@ async function beginHuman(p: { context: ContextName }) {
             const firefox = driver as import('selenium-webdriver/firefox').Driver;
             try {
               await firefox.setContext('chrome' as import('selenium-webdriver/firefox').Context);
-              const url = await firefox.executeScript<string>("return Services.wm.getMostRecentWindow('navigator:browser')?.gBrowser.selectedBrowser.currentURI.spec ?? ''");
+              const url = normalFirefox ? await normalFirefox.selectedUrl() : await firefox.executeScript<string>("return Services.wm.getMostRecentWindow('navigator:browser')?.gBrowser.selectedBrowser.currentURI.spec ?? ''");
               if (liveHuman && isHttp(url)) liveHuman.lastUrl = url;
             } catch { /* Closing the controlled window can invalidate only this target. */ }
             finally { await firefox.setContext('content' as import('selenium-webdriver/firefox').Context).catch(() => undefined); }
+            if(liveHuman?.verification){
+              try{
+                const source=`if(document.hidden)return {url:location.href,ready:false,content:false,gates:{captcha:true,blocked:false,login:false}};const ex=(${extractPage.toString()})({fast:true,mark:false,maxLinks:25,maxCards:10,maxControls:0});return {url:ex.url,ready:document.readyState!=='loading',content:!!ex.game||ex.cards.length>0||ex.links.length>=3||ex.text.trim().length>=80,gates:ex.gates}`;
+                // Read the selected page without changing tabs or issuing input.
+                // In WebDriver mode, check only the original controlled tab.
+                const page=normalFirefox
+                  ? await normalFirefox.readSelected<VerificationObservation>(source)
+                  : await driver.executeScript<VerificationObservation>(source);
+                if(liveHuman?.verification.observe(page)){
+                  log('website verification completed; resuming launcher', {context:liveHuman.context});
+                  await finishHuman();
+                }
+              }catch{/* A navigation or open dialog is not proof of completion. */}
+            }
             return;
           }
           const context = liveHuman.context;
@@ -796,7 +944,6 @@ async function beginHuman(p: { context: ContextName }) {
     }, 1000);
     humanMonitor.unref();
     return { active: true };
-  });
 }
 function clearHumanMonitor() {
   if (humanMonitor) clearInterval(humanMonitor);
@@ -805,6 +952,7 @@ function clearHumanMonitor() {
 
 /** Find the tab the user selected before WebDriver can change selection. */
 async function selectedHumanTab(d: WebDriver, fallback: string) {
+  if(normalFirefox){const selected=await normalFirefox.selectedWindowHandle();await d.switchTo().window(selected);return selected;}
   const firefox = d as import('selenium-webdriver/firefox').Driver;
   let selected: number | null = null;
   try {
@@ -830,7 +978,11 @@ async function selectedHumanTab(d: WebDriver, fallback: string) {
 }
 
 async function endHuman() {
-  if (liveHuman) return exclusive(async () => {
+  if (liveHuman) return exclusive(finishHuman);
+  return { active: false };
+}
+
+async function finishHuman() {
     if (!liveHuman) return { active: false };
     const context = liveHuman.context, fallback = liveHuman.handle;
     clearHumanMonitor();
@@ -842,16 +994,15 @@ async function endHuman() {
       }
     } finally { liveHuman = null; emit('humanMode', { active: false }); }
     return { active: false };
-  });
-  return { active: false };
 }
 
 async function shutdownDriver() {
   const d = driver;
   driver = null;
-  windows.clear();
+  windows.clear();latePopups.clear();savedSourceTabs.clear();closedContexts.clear();
   current = null;
   if (d) await d.quit().catch(() => undefined);
+  normalFirefox = null;
   killGeckodriver();
 }
 
@@ -867,6 +1018,7 @@ function killGeckodriver() {
 }
 
 async function shutdown() {
+  stopping=true;
   await endHuman();
   await shutdownDriver();
   resumeUrls.clear();
@@ -883,7 +1035,28 @@ function stagedFiles() {
 }
 
 serve({
-  init(p: InitParams) {
+  async init(p: InitParams) {
+    stopping=false;
+    if (cfg && cfg.browserMode !== p.browserMode) {
+      if (liveHuman) throw Error('Return control to the launcher before switching browser mode.');
+      await exclusive(async () => {
+        if (driver) {
+          for (const [context, handle] of windows) {
+            await driver.switchTo().window(handle).catch(()=>undefined);
+            const url=await driver.getCurrentUrl().catch(()=>null);
+            if (url && isHttp(url)) resumeUrls.set(context,url);
+          }
+        }
+        await shutdownDriver();
+        const previous=cfg;
+        cfg=p;
+        try { await getDriver(); }
+        catch(error) {
+          normalFirefox?.terminate();normalFirefox=null;driver=null;windows.clear();current=null;cfg=previous;
+          throw error;
+        }
+      });
+    }
     cfg = p;
     return { ok: true };
   },
@@ -894,6 +1067,7 @@ serve({
   extract,
   readUpdatePage,
   readDatePage,
+  fetchPages,
   pointer,
   inspectPoint,
   movePointer,
@@ -911,6 +1085,7 @@ serve({
   async clearData() {
     await shutdown();
     if (cfg) rmSync(cfg.profileDir, { recursive: true, force: true });
+    stopping=false;
     return { ok: true };
   },
   async shutdown() {
@@ -923,8 +1098,16 @@ serve({
 });
 
 // Workers are stopped with SIGTERM, which skips 'exit' handlers unless handled.
-process.on('SIGTERM', () => { clearHumanMonitor(); killGeckodriver(); process.exit(0); });
+process.once('SIGTERM', () => {
+  stopping=true;
+  clearHumanMonitor();
+  // Give attached Firefox time to close only the launcher's windows before
+  // disconnecting its bridge. Never terminate the user's Firefox process.
+  const deadline=setTimeout(()=>{normalFirefox?.terminate();killGeckodriver();process.exit(0)},5000);
+  void shutdownDriver().finally(()=>{clearTimeout(deadline);process.exit(0)});
+});
 process.on('exit', () => {
+  normalFirefox?.terminate();
   killGeckodriver();
   void driver?.quit();
 });

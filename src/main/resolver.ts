@@ -6,7 +6,7 @@
 import type { ForegroundWork } from './foreground';
 import { setTimeout as delay } from 'node:timers/promises';
 import { countdownSeconds, waitMs } from '@shared/countdown';
-import {BrowserActionRejectedError, type BrowserRouteConstraint} from './browser-agent';
+import {BrowserActionRejectedError, BrowserObservationChangedError, type BrowserRouteConstraint} from './browser-agent';
 import type { PageExtract } from '@shared/page-extract';
 import type { DownloadCandidate, Platform, UserPrompt } from '@shared/types';
 import type { CatalogRepo, DownloadsRepo, ResolutionCheckpoint } from './repos';
@@ -16,14 +16,14 @@ import type { BrowserClient, BrowserDownload } from './browser-client';
 import type { DownloadManager } from './downloads';
 import type { WorkerHost } from './worker-host';
 import type { PolicyService } from './policy-service';
-import { actionKey, downloadEvidence, isHostLanding } from '@shared/download-evidence';
+import { actionKey, downloadEvidence, isHostLanding, isFileUrl, isTorrentDownload, revealedMirrors, scriptMirrorControl } from '@shared/download-evidence';
 import { LocalGameAgent, type TransferDecision } from './game-agent';
 import { isCancelled } from '@shared/worker-protocol';
 import { hostOf } from '@shared/urls';
 import { partFileName, partOf, partTotal, type PartName } from '@shared/parts';
 import { basename } from 'node:path';
 import { tm } from './i18n';
-import { fastestMirrors, mirrorRoutes, mirrorsForPart, recordMirror, mirrorFileName, type MeasuredMirror, type MirrorComparison } from './download-mirrors';
+import { fastestMirrors, mirrorRoutes, resumeMirrorRoutes, mirrorsForPart, recordMirror, mirrorFileName, type MeasuredMirror, type MirrorComparison } from './download-mirrors';
 import type { MirrorSample } from '../workers/mirror-probe';
 import { formatSpeed } from '@shared/format';
 import { unavailableHostReason } from '@shared/download-host';
@@ -54,6 +54,7 @@ export function rankCandidates(cands: DownloadCandidate[]): { best: DownloadCand
 
 class MirrorReady extends Error { constructor(readonly sample: MeasuredMirror) { super('Mirror measured'); } }
 class BrowserOnlyReady extends Error { constructor(readonly download: BrowserDownload) { super('Keep the original browser transfer'); } }
+class CaptchaHostsSkipped extends Error {}
 
 export class Resolver {
   private agent: LocalGameAgent;
@@ -160,7 +161,7 @@ export class Resolver {
         if (d && (d.state === 'resolving' || d.state === 'needs-resolution')) {
           this.deps.downloads.failResolution(id, 'interrupted', 'Paused — it continues automatically.', 'needs-resolution');
         }
-      } else if (!this.retried.has(id)) {
+      } else if (!this.retried.has(id) && !(e instanceof CaptchaHostsSkipped)) {
         // One automatic second attempt from the game page with a fresh agent
         // conversation before involving the user.
         this.retried.add(id);
@@ -203,6 +204,7 @@ export class Resolver {
   /** Resumes on its own as soon as the page's check/sign-in is gone; no Continue click needed. */
   private watchGate(id: number) {
     const timer = setInterval(async () => {
+      if(this.closing||!this.deps.session.active){clearInterval(timer);this.gateWatches.delete(timer);return;}
       const d = this.deps.downloadsRepo.get(id);
       if (!d || d.state !== 'needs-user' || !this.deps.session.active) { clearInterval(timer); this.gateWatches.delete(timer); return; }
       try {
@@ -227,13 +229,18 @@ export class Resolver {
 
     let resuming = d.state === 'resolving' && !!d.resolution && d.errorCode !== 'interrupted';
     const checkpoint: ResolutionCheckpoint = d.resolution ?? { pageUrl: entry.pageUrl, steps: 0, history: [] };
-    if (checkpoint.linkPage && !isGameBookmark(checkpoint.linkPage.url, entry.pageUrl)) delete checkpoint.linkPage;
+    const savedSource=checkpoint.mirrors?.sourceUrl;
+    const recordedHub=(url:string)=>!!downloadPageKey(url)&&!isSiteBrowseUrl(url,entry.pageUrl)&&(
+      !!savedSource&&downloadPageKey(url)===downloadPageKey(savedSource)
+      || entry.candidates.some(c=>!c.fileName&&!isFileUrl(c.url)&&!isHostLanding(c.url)&&downloadPageKey(c.url)===downloadPageKey(url))
+    );
+    if (checkpoint.linkPage && !isGameBookmark(checkpoint.linkPage.url, entry.pageUrl)&&!recordedHub(checkpoint.linkPage.url)) delete checkpoint.linkPage;
     // Fresh multipart jobs also have a checkpoint, but the browser can still
     // be on the previous volume's host. Restore their saved links viewport.
     if (checkpoint.steps === 0) resuming = false;
     if (checkpoint.mirrors && !checkpoint.mirrors.paused && !this.trial) {
       const source = checkpoint.mirrors.sourceUrl;
-      checkpoint.linkPage ??= source && isGameBookmark(source, entry.pageUrl) ? {url:source,scrollY:checkpoint.mirrors.sourceScrollY ?? 0} : {url:entry.pageUrl,scrollY:0};
+      checkpoint.linkPage ??= source && (isGameBookmark(source, entry.pageUrl)||recordedHub(source)) ? {url:source,scrollY:checkpoint.mirrors.sourceScrollY ?? 0} : {url:entry.pageUrl,scrollY:0};
       checkpoint.pageUrl = checkpoint.linkPage.url; resuming = false;
     }
     if (!this.trial && isSiteBrowseUrl(checkpoint.pageUrl, entry.pageUrl)) { checkpoint.pageUrl = checkpoint.linkPage?.url ?? entry.pageUrl; resuming = false; }
@@ -244,7 +251,9 @@ export class Resolver {
 
     session.assertLive(token);
     if (checkpoint.mirrors?.paused && !this.trial) {
-      const url = checkpoint.linkPage?.url ?? entry.pageUrl;
+      const routePage=checkpoint.mirrors.paused.route.match(/^(https?:.*)#cgl-(?:control|upload)-\d+$/)?.[1];
+      const url = routePage ?? checkpoint.linkPage?.url ?? (savedSource&&recordedHub(savedSource)?savedSource:entry.pageUrl);
+      checkpoint.linkPage={url,scrollY:checkpoint.linkPage?.scrollY??checkpoint.mirrors.sourceScrollY??0};
       const source: PageExtract = {url,title:entry.title,site:null,meta:{},jsonLd:[],cards:[],cardConfidence:0,nextPage:null,game:null,controls:[],links:[],fileLinks:[],gates:{captcha:false,login:false,blocked:false,ageGate:false,payment:false},adultSignals:[],text:'',media:[],viewport:{w:1280,h:800,scrollY:checkpoint.linkPage?.scrollY ?? checkpoint.mirrors.sourceScrollY ?? 0,docH:0}};
       return this.compareMirrors(id, token, source, checkpoint.mirrors.routes, checkpoint);
     }
@@ -261,6 +270,14 @@ export class Resolver {
     if (!resuming) {
       if (this.trial && !this.trial.resume && /#cgl-(?:control|upload)-\d+$/.test(this.trial.route.url)) {
         await this.returnToLinks({ url: this.trial.source.url, scrollY: this.trial.source.viewport.scrollY }, token);
+        const current=await browser.extract('interactive',token.signal);
+        const selector=scriptMirrorControl(current,this.trial.route);
+        if(selector?.inViewport&&!Object.values(current.gates).some(Boolean)){
+          // The model already chose this package and the launcher is testing
+          // every observed mirror. Re-select its current labelled host button
+          // before following the Download link, preserving all site scripts.
+          await browser.clickElement('interactive',selector.i,token.signal);
+        }
       } else if (this.trial && !/#cgl-/.test(this.trial.route.url)) {
         let restored=true;
         try { await this.returnToLinks({url:this.trial.source.url,scrollY:this.trial.source.viewport.scrollY},token); }
@@ -282,6 +299,7 @@ export class Resolver {
     // Do not cancel another game's browser-only transfer or destroy a one-shot file.
 
     const rejected = new Set<string>();
+    const followedRoutes = new Set<string>();
     let rejectedBrowserActions=0;
     let note = '';
     let routeUrl = this.trial?.route.url ?? checkpoint.routeUrl ?? checkpoint.pageUrl;
@@ -297,10 +315,16 @@ export class Resolver {
       if (await this.tryBrowserDownload(id, token)) return;
       let ex = await browser.extract('interactive', token.signal);
       session.assertLive(token, 'page state');
+      if(this.trial&&ex.navigationRecovery==='closed-tab')throw new Error('This file host closed its tab without starting a usable file transfer.');
       checkpoint.pageUrl = ex.url;
-      if (hostOf(ex.url) !== hostOf(entry.pageUrl) && !ex.gates.captcha && !ex.gates.blocked && !ex.gates.login && !ex.gates.ageGate && !ex.gates.payment) {
+      // A saved download link can be a hub whose host selectors appear only
+      // after dismissing a warning. Keep its live viewport before any click
+      // leaves it, even when its mirrors are not observable yet.
+      if(!this.trial&&recordedHub(ex.url)&&!Object.values(ex.gates).some(Boolean)&&!unavailableHostReason(ex,routeUrl))checkpoint.linkPage={url:ex.url,scrollY:ex.viewport.scrollY};
+      const skippedCaptcha=ex.gates.captcha&&hostOf(ex.url)!==hostOf(entry.pageUrl);
+      if (hostOf(ex.url) !== hostOf(entry.pageUrl) && (skippedCaptcha||!ex.gates.captcha && !ex.gates.blocked && !ex.gates.login && !ex.gates.ageGate && !ex.gates.payment)) {
         if (downloadEvidence(ex).length || countdownSeconds(ex.text) !== null) emptyHostSteps = 0;
-        const unavailable = unavailableHostReason(ex, routeUrl)
+        const unavailable = (skippedCaptcha?`Skipped ${hostOf(ex.url)}: this download host requires a CAPTCHA.`:unavailableHostReason(ex, routeUrl))
           ?? (emptyHostSteps >= 4 ? 'This host made no progress toward a file after several actions.' : null);
         if (unavailable) {
           if (this.trial) throw new Error(unavailable);
@@ -311,10 +335,14 @@ export class Resolver {
           await this.returnToLinks(checkpoint.linkPage ?? { url: entry.pageUrl, scrollY: 0 }, token);
           const source = await browser.extract('interactive', token.signal);
           session.assertLive(token);
-          const offered = mirrorsForPart(mirrorRoutes([...downloadEvidence(source, Number.MAX_SAFE_INTEGER), ...entry.candidates, ...(checkpoint.mirrorCandidates ?? [])]), checkpoint.partName ?? d.fileName, d.partIndex);
+          const hubRoutes=hostOf(source.url)!==hostOf(entry.pageUrl)?revealedMirrors(source):[];
+          const offered = mirrorsForPart(mirrorRoutes(hubRoutes.length>1?hubRoutes:[...downloadEvidence(source, Number.MAX_SAFE_INTEGER), ...entry.candidates, ...(checkpoint.mirrorCandidates ?? [])]), checkpoint.partName ?? d.fileName, d.partIndex);
           const remaining = offered.filter(c => c.url !== routeUrl);
-          if (!remaining.length && this.deps.recoverGamePage) return this.recoverIndexedPage(id, token, checkpoint, unavailable, true);
-          if (!remaining.length) throw new Error(`${unavailable} No other download link is available on the game page.`);
+          if (!remaining.length && !skippedCaptcha && this.deps.recoverGamePage) return this.recoverIndexedPage(id, token, checkpoint, unavailable, true);
+          if (!remaining.length) {
+            const message=`${unavailable} No other download link is available on the game page.`;
+            throw skippedCaptcha?new CaptchaHostsSkipped(message):new Error(message);
+          }
           checkpoint.pageUrl = source.url;
           checkpoint.history = []; checkpoint.steps = 0;
           checkpoint.linkPage = { url: source.url, scrollY: source.viewport.scrollY };
@@ -358,7 +386,11 @@ export class Resolver {
           this.trial.source.viewport.scrollY = ex.viewport.scrollY;
           this.trial.comparison.sourceScrollY = ex.viewport.scrollY;
         }
-        const offered = mirrorsForPart(mirrorRoutes([...downloadEvidence(ex, Number.MAX_SAFE_INTEGER), ...entry.candidates, ...(checkpoint.mirrorCandidates ?? []), ...(!checkpoint.mirrors?.selected && !checkpoint.mirrors?.finished ? checkpoint.mirrors?.routes ?? [] : [])]), checkpoint.partName ?? d.fileName, d.partIndex);
+        // Extracted control IDs change when a modal opens or the DOM changes.
+        // Rebuild script routes from this observation instead of accumulating
+        // stale IDs as imaginary additional mirrors.
+        const cachedRoutes=[...entry.candidates,...(checkpoint.mirrorCandidates??[]),...(!checkpoint.mirrors?.selected&&!checkpoint.mirrors?.finished?checkpoint.mirrors?.routes??[]:[])].filter(c=>!/#cgl-(?:control|upload)-\d+$/.test(c.url));
+        const offered = mirrorsForPart(mirrorRoutes([...downloadEvidence(ex, Number.MAX_SAFE_INTEGER), ...cachedRoutes]), checkpoint.partName ?? d.fileName, d.partIndex);
         if (!this.trial && offered.length) {
           checkpoint.buildVersion = pageFingerprint(ex, downloadEvidence(ex, Number.MAX_SAFE_INTEGER), entry.title);
           this.deps.catalog.setVersion(entry.id, checkpoint.buildVersion);
@@ -375,13 +407,34 @@ export class Resolver {
           }
         }
         if (this.trial) this.trial.comparison.routes = mirrorRoutes([...this.trial.comparison.routes, ...offered]);
+        if(!this.trial&&offered.length===1&&!offered[0].fileName&&!isFileUrl(offered[0].url)&&!followedRoutes.has(offered[0].url)&&ex.links.some(l=>l.href===offered[0].url&&l.inContent!==false)){
+          // Indexing already verified this game's route. Follow its current
+          // anchor (and site scripts) without spending visual turns finding it.
+          followedRoutes.add(offered[0].url);
+          const followed=await browser.followLink('interactive',ex.url,offered[0].url,token.signal);
+          if(followed.followed){
+            checkpoint.linkPage={url:ex.url,scrollY:followed.scrollY};
+            checkpoint.routeUrl=offered[0].url;routeUrl=offered[0].url;
+            checkpoint.history.push('observed-link:'+offered[0].label.slice(0,100));checkpoint.steps++;
+            const control=ex.controls.find(c=>c.href===offered[0].url);if(control)this.agent.rememberDownloadAction?.(ex,control);
+            downloadsRepo.update(id,{resolution:checkpoint});continue;
+          }
+        }
+      }
+      if(!this.trial&&hostOf(ex.url)!==hostOf(entry.pageUrl)){
+        // Link hubs can reveal three or four hosts only after leaving the
+        // indexed game page. These mirrors need the same byte comparison.
+        const hubRoutes=mirrorsForPart(mirrorRoutes(revealedMirrors(ex)),checkpoint.partName??d.fileName,d.partIndex);
+        if(hubRoutes.length>1){await this.compareMirrors(id,token,ex,hubRoutes,checkpoint);return;}
       }
       const restriction = this.routeConstraint(ex, entry.pageUrl);
       const candidates = this.candidatesFrom(ex).filter(c => !restriction || !restriction.alternatives.includes(c.url) || c.url === restriction.url).filter((c) => !rejected.has(`${ex.url}|${c.url}`));
       if (this.partNote) { note = `${note} ${this.partNote}`.trim(); this.partNote = ''; }
       if (process.env.CGL_DEBUG) console.log('[resolver] step', checkpoint.steps, ex.url, 'candidates', JSON.stringify(candidates.map((c) => [c.fileName, c.platform, c.url.slice(-16)])));
       // The model chooses each route and file from this current observation.
-      const action = await this.agent.transfer(ex, token, routeGoal, checkpoint.history, candidates, note, entry.pageUrl);
+      let action:TransferDecision;
+      try{action=await this.agent.transfer(ex, token, routeGoal, checkpoint.history, candidates, note, entry.pageUrl,restriction);}
+      catch(error){if(error instanceof BrowserObservationChangedError){session.assertLive(token);continue;}throw error;}
       note = '';
       session.assertLive(token);
       if(downloadsRepo.get(id)?.state!=='resolving')return;
@@ -424,7 +477,11 @@ export class Resolver {
           await delay(500,undefined,{signal:token.signal});session.assertLive(token);
           if(await this.tryBrowserDownload(id,token))return;
         }
-        if(result==='human')return this.pause(id,{kind:'confirm',message:action.computer.action.question??tm('The browser agent needs your help on this page.')},checkpoint);
+        if(result==='human'){
+          const question=action.computer.action.question??'';
+          if(hostOf(ex.url)!==hostOf(entry.pageUrl)&&/captcha|cloudflare|human verification|verify.{0,20}human|security check|robot/i.test(question))throw new CaptchaHostsSkipped(`Skipped ${hostOf(ex.url)}: this download host requires a CAPTCHA.`);
+          return this.pause(id,{kind:'confirm',message:question||tm('The browser agent needs your help on this page.')},checkpoint);
+        }
         if(result==='done')throw Error(action.computer.action.answer??'The browser agent stopped before a game download started.');
       } else if (action.kind === 'stop') {
         throw new Error(action.label || 'No download link was found on this page');
@@ -437,6 +494,7 @@ export class Resolver {
         // A countdown on the page ("starts in 15 seconds") sets how long.
         await delay(waitMs(ex.text ?? ''),undefined,{signal:token.signal});
       } else if (action.kind === 'click') {
+        if(chosen&&isTorrentDownload(chosen.text,chosen.href)){note='Choose the direct download option. Torrent buttons are unsupported and were not clicked.';continue;}
         if (restriction?.blockedControls.includes(action.index!)) {
           if (++rejectedBrowserActions >= 3) throw new Error('The AI repeatedly selected a different mirror.');
           note = 'That mirror is tested separately. Choose only the requested download route.';
@@ -446,6 +504,7 @@ export class Resolver {
         // Click the observed control so host scripts, tokens and popups work
         // exactly as they do in Firefox; naked navigation can skip that logic.
         await browser.clickElement('interactive', action.index!, token.signal);
+        if(chosen)this.agent.rememberDownloadAction?.(ex,chosen,action.label?.startsWith('Learned download step:'));
         // Script/HTMX controls can start a transfer only after an async host
         // response. Give that request time before trying another mirror.
         const polls = chosen && !chosen.href ? 10 : 2;
@@ -468,7 +527,7 @@ export class Resolver {
     const { downloadsRepo, browser, session, ai } = this.deps;
     const saved = checkpoint.mirrors;
     const reusable = saved && !saved.finished && !saved.selected && (saved.paused || saved.samples.every(s => Date.now() - s.measuredAt < 10 * 60_000));
-    const comparison: MirrorComparison = reusable ? { ...saved, routes: mirrorRoutes([...routes, ...saved.routes]) } : { sourceUrl: source.url, routes, tested: [], samples: [], failures: [] };
+    const comparison: MirrorComparison = reusable ? { ...saved, routes: resumeMirrorRoutes(saved.routes,routes) } : { sourceUrl: source.url, routes, tested: [], samples: [], failures: [] };
     comparison.sourceUrl = source.url; comparison.sourceScrollY = source.viewport.scrollY;
     checkpoint.linkPage = { url: source.url, scrollY: source.viewport.scrollY };
     const persist = () => {
@@ -520,6 +579,7 @@ export class Resolver {
             if(sample)recordMirror(comparison,sample);
             else comparison.failures.push({route:route.url,reason:'The browser file could not be measured and verified; retained as a fallback.'});
           } else if (error instanceof MirrorReady) {
+            this.agent.downloadStarted?.();
             recordMirror(comparison, error.sample);
           } else {
             const reason = deadline.aborted ? 'The mirror navigation timed out.' : (error as Error).message.slice(0, 180);
@@ -573,6 +633,7 @@ export class Resolver {
         this.deps.foreground?.transferHandoff();return;
       }
       comparison.finished = true; persist();
+      if(comparison.failures.length&&comparison.failures.every(f=>f.reason.includes('requires a CAPTCHA')))throw new CaptchaHostsSkipped(tm('All available download hosts require CAPTCHA and were skipped.'));
       throw new Error('None of the tested download mirrors returned a working copy of the selected game file.');
     } finally { this.trial = null; }
   }
@@ -591,6 +652,7 @@ export class Resolver {
     if(!live)return null;
     const prefix=await this.deps.downloadWorker.call<{hash:string;bytes:number}|null>('browserFilePrefix',{target:live.target,partFilePath:live.partFilePath},token.signal);
     if(!prefix)return null;
+    this.agent.downloadStarted?.();
     const elapsedMs=Math.max(1,Date.now()-start),sampledBytes=Math.max(0,live.currentBytes-download.currentBytes);
     const speedBps=live.speedBps || (sampledBytes?sampledBytes*1000/elapsedMs:live.succeeded&&live.startedAt?live.currentBytes*1000/Math.max(1,Date.now()-live.startedAt):0);
     return {route:route.url,url:live.url,referer:live.referrer??source.url,nameHint:basename(live.target),platform:route.platform,browserDownload:live,fileName:basename(live.target),totalBytes:live.totalBytes,speedBps,sampledBytes,elapsedMs,prefixHash:prefix.hash,prefixBytes:prefix.bytes,resumable:false,measuredAt:Date.now()};
@@ -625,18 +687,19 @@ export class Resolver {
 
   private routeConstraint(ex: PageExtract, gamePageUrl: string): BrowserRouteConstraint {
     const base: BrowserRouteConstraint = {pageUrl:ex.url,url:this.trial?.route.url ?? '',alternatives:[],blockedControls:[],gamePageUrl};
-    if (!this.trial || ex.url.split('#')[0] !== this.trial.source.url.split('#')[0]) return base;
-    const controlIndex = (url: string) => {
+    if (!this.trial || downloadPageKey(ex.url)!==downloadPageKey(this.trial.source.url)) return base;
+    const controlIndex = (candidate: DownloadCandidate) => {
+      const url=candidate.url;
       const control = /#cgl-control-(\d+)$/.exec(url);
       const upload = /#cgl-upload-(\d+)$/.exec(url);
-      return control ? Number(control[1]) : upload ? ex.game?.uploads[Number(upload[1])]?.i : ex.controls.find(c => c.href === url)?.i;
+      return control ? scriptMirrorControl(ex,candidate)?.i : upload ? ex.game?.uploads[Number(upload[1])]?.i : ex.controls.find(c => c.href === url)?.i;
     };
-    const chosen = controlIndex(this.trial.route.url);
+    const chosen = controlIndex(this.trial.route);
     return {
       gamePageUrl,
-      pageUrl: this.trial.source.url, url: this.trial.route.url,
+      pageUrl: this.trial.source.url, url: chosen!=null&&/#cgl-control-\d+$/.test(this.trial.route.url)?ex.url.split('#')[0]+'#cgl-control-'+chosen:this.trial.route.url,
       alternatives: this.trial.comparison.routes.map(r => r.url),
-      blockedControls: this.trial.comparison.routes.filter(r => r.url !== this.trial!.route.url).map(r => controlIndex(r.url)).filter((i): i is number => i != null && i !== chosen),
+      blockedControls: this.trial.comparison.routes.filter(r => r.url !== this.trial!.route.url).map(r => controlIndex(r)).filter((i): i is number => i != null && i !== chosen),
     };
   }
 
@@ -684,6 +747,7 @@ export class Resolver {
   private async takeCandidate(id: number, c: DownloadCandidate, ex: PageExtract, token: SessionToken): Promise<'handed-off' | 'navigated' | 'unavailable'> {
     const { browser, session } = this.deps;
     if (process.env.CGL_DEBUG) console.log('[resolver] taking', c.fileName, c.platform, c.url.slice(-20));
+    if(isTorrentDownload(c.label+' '+(c.fileName??''),c.url))return 'unavailable';
     if (c.fileName && !this.partAccepted(id, c.fileName)) return 'unavailable';
     if (this.trial && c.platform) this.trial.route = { ...this.trial.route, platform: c.platform };
     const upload = c.url.match(/#cgl-upload-(\d+)$/);
@@ -718,6 +782,7 @@ export class Resolver {
   /** Probes a URL with the browser's cookies; hands it over if it serves a file. */
   private async handoffUrl(id: number, url: string, referer: string, token: SessionToken, nameHint: string | null, expected?: MeasuredMirror): Promise<boolean> {
     const { browser, session, downloadWorker } = this.deps;
+    if(isTorrentDownload(nameHint??'',url))return false;
     const auth = await browser.cookieHeader('interactive', url);
     session.assertLive(token);
     // Same cookies Firefox would send to the file's host (domain/path/secure-matched in the worker).
@@ -735,12 +800,13 @@ export class Resolver {
       }
       session.assertLive(token, 'mirror measurement');
       const name = sample.fileName ?? nameHint;
+      if(isTorrentDownload(name??'',url))return false;
       if (!this.partAccepted(id, name)) throw new Error('This mirror serves a different archive part.');
       throw new MirrorReady({ ...sample, route: this.trial.route.url, url, referer, nameHint, platform: this.trial.route.platform });
     }
     const probe = await downloadWorker.call<{ isFile: boolean; fileName: string | null; totalBytes: number | null; finalUrl: string; status: number }>('probe', { url, headers }, token.signal);
     session.assertLive(token, 'link check');
-    if (!probe.isFile) return false;
+    if (!probe.isFile || isTorrentDownload(probe.fileName??'',probe.finalUrl)) return false;
     if (expected && ((expected.totalBytes !== null && probe.totalBytes !== null && expected.totalBytes !== probe.totalBytes) || (expected.fileName && probe.fileName && mirrorFileName(expected.fileName) !== mirrorFileName(probe.fileName)))) return false;
     if (this.deps.downloadsRepo.get(id)?.state !== 'resolving') return false;
     const name = probe.fileName ?? nameHint;
@@ -755,7 +821,9 @@ export class Resolver {
 
   /** Checks whether the last action made Firefox start a download, and takes it over. */
   private async tryBrowserDownload(id: number, token: SessionToken, nameHint?: string | null): Promise<boolean> {
-    const list = await this.deps.browser.takeDownloads(false);
+    const observedDownloads = await this.deps.browser.takeDownloads(false);
+    for(const item of observedDownloads)if(isTorrentDownload(basename(item.target),item.url)||/bittorrent/i.test(item.contentType??'')){await this.deps.browser.takeDownloads(true,item.target);this.ignoredBrowserTargets.add(item.target);}
+    const list=observedDownloads.filter(item=>!this.ignoredBrowserTargets.has(item.target));
     if (process.env.CGL_DEBUG && list.length) console.log('[resolver] browser downloads', JSON.stringify(list.map((x) => [x.target, x.currentBytes, x.succeeded])));
     const dl = list.find((x) => !this.claimedBrowserTargets.has(x.target) && !this.ignoredBrowserTargets.has(x.target) && (!x.stopped || x.succeeded));
     if (!dl) return false;
@@ -824,6 +892,7 @@ export class Resolver {
    * the next one is looked for until there is none.
    */
   private afterFile(id: number, fileName: string | null, linkPage?: ResolutionCheckpoint['linkPage']) {
+    this.agent.downloadStarted?.();
     const repo = this.deps.downloadsRepo;
     const d = repo.get(id);
     if (!d?.catalogId || !fileName) return;

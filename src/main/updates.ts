@@ -6,14 +6,15 @@
 // automatically when the user chose that.
 import type { PageExtract } from '@shared/page-extract';
 import { downloadEvidence } from '@shared/download-evidence';
-import { detectUpdate, fileChanged, fingerprintKey, makeFingerprint, versionLabel, type InstalledFile, type UpdateVerdict, type VersionFingerprint } from '@shared/game-version';
+import { detectUpdate, fileChanged, fingerprintKey, makeFingerprint, versionLabel, versionScheme, type InstalledFile, type UpdateVerdict, type VersionFingerprint } from '@shared/game-version';
 import { hostOf, siteKey } from '@shared/urls';
 import type { CatalogRepo, DownloadRecord, DownloadsRepo, GameRecord, GamesRepo, SettingsRepo, SourcesRepo } from './repos';
 import type { PageFetcher } from './page-fetcher';
 import type { HostRateLimiter } from './rate-limit';
 import { toast } from './bus';
 import { tm } from './i18n';
-import { inspectedInstalledVersion } from './installed-version';
+import { inspectedInstalledVersion, LOCAL_VERSION_REVISION } from './installed-version';
+import { gameSource } from './game-source';
 
 /** The build a game page offers. */
 export function pageFingerprint(ex: PageExtract, candidates: Array<{ fileName: string | null; label: string; sizeText: string | null }>, listingTitle?: string | null): VersionFingerprint {
@@ -23,7 +24,7 @@ export function pageFingerprint(ex: PageExtract, candidates: Array<{ fileName: s
     meta: ex.meta,
     candidates,
   });
-  if (fingerprint.version) fingerprint.scheme = /^build /.test(fingerprint.version) ? (/\bsteam(?:works)?\s*(?:build|buildid)\s*[:#=-]?\s*\d+/i.test(ex.text) ? 'steam-build' : 'site-build') : 'semantic';
+  if (fingerprint.version) fingerprint.scheme = /^build /.test(fingerprint.version) && /\bsteam(?:works)?\s*(?:build|buildid)\s*[:#=-]?\s*\d+/i.test(ex.text) ? 'steam-build' : versionScheme(fingerprint);
   return fingerprint;
 }
 
@@ -59,7 +60,18 @@ export class UpdateService {
 
   /** Checks every installed game whose last check is older than the refresh interval, then repeats. */
   start(initialDelayMs = 90_000) {
-    this.tracked();
+    for (const g of this.tracked()) {
+      if (!g.update || !['available', 'failed'].includes(g.update.state)) continue;
+      const current = this.deps.catalog.raw(g.catalogId!)?.version;
+      const identifier = current && g.installedVersion?.identifiers?.find(e => versionScheme(e) === versionScheme(current));
+      const installed = identifier ? { ...g.installedVersion!, ...identifier } : g.installedVersion;
+      // Repair old false offers without downloading or trusting a cached page
+      // to announce a new one. Normal checks still read the saved website.
+      if (installed?.version && current?.version && !detectUpdate(installed, current).update) {
+        this.deps.games.update(g.id, { update: null, updateCheckedAt: null });
+        this.deps.broadcast();
+      }
+    }
     const tick = () => {
       this.timer = null;
       void this.checkDue().finally(() => { if (!this.controller.signal.aborted) this.timer = setTimeout(tick, 15 * 60_000); this.timer?.unref?.(); });
@@ -79,11 +91,24 @@ export class UpdateService {
     for (let g of this.deps.games.list()) {
       if (g.update?.unverified && !BUSY.has(g.update.state)) { this.deps.games.update(g.id, { update: null }); this.deps.broadcast(); }
       if (g.store || g.status !== 'installed' || !g.installDir) continue;
-      if (g.catalogId === null) {
-        const id = this.deps.catalog.matchInstalled(g.title, g.art?.appid);
+      if (this.deps.inspectLocal && g.installedVersion?.inspection?.revision !== LOCAL_VERSION_REVISION) {
+        this.deps.games.update(g.id, { updateCheckedAt: null });
+        g = this.deps.games.get(g.id)!;
+      }
+      const d = g.downloadId ? this.deps.downloads.get(g.downloadId) : null;
+      const sourceHost = gameSource(g, d, this.deps.catalog, this.deps.sources.list().map(s => hostOf(s.url)));
+      if (!sourceHost) {
+        if (g.update && ['available', 'failed'].includes(g.update.state)) { this.deps.games.update(g.id, { update: null }); this.deps.broadcast(); }
+        continue;
+      }
+      if (g.sourceHost !== sourceHost) { this.deps.games.update(g.id, { sourceHost }); g = this.deps.games.get(g.id)!; }
+      const linked = g.catalogId ? this.deps.catalog.raw(g.catalogId) : null;
+      if (!linked || hostOf(linked.pageUrl) !== sourceHost) {
+        const receipt = d?.catalogId ? this.deps.catalog.raw(d.catalogId) : null;
+        const id = receipt && hostOf(receipt.pageUrl) === sourceHost ? receipt.id : this.deps.catalog.matchInstalled(g.title, g.art?.appid, sourceHost);
+        if (linked) this.deps.games.update(g.id, { catalogId: null, update: null, updateCheckedAt: null });
         if (id === null) continue;
-        const entry = this.deps.catalog.raw(id)!;
-        this.deps.games.update(g.id, { catalogId: id, sourceHost: hostOf(entry.pageUrl), updateCheckedAt: null });
+        this.deps.games.update(g.id, { catalogId: id, sourceHost, updateCheckedAt: null });
         g = this.deps.games.get(g.id)!;
       }
       out.push(g);
@@ -119,7 +144,7 @@ export class UpdateService {
     const entry = g?.catalogId ? this.deps.catalog.raw(g.catalogId) : null;
     if (!g || !entry) return;
     const source = this.deps.sources.get(entry.sourceId);
-    if (g.store || source?.enabled === false) return;
+    if (g.store || source?.enabled === false || !this.ownsPage(g, entry.pageUrl)) return;
     if (this.deps.inspectLocal) {
       const evidence = await this.deps.inspectLocal(g, signal);
       if (signal.aborted) return;
@@ -131,12 +156,16 @@ export class UpdateService {
     const fetcher = this.deps.fetcher;
     if (this.deps.readPage || fetcher) {
       await this.deps.limiter.wait(siteKey(hostOf(entry.pageUrl)), source?.rateLimitMs ?? 1000, signal);
-      // Firefox shares the user's website cookies, renders script links, and
-      // reads a dedicated background tab without visiting a homepage/search.
-      const ex = this.deps.readPage ? await this.deps.readPage(entry.pageUrl, signal).catch(() => null)
-        : await fetcher!.fetch(entry.pageUrl, signal).then(r => r.ok ? r.extract : null).catch(() => null);
+      const sameBookmark = (ex: PageExtract) => {
+        try { return new URL(ex.url).origin === new URL(entry.pageUrl).origin && new URL(ex.url).pathname.replace(/\/$/, '') === new URL(entry.pageUrl).pathname.replace(/\/$/, ''); } catch { return false; }
+      };
+      // Reuse the authenticated index reader before rendering. Ordinary pages
+      // need neither a browser navigation nor an AI call for each update check.
+      let ex = fetcher ? await fetcher.fetch(entry.pageUrl, signal).then(r => r.ok ? r.extract : null).catch(() => null) : null;
+      const complete = ex && sameBookmark(ex) && !ex.gates.captcha && !ex.gates.blocked && !ex.gates.login && downloadEvidence(ex).length;
+      if (!complete && this.deps.readPage && !signal.aborted) ex = await this.deps.readPage(entry.pageUrl, signal).catch(() => null);
       if (signal.aborted) return;
-      const samePage = ex && new URL(ex.url).origin === new URL(entry.pageUrl).origin && new URL(ex.url).pathname.replace(/\/$/, '') === new URL(entry.pageUrl).pathname.replace(/\/$/, '');
+      const samePage = ex && sameBookmark(ex);
       if (ex && samePage && !ex.gates.captcha && !ex.gates.blocked && !ex.gates.login) {
         const evidence = downloadEvidence(ex, Number.MAX_SAFE_INTEGER);
         if (evidence.length) {
@@ -171,6 +200,8 @@ export class UpdateService {
   evaluate(gameId: number, current: VersionFingerprint | null, head?: Parameters<typeof fileChanged>[1]) {
     let g = this.deps.games.get(gameId);
     if (!g) return;
+    const entry = g.catalogId ? this.deps.catalog.raw(g.catalogId) : null;
+    if (g.store || !entry || !this.ownsPage(g, entry.pageUrl)) return;
     const checkedAt = new Date().toISOString();
     if (!current && !head) { this.deps.games.update(gameId, { updateCheckedAt: checkedAt }); return; }
     if (!g.installedVersion) {
@@ -179,20 +210,20 @@ export class UpdateService {
       g = this.deps.games.get(gameId)!;
     }
     const installed = g.installedVersion!;
-    const scheme = current?.scheme ?? (current?.version ? /^build /.test(current.version) ? 'site-build' : 'semantic' : undefined);
-    const matched = installed.identifiers?.find(e => e.scheme === scheme);
+    const scheme = current ? versionScheme(current) : undefined;
+    const matched = installed.identifiers?.find(e => versionScheme(e) === scheme);
     const comparable = matched ? { ...installed, version: matched.version, scheme: matched.scheme } : installed;
     let verdict: UpdateVerdict = detectUpdate(comparable, current);
-    const incompatible = !!installed.version && !!current?.version && (installed.scheme && scheme && installed.scheme !== scheme && !matched || !matched && /^build /.test(installed.version) !== /^build /.test(current.version));
+    const incompatible = !!installed.version && !!current?.version && !matched && versionScheme(installed) !== scheme;
     if (installed.inspection) {
       this.deps.games.update(gameId, { installedVersion: { ...installed, inspection: {
         ...installed.inspection, checkedAt, state: incompatible ? 'incomparable' : installed.version ? 'identified' : 'unresolved',
         detail: incompatible ? `Installed ${versionLabel(installed)}; the website publishes ${versionLabel(current)} using a different build system. A newer game version could not be verified.` : installed.inspection.detail,
       } } });
     }
-    const unresolved = installed.inspection?.state === 'unresolved';
+    const unresolved = !!installed.inspection && (!installed.version || !current?.version);
     const reuploaded = !unresolved && fileChanged(g.installedVersion!.file, head ?? null);
-    if (!verdict.update && !incompatible && reuploaded) {
+    if (!verdict.update && !incompatible && reuploaded && !installed.version && !current?.version) {
       verdict = { update: true, from: versionLabel(g.installedVersion) ?? 'installed build', to: versionLabel(current) ?? 'new build', reason: 'the download file changed on the server' };
     }
     const key = [current ? fingerprintKey(current) : '', reuploaded && head ? `h:${head.etag ?? head.bytes ?? head.lastModified}` : ''].filter(Boolean).join('|') || checkedAt;
@@ -208,7 +239,8 @@ export class UpdateService {
     // A stored "downloading" whose download failed or was removed is no longer in progress.
     const stalled = prev?.state === 'downloading' && (() => { const d = prev.downloadId ? this.deps.downloads.get(prev.downloadId) : null; return !d || d.state === 'failed' || d.state === 'cancelled'; })();
     if (prev && ((BUSY.has(prev.state) && !stalled) || prev.key === key)) {
-      this.deps.games.update(gameId, { updateCheckedAt: checkedAt });
+      this.deps.games.update(gameId, { updateCheckedAt: checkedAt, ...(prev.key === key && !BUSY.has(prev.state) ? { update: { ...prev, from: verdict.from, to: verdict.to, reason: verdict.reason } } : {}) });
+      this.deps.broadcast();
       return;
     }
     console.log(`[updates] ${g.title}: ${verdict.reason}`);
@@ -230,5 +262,10 @@ export class UpdateService {
     const entry = this.deps.catalog.raw(catalogId);
     if (!entry?.version) return;
     for (const g of this.deps.games.list()) if (g.catalogId === catalogId && !g.store && g.status === 'installed') this.evaluate(g.id, entry.version);
+  }
+
+  private ownsPage(g: GameRecord, page: string): boolean {
+    const d = g.downloadId ? this.deps.downloads.get(g.downloadId) : null;
+    return gameSource(g, d, this.deps.catalog, this.deps.sources.list().map(s => hostOf(s.url))) === hostOf(page);
   }
 }

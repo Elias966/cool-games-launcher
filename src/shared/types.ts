@@ -420,6 +420,8 @@ export interface Settings {
   language: 'en' | 'ar';
   clearBrowserDataOnExit: boolean;
   sendDoNotTrack: boolean;
+  /** Saved Firefox profile shared by both control backends. */
+  browserMode: 'ai' | 'normal' | 'installed';
 }
 
 export interface ConsentRecord {

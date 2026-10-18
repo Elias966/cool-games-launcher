@@ -119,8 +119,8 @@ for (const exe of ['geckodriver/geckodriver', 'umu/umu-run', 'tools/runtime-x86_
   if (existsSync(p)) await chmod(p, 0o755);
 }
 
-// Firefox enterprise policies: force-install uBlock Origin from the bundled
-// file, and disable updates, telemetry and first-run pages.
+// Firefox enterprise policies: allow the bundled extensions and disable
+// updates, telemetry and first-run pages. XPIs are copied per profile at runtime.
 if (existsSync(join(vendorDir, 'firefox'))) {
   await mkdir(join(vendorDir, 'firefox/distribution'), { recursive: true });
   const { firefoxPolicies } = await import('./firefox-policies.mjs');
@@ -130,3 +130,4 @@ if (existsSync(join(vendorDir, 'firefox'))) {
   );
 }
 console.log('Vendor components ready in', vendorDir);
+await import('./stage-firefox-bridge.mjs');

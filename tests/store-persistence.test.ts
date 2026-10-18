@@ -284,6 +284,31 @@ describe('durable incremental Store indexing',()=>{
 });
 
 describe('script-rendered game pages read in Firefox',()=>{
+  it('checks the artwork backlog concurrently with a bounded image queue', async () => {
+    let active = 0, peak = 0, finished = 0;
+    const classification = { classifyEntry: async () => { peak = Math.max(peak, ++active); await new Promise(r => setTimeout(r, 10)); active--; finished++; } };
+    const s = setup(file(), { classification }), src = source(s); s.session.enter();
+    for (let i = 0; i < 20; i++) {
+      const id = s.catalog.upsertListing(src.id, { pageUrl: `https://games.test/game-${i}`, title: `Orbit ${i}`, titleKey: `orbit ${i}`, thumbnailUrl: 'https://games.test/cover.png' }).id;
+      s.catalog.markListed([id]);
+    }
+    const run = (s.discovery as any).classifyBacklog(s.session.token()!);
+    await vi.advanceTimersByTimeAsync(100); await run;
+    expect(peak).toBe(8); expect(finished).toBe(20);
+  });
+  it('does not make ordinary game pages use the browser after a script-only page on the same site', async () => {
+    const fetcher = { stats: { http: 0, fallbacks: 0, ms: 0 }, fetch: vi.fn(async (url: string) => ({ ok: true, status: 200, ms: 1, extract: url.endsWith('/shell') ? page('<main></main>', url) : game(url) })) };
+    const s = setup(file(), { fetcher }), src = source(s);
+    s.session.enter();
+    const load = (s.discovery as any).load.bind(s.discovery);
+    const evidence = (ex: PageExtract) => ex.fileLinks.length > 0;
+    const first = load(src, 'https://games.test/shell', s.session.token()!, 'browser', evidence);
+    await vi.advanceTimersByTimeAsync(10_000); await first;
+    const result = await load(src, 'https://games.test/game-ordinary', s.session.token()!, 'browser', evidence);
+    expect(result.via).toBe('http');
+    expect(fetcher.fetch.mock.calls.map(c => c[0])).toEqual(['https://games.test/shell', 'https://games.test/game-ordinary']);
+    expect(s.browser.navigate).toHaveBeenCalledTimes(1);
+  });
   // A single-page app: the HTTP copy and the first read after navigating are an
   // empty shell; the game renders a moment later.
   const shell=(url:string)=>page('<title>Game Jolt - Share your creations</title><main></main>',url);

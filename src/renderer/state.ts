@@ -15,6 +15,7 @@ export interface BrowserState {
   attention: string | null;
   attentionSourceId?: number | null;
   humanMode?: boolean;
+  automaticReturn?: boolean;
   /** Set when the policy changed and the current frame must not be shown until a fresh one arrives. */
   stale: boolean;
 }
@@ -210,7 +211,7 @@ export async function boot() {
     if (snap.policyRevision !== state.policy.revision) return; // produced under an older policy
     setState((s) => (s.tab === 'store' ? { ...(snap.verificationRequired ? {detailId:null} : {}), browser: { ...s.browser, open: true, snapshot: snap, stale: false } } : {}));
   });
-  api.on('browser:humanMode', ({ active }) => setState((s) => ({ browser: { ...s.browser, humanMode: active, open: s.tab === 'store' ? true : s.browser.open, snapshot: null } })));
+  api.on('browser:humanMode', ({ active, automaticReturn }) => setState((s) => ({ browser: { ...s.browser, humanMode: active, automaticReturn: active ? automaticReturn ?? s.browser.automaticReturn : false, open: s.tab === 'store' ? true : s.browser.open, snapshot: null } })));
   api.on('browser:closed', () => setState((s) => ({ browser: { ...s.browser, open: false, snapshot: null } })));
   api.on('browser:attention', ({ message, sourceId, requiresUser }) => setState((s) => (s.tab === 'store' ? { ...(requiresUser ? {detailId:null} : {}), browser: { ...s.browser, open: true, attention: message, attentionSourceId: sourceId ?? null } } : {})));
   api.on('browser:verificationResolved', ({ sourceId }) => setState((s) => s.browser.attentionSourceId === sourceId ? { browser: { ...s.browser, attention: null, attentionSourceId: null } } : {}));

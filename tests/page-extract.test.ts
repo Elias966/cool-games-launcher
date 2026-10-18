@@ -13,6 +13,24 @@ function extract(): PageExtract {
 }
 
 describe('itch.io adapter', () => {
+  it('tolerates the empty document between a host redirect and its HTML parser',()=>{
+    load('','https://host.test/file');dom.window.document.documentElement.remove();
+    const ex=extract();expect(ex.url).toBe('https://host.test/file');expect(ex.controls).toEqual([]);expect(ex.viewport.docH).toBe(0);
+  });
+  it('reads host forms whose named fields shadow DOM methods',()=>{
+    load('<form id="content"><input name="matches"><input name="querySelectorAll"><button>Download</button><time datetime="2026-10-17">October 17</time></form>','https://host.test/file');
+    const ex=extract();expect(ex.published).toBe('2026-10-17');expect(ex.controls.some(c=>c.text==='Download')).toBe(true);
+  });
+  it('survives host scripts whose closest shim returns false for no match',()=>{
+    load('<main><h1>Package</h1><button>Download</button></main>','https://host.test/file');
+    dom.window.eval('const original=Element.prototype.closest;Element.prototype.closest=function(s){return original.call(this,s)||false}');
+    const ex=extract();expect(ex.published).toBeNull();expect(ex.controls.some(c=>c.text==='Download')).toBe(true);
+  });
+  it('preserves download controls and excludes navigation when closest always returns false',()=>{
+    load('<nav><a href="/">Home</a></nav><main><article><h1>Package</h1><time datetime="2026-10-18">Added today</time><a href="https://host.test/file"><span>Download</span></a></article></main>','https://games.test/game');
+    dom.window.eval('Element.prototype.closest=function(){return false}');
+    const ex=extract();expect(ex.published).toBe('2026-10-18');expect(ex.controls.some(c=>c.text==='Download')).toBe(true);expect(ex.controls.some(c=>c.text==='Home')).toBe(false);
+  });
   it('reads listing cells', () => {
     load(
       `<div class="game_cell"><a class="thumb_link game_link" href="https://dev.itch.io/a"><div class="game_thumb"><img data-lazy_src="https://img.itch.zone/a.png"></div></a>
@@ -153,4 +171,11 @@ describe('listing titles without artwork', () => {
     load('<main><h2>Recently Added</h2>'+['Alpha','Bravo','Charlie'].map(title=>`<article><a href="/game/${title}">${title}</a></article>`).join('')+'</main>','https://games.test/');
     expect(extract().cards.map(c=>c.title)).toEqual(['Alpha','Bravo','Charlie']);
   });
+});
+
+it('reads complete single-page catalogs when indexing without enlarging ordinary AI observations',()=>{
+  load('<main>'+Array.from({length:180},(_,i)=>`<article class="game-card"><a href="/game/${i}"><img src="/${i}.png"><h2>Game ${i} Free Download</h2></a></article>`).join('')+'</main>','https://games.test/all-games/');
+  expect(extract().cards).toHaveLength(150);
+  const full=dom.window.eval(`(${extractPage.toString()})({maxCards:10000,maxLinks:20000})`) as PageExtract;
+  expect(full.cards).toHaveLength(180);expect(new Set(full.cards.map(c=>c.href)).size).toBe(180);
 });

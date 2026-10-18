@@ -88,6 +88,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     language: 'en',
     clearBrowserDataOnExit: false,
     sendDoNotTrack: true,
+    browserMode: 'ai',
   };
 }
 
@@ -104,6 +105,9 @@ export class SettingsRepo {
     const rows = this.st.get('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
     const out: Record<string, unknown> = { ...this.defaults };
     for (const r of rows) if (r.key in this.defaults) out[r.key] = json(r.value, (this.defaults as unknown as Record<string, unknown>)[r.key]);
+    // Retire the experimental personal-profile mode. Existing experiments
+    // move to a separate installed-browser profile without reading user data.
+    if(out.browserMode==='personal')out.browserMode='installed';
     return out as unknown as Settings;
   }
 
@@ -610,9 +614,9 @@ export class CatalogRepo {
   }
 
   /** Only a unique exact identity is safe to associate with an imported copy. */
-  matchInstalled(title: string, appid?: number | null): number | null {
-    const rows = this.db.prepare("SELECT c.id, c.title, c.steam_json FROM catalog c JOIN sources s ON s.id = c.source_id WHERE s.enabled = 1 AND c.download_status = 'available'").all() as Array<{ id: number; title: string; steam_json: string | null }>;
-    const matches = rows.filter(r => appid && json<SteamMedia | null>(r.steam_json, null)?.appid === appid || sameGame(r.title, title));
+  matchInstalled(title: string, appid?: number | null, sourceHost?: string): number | null {
+    const rows = this.db.prepare("SELECT c.id, c.title, c.steam_json, s.url FROM catalog c JOIN sources s ON s.id = c.source_id WHERE s.enabled = 1 AND c.download_status = 'available'").all() as Array<{ id: number; title: string; steam_json: string | null; url: string }>;
+    const matches = rows.filter(r => (!sourceHost || hostOf(r.url) === sourceHost) && (appid && json<SteamMedia | null>(r.steam_json, null)?.appid === appid || sameGame(r.title, title)));
     return matches.length === 1 ? matches[0].id : null;
   }
 

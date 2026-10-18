@@ -83,7 +83,6 @@ export class Discovery {
   private changedTimer: NodeJS.Timeout | null = null;
   private wake: (() => void) | null = null;
   private browserLock: Promise<unknown> = Promise.resolve();
-  private renderedDetailHits = new Map<number, number>();
   private browserRequiredUntil = new Map<string, number>();
   private cooldown = new Map<number, number>();
   private verificationCheckedAt = Date.now();
@@ -393,8 +392,9 @@ export class Discovery {
     if ((this.cooldown.get(source.id) ?? 0) > Date.now()) throw new RateLimitedError(this.cooldown.get(source.id)!);
     const resumingCheck = this.verifiedPage && this.samePage(this.verifiedPage.url, url);
     const site = siteKey(hostOf(url));
-    const recipe = this.deps.sources.recipe(source.id);
-    const kind = `${source.id}:${recipe && matchesAny(url, recipe.game) ? 'game' : 'listing'}`;
+    // A script-only listing, collection, or missing page says nothing about
+    // other game pages. Cache browser requirements for this URL only.
+    const kind = `${source.id}:${canonicalUrl(url) ?? url}`;
     // Older recipes may have learned "browser" from a temporary HTTP block.
     // Probe the fast reader again, but avoid repeatedly probing script shells.
     if (fetcher && !resumingCheck && (mode === 'http' || Date.now() >= (this.browserRequiredUntil.get(kind) ?? 0))) {
@@ -468,6 +468,15 @@ export class Discovery {
     // A site indexed before is re-checked incrementally (see staleRun below).
     const cursor: CrawlCursor = sources.cursor(source.id) ?? { pending: [source.url], visited: [], pagesDone: 0, startedAt: new Date().toISOString(), refresh: this.incremental(source) };
     cursor.pending = [...new Set(cursor.pending.filter(isListingRoute))];
+    const savedRecipe=sources.recipe(source.id);
+    if(savedRecipe && savedRecipe.listingExtractVersion!==2){
+      // Older extractors saved at most 150 cards from a complete single-page
+      // catalog. Re-read its starting listing once without discarding games.
+      const start=canonicalUrl(source.url)??source.url;
+      cursor.pending=[start,...cursor.pending.filter(url=>(canonicalUrl(url)??url)!==start)];
+      cursor.visited=cursor.visited.filter(url=>(canonicalUrl(url)??url)!==start);
+      savedRecipe.listingExtractVersion=2;savedRecipe.recentPages=savedRecipe.recentPages?.filter(isListingRoute);sources.saveRecipe(source.id,savedRecipe);
+    }
     // Older checkpoints lost lastCrawlAt while retaining a proven full crawl.
     if (!cursor.refresh && this.incremental(source)) { cursor.refresh = true; cursor.staleRun = 0; }
     this.progress(source, 'crawling', 'Reading listing pages', cursor.pagesDone, catalog.count(source.id));
@@ -586,6 +595,8 @@ export class Discovery {
         // AI-confirmed games appear as soon as their cover passes the content
         // check; download routes are verified in the background right after.
         catalog.markListed(stored);
+        this.notifyCatalog(source.id);
+        this.status(source,tm('Found {n} games on this page — checking covers',{n:cards.length}),cursor.pagesDone);
         await this.classifyListed(stored, token);
         this.notifyCatalog(source.id);
         const secs = Math.max(1, (Date.now() - started) / 1000);
@@ -808,6 +819,7 @@ export class Discovery {
       origin: 'ai',
       routesVersion: ROUTES_VERSION,
       siteDatesVersion: 1,
+      listingExtractVersion: 2,
       recentPages: previous?.recentPages,
     };
     const chosen = new Set(r.games.map((u) => u.split('#')[0]));
@@ -912,11 +924,15 @@ export class Discovery {
     if (!todo.length) return false;
     this.setWorking(true);
     this.deps.ai.setStatus({ phase: 'classifying', detail: tm('Checking artwork for {n} games', { n: todo.length }), context: 'discovery' });
-    for (const e of todo) {
-      session.assertLive(token);
-      await classification.classifyEntry(e.id, token.signal);
-      this.notifyCatalog(e.sourceId);
-    }
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(8, todo.length) }, async () => {
+      while (next < todo.length) {
+        session.assertLive(token);
+        const e = todo[next++];
+        await classification.classifyEntry(e.id, token.signal);
+        this.notifyCatalog(e.sourceId);
+      }
+    }));
     return true;
   }
 
@@ -1039,9 +1055,8 @@ export class Discovery {
     if (!entry) return;
     const source = sources.get(entry.sourceId);
     if (!source) return;
-    const recipe = sources.recipe(source.id);
     const hasEvidence = (e: PageExtract) => downloadEvidence(e).length > 0;
-    let { ex, via } = await this.load(source, entry.pageUrl, token, recipe?.detailMode, hasEvidence);
+    let { ex, via } = await this.load(source, entry.pageUrl, token, sources.recipe(source.id)?.detailMode, hasEvidence);
     session.assertLive(token, 'game page');
     if (this.gated(ex)) return this.gatedDetail(source, ex, entry.pageUrl, id);
     let evidence = downloadEvidence(ex);
@@ -1053,10 +1068,8 @@ export class Discovery {
       if (found.length) {
         ({ ex, via } = rendered);
         evidence = found;
-        // Twice is a pattern: read this site's game pages in Firefox from now on.
-        const hits = (this.renderedDetailHits.get(source.id) ?? 0) + 1;
-        this.renderedDetailHits.set(source.id, hits);
-        if (hits >= 2 && recipe && recipe.detailMode !== 'browser') sources.saveRecipe(source.id, { ...recipe, detailMode: 'browser' });
+        // Keep the rendered fallback local to this page. A pair of unusual
+        // pages must not serialize the site's whole verification backlog.
       }
     }
 

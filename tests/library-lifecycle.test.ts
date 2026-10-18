@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() }, dialog: { showOpenDialog: vi.fn() }, shell: {} }));
@@ -21,6 +21,23 @@ function setup(){
  return {library,games,game,worker};
 }
 describe('Library operation races',()=>{
+ it('accepts an original-source update whose browser checkpoint moved to a file host', async () => {
+  const t=setup(),executable=join(t.game.installDir!,'..','new-game');writeFileSync(executable,'new program');
+  const fp=(version:string)=>({version,scheme:'semantic',files:[],sizes:[],updated:null,at:new Date().toISOString()});
+  t.games.update(t.game.id,{sourceHost:'original.test',installedVersion:fp('2.0') as any});
+  (t.library as any).downloadsRepo={get:()=>({id:77,sourceHost:'original.test',resolution:{pageUrl:'https://file-host.test/download',buildVersion:fp('3.0')}})};
+  vi.spyOn(t.library as any,'backupSaves').mockRejectedValue(new Error('Reached save backup'));
+  await expect((t.library as any).applyPreparedUpdate(t.game.id,{executable,installDir:join(executable,'..'),downloadId:77})).rejects.toThrow('Reached save backup');
+  expect(t.worker.call).not.toHaveBeenCalled();
+ });
+ it.each(['older', 'other-website'])('rejects a resumed %s update before touching saves or game files', async scenario => {
+  const t=setup(),executable=join(t.game.installDir!,'..','new-game');writeFileSync(executable,'new program');
+  const fingerprint=(version:string)=>({version,scheme:'semantic',files:[],sizes:[],updated:null,at:new Date().toISOString()});
+  t.games.update(t.game.id,{sourceHost:'original.test',installedVersion:fingerprint('2.0') as any});
+  (t.library as any).downloadsRepo={get:()=>({id:77,sourceHost:scenario==='other-website'?'elsewhere.test':'original.test',resolution:{pageUrl:scenario==='other-website'?'https://elsewhere.test/game':'https://original.test/game',buildVersion:fingerprint(scenario==='older'?'1.0':'3.0')}})};
+  await expect((t.library as any).applyPreparedUpdate(t.game.id,{executable,installDir:join(executable,'..'),downloadId:77})).rejects.toThrow(/installed game is unchanged/);
+  expect(t.worker.call).not.toHaveBeenCalled();expect(t.games.get(t.game.id)?.executable).toBe(t.game.executable);
+ });
  it('prevents duplicate starts and uninstall while a launch is still preparing',async()=>{
   const t=setup();let finish!:()=>void;
   const start=vi.spyOn(t.library as unknown as {launchGame:(id:number)=>Promise<void>},'launchGame').mockImplementation(()=>new Promise<void>(r=>{finish=r;}));

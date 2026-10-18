@@ -5,6 +5,9 @@ import { basename, dirname, join } from 'node:path';
 import { findVersion, makeFingerprint, type InstalledVersion } from '@shared/game-version';
 import type { DownloadRecord, GameRecord } from './repos';
 
+/** Re-inspect receipts produced before engine/default-header rejection was fixed. */
+export const LOCAL_VERSION_REVISION = 2;
+
 /** Importing an Unreal executable from Binaries/Win64 must also track the
  * project's sibling Saved folder. Expand only this recognised game layout. */
 export function installedGameRoot(g: Pick<GameRecord, 'installDir' | 'executable'>): string | null {
@@ -81,6 +84,7 @@ export function inspectedInstalledVersion(g: GameRecord, d: DownloadRecord | nul
     file: trusted ? previous?.file ?? (d ? { url: d.url, name: d.fileName, bytes: d.totalBytes, etag: d.etag, lastModified: d.lastModified } : null) : null,
     identifiers, executableIdentity, evidenceIdentity,
     inspection: {
+      revision: LOCAL_VERSION_REVISION,
       state: preferred ? 'identified' : 'unresolved', checkedAt,
       detail: preferred ? `Installed version identified from ${preferred.source}.` : conflict ? 'Local files report conflicting game versions. No update was offered.' : `No reliable game version was found in the executable, manifests, configuration or logs.${result.limitations.length ? ' ' + result.limitations.join(' ') : ''}`,
     },

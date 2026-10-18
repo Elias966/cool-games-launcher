@@ -16,10 +16,12 @@ import { execFileSync } from 'node:child_process';
 import type { WorkerHost } from './worker-host';
 import type { CatalogRepo, DownloadRecord, DownloadsRepo, GamesRepo, GameRecord, PreviousBuild, SettingsRepo } from './repos';
 import type { ExecCandidate } from '../workers/exec-scan';
-import { findVersion, versionLabel, fingerprintKey, type InstalledVersion } from '@shared/game-version';
+import { detectUpdate, findVersion, versionLabel, versionScheme, fingerprintKey, type InstalledVersion } from '@shared/game-version';
 import { sameInstall } from './store-builds';
 import { installedFile } from './updates';
 import { installedGameRoot, inspectedInstalledVersion } from './installed-version';
+import { gameSource } from './game-source';
+import { hostOf } from '@shared/urls';
 import { createShortcut, removeShortcuts } from './shortcuts';
 import { protonProvider, type CompatManager } from './compat';
 import type { DownloadManager } from './downloads';
@@ -568,6 +570,11 @@ export class Library {
     if (!g.update || g.update.unverified || !['available', 'failed'].includes(g.update.state)) throw new Error('Check for updates first. A newer game build must be verified before downloading.');
     const entry = this.catalog.raw(g.catalogId);
     if (!entry || entry.downloadStatus !== 'available') throw new Error('The game page no longer offers a download');
+    const receipt = g.downloadId ? this.downloadsRepo.get(g.downloadId) : null;
+    if (gameSource(g, receipt, this.catalog, [hostOf(entry.pageUrl)]) !== hostOf(entry.pageUrl)) throw new Error('The update page must belong to the website this game came from. Check for updates again.');
+    const identifier = entry.version && g.installedVersion?.identifiers?.find(e => versionScheme(e) === versionScheme(entry.version!));
+    const installed = identifier ? { ...g.installedVersion!, ...identifier } : g.installedVersion;
+    if (installed?.version && entry.version?.version && !detectUpdate(installed, entry.version).update) throw new Error('The website does not offer a verified newer game version. Check for updates again.');
     if (!this.startDownload) throw new Error('Downloads are not ready yet');
     // Named after the page's current title, so the new folder carries the new version.
     const d = this.startDownload(g.catalogId, entry.title || g.title, g.sourceHost);
@@ -664,6 +671,16 @@ export class Library {
     if (!g) return;
     if (g.store) throw new Error('Use the linked store to update this game.');
     if (!existsSync(prepared.executable)) throw new Error('The prepared update is missing; download it again');
+    const d = this.downloadsRepo.get(prepared.downloadId);
+    const receipt = g.downloadId ? this.downloadsRepo.get(g.downloadId) : null;
+    const source = gameSource(g, receipt, this.catalog);
+    const offered = d?.resolution?.buildVersion;
+    // The resume URL follows the browser through file hosts. Only the saved
+    // source identifies the website this download was requested from.
+    if (!source || !d || source !== d.sourceHost) throw new Error('The prepared update is from a different website. The installed game is unchanged.');
+    const identifier = offered && g.installedVersion?.identifiers?.find(e => versionScheme(e) === versionScheme(offered));
+    const installed = identifier ? { ...g.installedVersion!, ...identifier } : g.installedVersion;
+    if (installed?.version && offered?.version && !detectUpdate(installed, offered).update) throw new Error('The prepared update is not a verified newer version. The installed game is unchanged.');
     this.setUpdate(id, { state: 'preparing', detail: tm('Moving your saves to the new version…') });
     // Updating always takes a recovery copy, even if periodic backups are off.
     await this.backupSaves(id, 'before updating', true);
@@ -679,7 +696,6 @@ export class Library {
     }
     // Only one previous build is kept.
     if (g.previous?.installDir && g.previous.installDir !== g.installDir) await this.removeBuild(g.previous.installDir);
-    const d = this.downloadsRepo.get(prepared.downloadId);
     const entry = g.catalogId ? this.catalog.raw(g.catalogId) : null;
     const now = new Date().toISOString();
     const previous: PreviousBuild = { installDir: g.installDir, executable: g.executable, kind: g.kind, runner: g.runner, candidates: g.candidates, version: g.installedVersion, replacedAt: now, managed: g.managed };

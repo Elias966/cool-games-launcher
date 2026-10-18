@@ -76,7 +76,7 @@ export function extractHtml(html: string, url: string): PageExtract {
     const saved = { document: g.document, window: g.window, location: g.location };
     Object.assign(g, { document: w.document, window: w, location: w.location });
     try {
-      return extractPage({ fast: true, mark: false, maxLinks: 600 });
+      return extractPage({ fast: true, mark: false, maxLinks: 20000, maxCards: 10000 });
     } finally {
       Object.assign(g, saved);
     }
@@ -190,7 +190,7 @@ export function storedCookies(p: {profileDir: string; url: string}): string {
       }>;
     return rows.filter(c =>
       (c.host === target.hostname || c.host.startsWith('.') && (target.hostname === c.host.slice(1) || target.hostname.endsWith(c.host))) &&
-      (!c.isSecure || target.protocol === 'https:') && c.expiry > Date.now() / 1000 &&
+      (!c.isSecure || target.protocol === 'https:') && (c.expiry>1e12?c.expiry:c.expiry*1000) > Date.now() &&
       (target.pathname === c.path || target.pathname.startsWith(c.path.endsWith('/') ? c.path : c.path + '/')) &&
       !/[\r\n;]/.test(c.name + c.value))
       .sort((a, b) => b.path.length - a.path.length).map(c => c.name + '=' + c.value).join('; ');
@@ -200,6 +200,7 @@ export function storedCookies(p: {profileDir: string; url: string}): string {
 
 if ((process as unknown as { parentPort?: unknown }).parentPort) {
   serve({
+    parseHtml:(p:{html:string;url:string;status:number;ms:number})=>({ok:true,status:p.status,url:p.url,ms:p.ms,extract:extractHtml(p.html,p.url)}),
     storedCookies,
     fetchPage: (p: FetchPageParams, signal: AbortSignal) => fetchPage(p, signal),
     fetchText: (p: FetchPageParams, signal: AbortSignal) => fetchText(p, signal),

@@ -1,12 +1,15 @@
 import { canonicalUrl, hostOf, isHttpUrl, looksLikeFileUrl } from './urls';
 
 /** CAPTCHA tokens can change while completing a check; file IDs must still match. */
-export function downloadPageKey(url: string): string | null {
+export function withoutChallengeTokens(url:string):string {
   try {
     const u=new URL(url);
     for(const key of [...u.searchParams.keys()])if(/^(?:__cf_chl_|cf_chl_)/i.test(key))u.searchParams.delete(key);
-    return canonicalUrl(u.href);
-  }catch{return null;}
+    return u.href;
+  }catch{return url;}
+}
+export function downloadPageKey(url: string): string | null {
+  return canonicalUrl(withoutChallengeTokens(url));
 }
 
 /** Home/search/listing pages are not a substitute for an indexed game URL. */

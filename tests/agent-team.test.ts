@@ -19,6 +19,24 @@ function setup(args:unknown){
  return {session,token,ai,browser,agent:new BrowserAgent(ai as never,browser as never,session)};
 }
 describe('specialist agent tools',()=>{
+ it('opens a sole unambiguous Download button on the saved game page without visual scrolling',async()=>{
+  const s=setup({}),page={...ex,controls:[{i:1,text:'Download',href:null,tag:'button'}]} as PageExtract,agent=new LocalGameAgent(s.ai as never,s.browser as never,s.session);
+  expect(await agent.transfer(page,s.token,'Orbit',[],[],'',page.url,{pageUrl:page.url,url:'',alternatives:[],blockedControls:[],gamePageUrl:page.url})).toMatchObject({kind:'click',index:1});expect(s.ai.chatTools).not.toHaveBeenCalled();expect(s.browser.snapshot).not.toHaveBeenCalled();
+ });
+ it('immediately selects the sole direct popup option without another model call',async()=>{
+  const s=setup({}),page={...ex,controls:[{i:1,text:'Download',href:null,tag:'button',inDialog:true},{i:2,text:'Download .torrent File',href:null,tag:'button',inDialog:true},{i:3,text:'Download',href:null,tag:'button'}]} as PageExtract;
+  const agent=new LocalGameAgent(s.ai as never,s.browser as never,s.session);
+  expect(await agent.transfer(page,s.token,'Orbit',[],[])).toMatchObject({kind:'click',index:1});expect(s.ai.chatTools).not.toHaveBeenCalled();expect(s.browser.snapshot).not.toHaveBeenCalled();
+ });
+ it('rejects a screenshot click on the torrent option before it reaches the browser',async()=>{
+  const s=setup({action:'left_click',coordinate:[200,300]});s.browser.inspectPoint.mockResolvedValueOnce({text:'Download Torrent',password:false,untrustedRegion:false,download:true,index:null});
+  const step=await s.agent.next(ex,'interactive',s.token,'Download Orbit');await expect(s.agent.execute(step,ex,s.token,true)).rejects.toThrow('direct download');expect(s.browser.pointer).not.toHaveBeenCalled();
+ });
+ it('rejects an observed torrent button even when it is labelled only Download',async()=>{
+  const s=setup({action:'click_element',element:1}),page={...ex,controls:[{i:1,text:'Download',href:'https://files.test/get?format=torrent',tag:'a',inViewport:true,rect:{x:0,y:0,w:100,h:30}}]} as PageExtract;
+  const agent=new BrowserAgent(s.ai as never,s.browser as never,s.session,'computer');s.ai.chatTools.mockResolvedValue(native('click_element',{index:1}));
+  const step=await agent.next(page,'interactive',s.token,'Download Orbit');await expect(agent.execute(step,page,s.token,true)).rejects.toThrow('direct download');
+ });
  it('preserves the published Fara JSON tool protocol and native tool results',()=>{
   const tools=[{type:'function',function:{name:'computer_use',parameters:{}}}];
   const messages=faraMessages([{role:'system',content:'Browser agent'},{role:'assistant',content:'',reasoning_content:'Wait for the page',tool_calls:[{function:{name:'computer_use',arguments:'{"action":"wait","time":1}'}}]},{role:'tool',content:'Page loaded'}],tools);
@@ -45,6 +63,12 @@ describe('specialist agent tools',()=>{
   const last=messages.filter(m=>m.role==='user').at(-1)!;expect(last.content[0].type).toBe('image_url');
   expect(last.content[1].text).toMatch(/^Current URL: .*\nHere is the next screenshot\. Think about what to do next\.$/s);
   await expect(s.agent.execute(step,ex,s.token,true)).rejects.toThrow('already completed');
+ });
+ it('refreshes a stale DOM observation before asking the model to navigate a newly opened host',async()=>{
+  const s=setup({action:'visit_url',url:ex.url});
+  s.browser.snapshot.mockResolvedValueOnce({png:'image',w:1440,h:900,url:'https://host.test/file'});
+  await expect(s.agent.next(ex,'interactive',s.token,'Download Orbit')).rejects.toMatchObject({name:'BrowserObservationChangedError'});
+  expect(s.ai.chatTools).not.toHaveBeenCalled();expect(s.browser.pointer).not.toHaveBeenCalled();
  });
  it('keeps separate browser tasks independent when verification moves to a different page',async()=>{
   const s=setup({action:'wait',time:0});
@@ -237,6 +261,7 @@ describe('saved page before any game search',()=>{
  });
  it('allows returning directly from a host to the saved indexed page',async()=>{
   const s=setup({action:'visit_url',url:ex.url}),host={...ex,url:'https://host.test/file/token',links:[]} as PageExtract;
+  s.browser.snapshot.mockResolvedValue({png:'image',w:1440,h:900,url:host.url});
   await s.agent.execute(await s.agent.next(host,'interactive',s.token,'Download'),host,s.token,true,scope);
   expect(s.browser.navigate).toHaveBeenCalledWith('interactive',ex.url,s.token.signal);
  });
@@ -251,6 +276,7 @@ describe('saved page before any game search',()=>{
 it('keeps an observed file-host download query usable while blocking game searches',async()=>{
  const s=setup({action:'visit_url',url:'https://host.test/?file=token'});
  const page={...ex,url:'https://host.test/file/token',cards:[],links:[{i:0,href:'https://host.test/?file=token',text:'Download file',download:false,inContent:true,rect:{x:0,y:0,w:1,h:1},img:null}]} as PageExtract;
+ s.browser.snapshot.mockResolvedValue({png:'image',w:1440,h:900,url:page.url});
  const scope={pageUrl:page.url,url:page.url,alternatives:[],blockedControls:[],gamePageUrl:ex.url};
  await s.agent.execute(await s.agent.next(page,'interactive',s.token,'Download'),page,s.token,true,scope);
  expect(s.browser.navigate).toHaveBeenCalledWith('interactive','https://host.test/?file=token',s.token.signal);

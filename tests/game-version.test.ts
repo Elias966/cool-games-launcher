@@ -28,6 +28,12 @@ describe('findVersion', () => {
 });
 
 describe('compareVersions', () => {
+  it('orders dated game builds chronologically without comparing them to semantic versions', () => {
+    expect(compareVersions('02.01.2026', '31.12.2025')).toBe(1);
+    expect(compareVersions('2026.01.02', '02.01.2026')).toBe(0);
+    expect(compareVersions('13.08.2021', '5.0.4.13071451')).toBeNull();
+    expect(compareVersions('83031', '2019.4.36.870')).toBeNull();
+  });
   it('orders dotted versions and builds', () => {
     expect(compareVersions('1.10', '1.9')).toBe(1);
     expect(compareVersions('1.2', '1.2.0')).toBe(0);

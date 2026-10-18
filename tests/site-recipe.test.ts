@@ -92,3 +92,8 @@ describe('site recipes', () => {
     expect(catalogLinks(ex).sort()).toEqual(['https://s.test/category/action/', 'https://s.test/games-list-page/', 'https://s.test/games/']);
   });
 });
+
+it('excludes RSS and data feeds from HTML listing routes',()=>{
+  for(const url of ['https://games.test/rss/3-new-games.xml/','https://games.test/feed/','https://games.test/updates.atom','https://games.test/games.json'])expect(isListingRoute(url)).toBe(false);
+  expect(isListingRoute('https://games.test/all-games/?page=2')).toBe(true);
+});

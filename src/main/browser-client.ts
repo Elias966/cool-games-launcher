@@ -31,6 +31,8 @@ export interface BrowserDownload {
   succeeded: boolean;
   stopped: boolean;
 }
+export interface BrowserCookie { name:string; value:string; host:string; path:string; secure:boolean }
+export interface BrowserHtml {url:string;status:number;html:string|null;ms:number}
 
 export class BrowserClient {
   constructor(readonly worker: WorkerHost) {}
@@ -56,6 +58,8 @@ export class BrowserClient {
   readDatePage(url: string, signal?: AbortSignal, detail = false) {
     return this.worker.call<PageExtract>('readDatePage', {url, detail}, signal);
   }
+  fetchPages(urls:string[],signal?:AbortSignal){return this.worker.call<BrowserHtml[]>('fetchPages',{urls},signal);}
+  sessionCookies(url:string){return this.worker.call<{cookies:BrowserCookie[];userAgent:string}>('cookieHeader',{context:'discovery',url,allPaths:true});}
   snapshot(context: BrowserContext, withMedia: boolean, signal?: AbortSignal, labels = false) {
     return this.worker.call<SnapshotResult>('snapshot', { context, withMedia, labels }, signal);
   }
@@ -76,8 +80,8 @@ export class BrowserClient {
   history(context: BrowserContext, action: 'back' | 'forward' | 'reload', signal?: AbortSignal) {
     return this.worker.call('history', { context, action }, signal);
   }
-  beginHuman(context: BrowserContext) {
-    return this.worker.call<{ active: boolean }>('beginHuman', { context });
+  beginHuman(context: BrowserContext, resumeAfterVerification = false) {
+    return this.worker.call<{ active: boolean }>('beginHuman', { context, resumeAfterVerification });
   }
   endHuman() {
     return this.worker.call<{ active: boolean }>('endHuman');

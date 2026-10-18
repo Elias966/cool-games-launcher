@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { extractPage, type PageExtract } from '@shared/page-extract';
-import { actionKey, downloadEvidence, isHostLanding } from '@shared/download-evidence';
+import { actionKey, downloadEvidence, isHostLanding, revealedMirrors } from '@shared/download-evidence';
 import { openDb } from '../src/main/db';
 import { CatalogRepo, SourcesRepo } from '../src/main/repos';
 
@@ -18,6 +18,25 @@ function page(html: string, url = 'https://games.test/game'): PageExtract {
 }
 
 describe('observed game download evidence', () => {
+  it('does not treat a modal-trigger button as an open dialog or hide the other mirrors',()=>{
+    const ex=page('<main><button class="open-modal-button">Download</button><a href="https://files.test/orbit.zip">Download archive</a></main>');
+    expect(downloadEvidence(ex)).toHaveLength(2);
+  });
+  it('keeps the direct option in a popup and excludes torrents, magnet links and torrent query endpoints',()=>{
+    const ex=page('<main><button>Download</button><div role="dialog"><a href="https://files.test/orbit.zip">Direct Download</a><button>Download Torrent</button><a href="/download?format=torrent">Download</a><a href="/orbit.torrent">Download</a><a href="magnet:?xt=urn:btih:abc">Magnet</a></div></main>');
+    expect(downloadEvidence(ex).map(c=>c.label)).toEqual(['Direct Download']);
+  });
+  it('compares all five host selector tabs without duplicating the current host anchor',()=>{
+    const ex=page('<main><button>Datavaults 1</button><button>FileKeeper 1</button><button>FileQ 1</button><button>Vikingfile 1</button><button>Akirabox 1</button><a href="https://datavaults.co/file/one">Download</a><button>Copy link</button></main>');
+    expect(revealedMirrors(ex).map(c=>c.label).sort()).toEqual(['Datavaults 1','FileKeeper 1','FileQ 1','Vikingfile 1','Akirabox 1'].sort());
+  });
+  it('excludes review/download filters instead of treating them as file hosts',()=>{
+    const ex=page('<main><button>Verified players only Confirmed downloads Enable filter</button><button>Download</button><a href="https://buzzheavier.com/abc">Buzzheavier</a></main>');
+    expect(downloadEvidence(ex).map(c=>c.label)).toEqual(['Download','Buzzheavier']);
+  });
+  it('excludes tutorial buttons even when their explanation mentions downloading files',()=>{
+    expect(downloadEvidence(page('<button>Watch Guide Watch this short guide so you do not download an ad file by mistake.</button><button>Download</button>')).map(c=>c.label)).toEqual(['Download']);
+  });
   it('excludes a review with download links in ads, navigation and recommendations', () => {
     const ex = page(`<main><article><h1>Game review</h1><p>We liked it!</p></article></main>
       <nav><a href="/launcher.exe">Download launcher</a></nav>

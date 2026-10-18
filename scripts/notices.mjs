@@ -59,12 +59,14 @@ md += `
 Notes:
 
 - **ooz** (GPL-3.0), powzix, pinned source and complete local isolated helper source/build instructions ship in \`resources/vendor/ooz\`. It decodes bounded game configuration metadata. Source: https://github.com/powzix/ooz
-- **Mozilla Firefox** is distributed unmodified apart from an enterprise
-  \`distribution/policies.json\` (updates, telemetry and first-run pages turned
-  off). Firefox and the Firefox logos are trademarks of the Mozilla Foundation.
+- **Mozilla Firefox** ships with enterprise policies (updates, telemetry and first-run pages turned
+  off) and the launcher’s local AutoConfig bridge for optional normal browser mode.
+  Bridge source: \`resources/firefox\` in this repository. Firefox and the Firefox logos are trademarks of the Mozilla Foundation.
   Source: https://archive.mozilla.org/pub/firefox/releases/
 - **uBlock Origin** (GPL-3.0) is the unmodified, Mozilla-signed release.
   Source: https://github.com/gorhill/uBlock
+- **Cookie-Editor** (GPL-3.0-only) is the unmodified signed Firefox add-on by Moustachauve / cgagnier.
+  Source: https://github.com/Moustachauve/cookie-editor
 - **CLIP ViT-B/32 image encoder** (MIT), OpenAI; ONNX fp16 conversion by Xenova. Downloaded on demand for the cover filter, pinned revision d15189d7, SHA-256 verified. https://huggingface.co/Xenova/clip-vit-base-patch32 (original: https://github.com/openai/CLIP)
 - **Fara1.5-4B** (MIT), Microsoft Research. Optional browser-agent weights, quantized by bartowski. https://huggingface.co/microsoft/Fara1.5-4B
   Its published prompt and tool schema are adapted under the MIT license in resources/FARA-LICENSE.

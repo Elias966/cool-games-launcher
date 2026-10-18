@@ -23,6 +23,7 @@ import { ArtworkThumbnails } from './artwork-thumbnails';
 import { HostRateLimiter } from './rate-limit';
 import { BrowserClient } from './browser-client';
 import { Discovery } from './discovery';
+import {installedFirefoxProfile} from '../workers/installed-firefox';
 import { PageFetcher } from './page-fetcher';
 import { startLogFile } from './logfile';
 import { reapOrphans } from './orphans';
@@ -190,9 +191,11 @@ async function main() {
     browserWorker.init('init', {
       firefoxPath: v.firefox,
       geckodriverPath: v.geckodriver,
-      profileDir: paths.browserProfile,
+      profileDir: s.browserMode==='installed'?installedFirefoxProfile():paths.browserProfile,
       ublockXpi: v.ublock,
-      stagingDir: paths.browserStaging,
+      cookieEditorXpi: v.cookieEditor,
+      browserMode: s.browserMode,
+      stagingDir: s.browserMode==='installed'?join(installedFirefoxProfile(),'cgl-downloads'):paths.browserStaging,
       doNotTrack: s.sendDoNotTrack,
       width: 1440,
       height: 1000,
@@ -218,8 +221,8 @@ async function main() {
   });
   const browser = new BrowserClient(browserWorker);
   const browserView = new BrowserView(browser, ai, policy, catalogRepo, session);
-  const gameAgent = new LocalGameAgent(ai, browser, session);
-  const fetcher = new PageFetcher(fetcherWorkers, browser, paths.browserProfile);
+  const gameAgent = new LocalGameAgent(ai, browser, session, aiCache);
+  const fetcher = new PageFetcher(fetcherWorkers, browser, ()=>settingsRepo.get().browserMode==='installed'?installedFirefoxProfile():paths.browserProfile);
   let updateService: UpdateService | null = null;
   let wishlistService: WishlistService | null = null;
   let libraryRef: Library | null = null;
@@ -278,8 +281,8 @@ async function main() {
       if (humanContext === 'interactive') {resolver.continueAfterHuman();foreground.hold('human-download',false);}
     }
   };
-  browserWorker.on('event:humanMode', ({ active }: { active: boolean }) => {
-    if (active) publish('browser:humanMode', { active: true });
+  browserWorker.on('event:humanMode', ({ active, automaticReturn }: { active: boolean; automaticReturn?: boolean }) => {
+    if (active) publish('browser:humanMode', { active: true, automaticReturn });
     else restoreAfterHuman();
   });
   const resolver = new Resolver({
@@ -305,22 +308,22 @@ async function main() {
     },
     partsSettled: (groupId) => libraryRef?.partsSettled(groupId),
   });
-  const startHumanBrowser = async (context: 'interactive' | 'discovery' | 'dates') => {
+  const startHumanBrowser = async (context: 'interactive' | 'discovery' | 'dates', resumeAfterVerification = false) => {
     if (humanBrowserActive || shuttingDown) return;
     humanContext = context;
     humanBrowserActive = true;
     siteDates.setActive(false);
     session.leave({preserveBrowser:true});
     try {
-      await browser.beginHuman(context);
-      publish('browser:humanMode', { active: true });
+      await browser.beginHuman(context, resumeAfterVerification);
+      publish('browser:humanMode', { active: true, automaticReturn: resumeAfterVerification });
     } catch (error) { restoreAfterHuman(); throw error; }
   };
   offerHumanBrowser = context => {
     // Let the requesting operation save its checkpoint before cancelling AI.
     setTimeout(() => {
       if (!session.active || humanBrowserActive || shuttingDown) return;
-      void startHumanBrowser(context).catch(error => console.warn('[browser] human control:', (error as Error).message));
+      void startHumanBrowser(context, true).catch(error => console.warn('[browser] human control:', (error as Error).message));
     }, 0).unref();
   };
   const models=new ModelManager({root:paths.models,repo:downloadsRepo,downloads,settings:settingsRepo,worker:installWorker,onSelected:async()=>{
@@ -601,11 +604,22 @@ async function main() {
     'settings:update': async (patch) => {
       if(patch.aiModelId!==undefined)throw Error('Use the model selector to switch verified local models.');
       const before = settingsRepo.get();
+      const switchBrowser = patch.browserMode !== undefined && patch.browserMode !== before.browserMode;
+      if (switchBrowser && humanBrowserActive) throw Error(tm('Return control to the launcher before switching browser mode.'));
+      if (switchBrowser && aiWorkPending()) throw Error(tm('Pause or finish the current AI download before switching browser mode.'));
+      if (switchBrowser) {
+        siteDates.setActive(false);
+        session.leave({preserveBrowser:true});
+        try { await initBrowser({...before,browserMode:patch.browserMode!}); }
+        catch(error) { syncSession(); throw error; }
+        fetcher.forget();
+      }
       const s = settingsRepo.update(patch);
       setMainLanguage(s.language);
       const aiKeys: Array<keyof Settings> = ['aiThreads', 'aiContextSize', 'aiAcceleration', 'aiImageTokens', 'aiIdleUnloadMinutes', 'classifierThreads'];
       if (aiKeys.some((k) => before[k] !== s[k])) await initInference(s);
       if (before.sendDoNotTrack !== s.sendDoNotTrack) await initBrowser(s);
+      if (switchBrowser) { syncSession(); discovery.poke(); }
       if (before.maxConcurrentDownloads !== s.maxConcurrentDownloads) downloads.pump();
       publish('settings:changed', s);
       if (before.protonPath !== s.protonPath) library.broadcast();

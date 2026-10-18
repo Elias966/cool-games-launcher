@@ -8,10 +8,44 @@ through automatically installed Proton (Wine remains optional).
 
 Everything runs on your computer: one local AI model (Microsoft's **Fara1.5-9B**, a
 computer-use model) via llama.cpp on your GPU, a GPU image classifier, and a dedicated
-Firefox with uBlock Origin. The model downloads only when requested in Settings and is
+Firefox with uBlock Origin and Cookie-Editor. The model downloads only when requested in Settings and is
 stored outside the AppImage. There is no cloud inference, no account and no telemetry.
 
 ![Store](docs/images/store.png)
+
+## What's new in 0.2.26
+
+- Verification keeps script-rendered fallbacks specific to each page, so one unusual page cannot force every game on a website through serial browser navigation. Local update checks reuse the authenticated fast reader before rendering a page. Artwork backlogs use bounded parallel checks and cancelled image inference is skipped before it runs.
+- Website updates stay with the original download source. Imported games with unknown sources recognize known website domains in their folder paths; ambiguous identities remain unlinked.
+- Changed file headers cannot override older or equal version numbers. Site build numbers, dated releases and semantic versions are kept separate. Unity and Unreal executable engine headers are rejected as game versions, old false offers are cleared, and resumed updates are checked again before moving saves or replacing the installation.
+
+## What's new in 0.2.25
+
+- Download navigation selects direct downloads and rejects torrent/magnet buttons and links, including visual AI clicks inside popups. An open download popup takes precedence over the page button behind it, and a sole direct option is used immediately.
+- Indexing reuses a path-filtered cookie jar per website instead of queuing a Firefox cookie lookup for every game. Sites that refuse the separate HTTP client can be read in bounded parallel batches through the existing Firefox session, without navigating every game or asking the AI to read each page.
+
+## What's new in 0.2.24
+
+- **Settings → Browser → Installed Firefox (separate profile)** runs the installed Firefox in a dedicated launcher profile, with its own cookies, uBlock Origin and Cookie-Editor. The AI uses a private local connection without WebDriver. It hides its window during work and reveals the same session for CAPTCHA. It never opens your personal Firefox profile. Website verification can still require human input or be refused by a website.
+- Download comparisons skip third-party download hosts that require CAPTCHA and continue with the remaining hosts. The game website's access check still opens the same live browser session for you.
+
+- Bundled Firefox is updated to Mozilla's 156.0.1 release, matching the working system browser used for compatibility testing. Browser identity is provided by the actual engine; user-agent and fingerprint values are not spoofed.
+- Normal browser mode captures the current viewport after scrolling, including fixed overlays. Previously the AI kept seeing the document top and repeatedly scrolled or clicked the wrong place.
+- Successful download steps are learned locally and reused across games and restarts. They match current controls by label, type and destination, with fresh AI navigation for changed or ambiguous layouts. Human verification, multipart handling and mirror speed comparisons remain intact.
+- Download filters and review controls are excluded from mirror comparisons, and script routes are rebuilt from current observations instead of accumulating obsolete element IDs.
+- Intermediate host selectors (including ZeiLink's five host buttons) participate in mirror comparisons. Host-page extraction tolerates unusual DOM method behavior, and the AI refreshes observations when a redirect changes the page during a screenshot.
+
+## What's new in 0.2.23
+
+- CAPTCHA-triggered Firefox takeovers return automatically after the original page is verified. Explicit manual browsing remains under your control.
+- Normal browser startup stays hidden, completes session restoration before navigation, and waits for the real page instead of reading a temporary blank tab.
+- Indexing reads complete one-page catalogs rather than stopping at 150 cards. Zeigames was checked with a saved verified session: 6,213 page entries, producing 6,189 unique catalog records. RSS feeds are excluded from HTML listing routes.
+
+## What's new in 0.2.22
+
+- **Settings → Browser → Normal browser mode** switches between the existing AI session and an experimental Firefox launch without WebDriver. The AI retains page reading, input, screenshots, tabs and downloads through an authenticated local AutoConfig bridge. Firefox’s website sandbox remains enabled.
+- Both modes share cookies and extensions, including uBlock Origin and Cookie-Editor. Switching restarts Firefox and reopens saved pages; finish a manual browser takeover or pause AI download work first.
+- Manual CAPTCHA handling keeps the same live document while AI work pauses. Website acceptance, including Zeigames, still requires a real manual test and is not guaranteed.
 
 ## What's new in 0.2.21
 
@@ -252,8 +286,9 @@ rule-first route or filename-ranking fallback when inference fails.
 
 The agent has screenshot, observed-control click, pointer, typing, scrolling,
 waiting, search and page-reading tools. It never answers CAPTCHAs or other human
-checks: it waits for checks that clear by themselves, tries another mirror, and only
-then asks you; the download resumes on its own once the check is gone. Logins,
+checks. Download hosts that require CAPTCHA are skipped automatically; the remaining
+mirrors are still compared. Access checks on the game website use the same live
+browser session and resume automatically once cleared. Logins,
 required payments and age confirmation are always yours.
 
 After transfer, the AI calls preparation tools and selects an observed playable
@@ -466,6 +501,8 @@ A PARTICULAR PURPOSE, to the extent permitted by applicable law. See
 ## Store verification recovery (0.1.4)
 
 Complete website checks in the Store browser or full Firefox, then return to the launcher. Discovery resumes from its checkpoint automatically. Pages per batch controls indexing batches; pending pages and categories continue while Store remains open. Download follows the selected game through supported external hosts and prepares portable archives into Library. The local vision agent can attempt visible checks; refused automation and unsolved challenges remain interactive.
+
+The launcher Firefox includes Cookie-Editor beside uBlock Origin. To transfer your own website cookies, export them as JSON with Cookie-Editor in your regular browser. In the launcher, choose **Take control of Firefox**, open the same website, click the Cookie-Editor toolbar button, and choose **Import**. Paste the JSON, confirm Import, and reload the website. Choose **Return control to launcher** afterward to resume work using that browser session.
 
 ## Saved Store indexing (0.1.6)
 

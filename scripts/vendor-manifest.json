@@ -3,11 +3,11 @@
   "components": [
     {
       "id": "firefox",
-      "name": "Mozilla Firefox ESR",
-      "version": "140.17.0esr",
+      "name": "Mozilla Firefox",
+      "version": "156.0.1",
       "license": "MPL-2.0",
-      "url": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/140.17.0esr/linux-x86_64/en-US/firefox-140.17.0esr.tar.xz",
-      "sha256": "86d049070ad80b74d8e674793e22d28923b4a7a1da06b4d65402f91c67a10314",
+      "url": "https://archive.mozilla.org/pub/firefox/releases/156.0.1/linux-x86_64/en-US/firefox-156.0.1.tar.xz",
+      "sha256": "7405c0487fa3e517c1e20e5aec0ed14014185dad6357d99a59b53f65acb10ed6",
       "extract": "tar",
       "dest": "firefox",
       "stripComponents": 1
@@ -30,6 +30,15 @@
       "url": "https://github.com/gorhill/uBlock/releases/download/1.75.0/uBlock0_1.75.0.firefox.signed.xpi",
       "sha256": "5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287",
       "dest": "extensions/uBlock0@raymondhill.net.xpi"
+    },
+    {
+      "id": "cookie-editor",
+      "name": "Cookie-Editor",
+      "version": "1.13.0",
+      "license": "GPL-3.0-only",
+      "url": "https://addons.mozilla.org/firefox/downloads/file/4241002/cookie_editor-1.13.0.xpi",
+      "sha256": "3d6fd83a8343dfa5e4461d83c2856264fb74b36b1c165305168d013f4831dbb0",
+      "dest": "extensions/{c3c10168-4186-445c-9c5b-63f12b8e2c87}.xpi"
     },
     {
       "id": "llama-cpu",

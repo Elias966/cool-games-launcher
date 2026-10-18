@@ -77,6 +77,7 @@ export const settingsPatch = z
     language: z.enum(['en', 'ar']),
     clearBrowserDataOnExit: z.boolean(),
     sendDoNotTrack: z.boolean(),
+    browserMode: z.enum(['ai', 'normal', 'installed']),
   })
   .partial()
   .strict();
@@ -410,7 +411,7 @@ export interface Events {
   'ai:status': AiStatus;
   'models:changed': ModelList;
   'browser:snapshot': BrowserSnapshot & { policyRevision: number };
-  'browser:humanMode': { active: boolean };
+  'browser:humanMode': { active: boolean; automaticReturn?: boolean };
   'browser:closed': { reason: string | null };
   'browser:attention': { downloadId: number; sourceId?: number; message: string; requiresUser?: boolean };
   'browser:verificationResolved': { sourceId: number };

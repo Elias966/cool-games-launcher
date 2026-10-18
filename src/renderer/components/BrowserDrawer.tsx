@@ -149,7 +149,7 @@ export function BrowserDrawer() {
       </div>
 
       <div className="drawer__prompt" role="status">
-        <div className="drawer__prompt-body"><p>{browser.humanMode ? t('Firefox is open for direct, full-speed browsing. AI is paused.') : t('Take control of the live Firefox page for smooth browsing and website verification. Your page and form input stay in place.')}</p></div>
+        <div className="drawer__prompt-body"><p>{browser.humanMode ? browser.automaticReturn ? t('Complete the website check in Firefox. The window hides and work resumes automatically after verification.') : t('Firefox is open for direct, full-speed browsing. AI is paused.') : t('Take control of the live Firefox page for smooth browsing and website verification. Your page and form input stay in place.')}</p></div>
         <Button variant="primary" size="sm" onClick={() => void attempt(() => api.invoke(browser.humanMode ? 'browser:humanFinish' : 'browser:humanStart'))}>
           {browser.humanMode ? t('Return control to launcher') : t('Take control of Firefox')}
         </Button>

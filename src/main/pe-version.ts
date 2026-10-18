@@ -80,14 +80,14 @@ function resourceVersion(data: Buffer, language: number | null): PeVersionResour
 
 // A packaged Unreal game's EXE often reports the *engine* build (Bodycam, for
 // example, reports 5.5.4.0 and ++UE5+Release-5.5). That is not the game version.
-const ENGINE = /\+\+UE\d|unreal\s*engine|unrealengine|bootstrap\s*packaged\s*game|\bUE[45]Game\b|\bUnityPlayer\b|Unity Technologies/i;
+const ENGINE = /\+\+UE\d|\bUE[45]-CL-|unreal\s*engine|unrealengine|bootstrap\s*packaged\s*game|\bUE[45]Game\b|\bUnityPlayer\b|Unity Technologies/i;
 const HELPER = /(?:^|[\\/ _.-])(?:unitycrashhandler\d*|crashreportclient|crashpad_handler|unins\d*|uninstall|setup|installer|vc_redist[^\\/]*|dxsetup|ue[45]prereq[^\\/]*|easyanticheat[^\\/]*|battleye[^\\/]*|eosoverlayrenderer[^\\/]*|steamwebhelper|steamservice|cefsharp[^\\/]*|libcef)(?:[\\/ _.-]|$)|visual c\+\+|directx setup|anti.?cheat|chromium embedded/i;
 
 function numericVersion(value: string | null | undefined): string | null {
   const match = /^\s*v?(\d+(?:[.,]\s*\d+){1,3}[a-z]?)\s*$/i.exec(value ?? '');
   if (!match) return null;
   const version = match[1].replace(/,\s*/g, '.').toLowerCase();
-  if (/^0(?:\.0)+$/.test(version) || /^1\.0\.0(?:\.0)?$/.test(version)) return null;
+  if (/^0(?:\.0)+$/.test(version) || /^1(?:\.0){1,3}$/.test(version)) return null;
   return version;
 }
 
@@ -99,7 +99,7 @@ function sameVersion(a: string, b: string): boolean {
 function selectGameVersion(resources: PeVersionResource[], fileName: string): Pick<PeVersionMetadata, 'gameVersion' | 'rejectionReason'> {
   const tables = resources.flatMap(r => r.stringTables.map(t => t.values));
   const provenance = [fileName, ...tables.flatMap(t => Object.values(t))].join('\n');
-  if (ENGINE.test(provenance)) return { gameVersion: null, rejectionReason: 'Executable reports engine metadata, not the game version' };
+  if (ENGINE.test(provenance) || tables.some(t => Object.keys(t).some(k => /^unity[ _-]*version$/i.test(k)))) return { gameVersion: null, rejectionReason: 'Executable reports engine metadata, not the game version' };
   if (HELPER.test(provenance) || /\.(?:dll|sys|ocx)$/i.test(fileName) || tables.some(t => /\.(?:dll|sys|ocx)$/i.test(t.OriginalFilename ?? ''))) {
     return { gameVersion: null, rejectionReason: 'Executable is a helper, installer, or runtime component' };
   }

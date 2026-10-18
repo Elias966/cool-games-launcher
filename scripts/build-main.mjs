@@ -3,6 +3,7 @@
 // workers with esbuild. Native or WASM-loading packages stay external and are
 // shipped in node_modules by electron-builder.
 import './build-ooz.mjs';
+import './stage-firefox-bridge.mjs';
 import { build, context } from 'esbuild';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

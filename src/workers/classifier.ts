@@ -61,10 +61,15 @@ export async function createClassifier(modelPath: string, threads: number, log: 
     }
   };
 
-  const run = async (img: any, temps: any[]) => {
+  const run = async (img: any, temps: any[], signal?: AbortSignal) => {
     const data = new Float32Array(3 * SIZE * SIZE);
     toTensorData(img, data, temps);
-    const out = await exclusive(() => session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, SIZE, SIZE]) }));
+    const out = await exclusive(() => {
+      // A tab switch can cancel dozens of queued screenshots. Do not keep
+      // running them ahead of the next website's live verification work.
+      if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { code: 'cancelled' });
+      return session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, SIZE, SIZE]) });
+    });
     const logits = out[session.outputNames[0]].data as Float32Array;
     const m = Math.max(logits[0], logits[1]);
     const sfw = Math.exp(logits[0] - m);
@@ -89,7 +94,7 @@ export async function createClassifier(modelPath: string, threads: number, log: 
           temps.push(thumb);
           if (thumb.width < 8 || thumb.height < 8) throw new Error('Image too small');
           cancelled();
-          scores.push(await run(thumb, temps));
+          scores.push(await run(thumb, temps, signal));
         }
         if (regions?.length) {
           const image = vips.Image.newFromBuffer(buf, '', { access: 'random', fail: false });
@@ -106,7 +111,7 @@ export async function createClassifier(modelPath: string, threads: number, log: 
             cancelled();
             const crop = image.crop(x, y, w, h);
             temps.push(crop);
-            scores.push(await run(crop, temps));
+            scores.push(await run(crop, temps, signal));
           }
         }
         return scores;

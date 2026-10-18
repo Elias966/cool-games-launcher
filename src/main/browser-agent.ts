@@ -7,7 +7,7 @@ import type {AiService,AgentMessage,AgentTool} from './ai';
 import type {BrowserClient,AgentBrowserContext as BrowserContext} from './browser-client';
 import type {StoreSession,SessionToken} from './store-session';
 import {CancelledError} from '@shared/worker-protocol';
-import {isCatalogNavigation,isDownloadControl,isFileUrl} from '@shared/download-evidence';
+import {isCatalogNavigation,isDownloadControl,isFileUrl,isTorrentDownload} from '@shared/download-evidence';
 import {faraSystemPrompt} from '@shared/fara-chat';
 import {hostOf,siteKey} from '@shared/urls';
 import { tm } from './i18n';
@@ -18,6 +18,7 @@ export type ComputerAction=z.infer<typeof actionSchema>;
 export interface BrowserAgentAction {action:ComputerAction;context:BrowserContext;width:number;height:number;epoch:number;turn:number;taskKey:string;goal:string;agentRole:'browsing'|'computer'}
 export interface BrowserRouteConstraint { pageUrl: string; url: string; alternatives: string[]; blockedControls: number[]; gamePageUrl?: string }
 export class BrowserActionRejectedError extends Error { override readonly name='BrowserActionRejectedError'; }
+export class BrowserObservationChangedError extends Error { override readonly name='BrowserObservationChangedError'; }
 const forbidden=/\b(?:buy|purchase|checkout|subscribe|sign ?(?:in|up)|log ?in|register|advertisement|sponsored|browser extension|driver updater|download manager)\b/i;
 const browserKeys=['Enter','Tab','Escape','Backspace','ArrowUp','ArrowDown','PageUp','PageDown','Home','End'];
 // Advertise the tools this constrained browser actually implements. The native
@@ -73,10 +74,11 @@ export class BrowserAgent {
     if(state.pending)throw Error('The previous browser action has not completed');
     const shot=await this.browser.snapshot(context,false,token.signal,false);
     this.session.assertLive(token);
+    if(context==='interactive'&&shot.url.split('#')[0]!==ex.url.split('#')[0])throw new BrowserObservationChangedError('The download page changed while capturing its screenshot. Read the new page before choosing an action.');
     const image={type:'image_url' as const,image_url:{url:'data:image/png;base64,'+shot.png}};
     if(this.agentRole==='browsing'){
       const notes=[state.observation,observation].filter(Boolean).join('\n');state.observation=undefined;
-      if(state.task){state.messages.push({role:'user',content:[image,{type:'text',text:state.task+(notes?'\n'+notes:'')}]});state.task=undefined;}
+      if(state.task){state.messages.push({role:'user',content:[image,{type:'text',text:state.task+'\nCurrent URL: '+shot.url.slice(0,200)+(notes?'\n'+notes:'')}]});state.task=undefined;}
       else state.messages.push({role:'user',content:[image,{type:'text',text:`Current URL: ${shot.url.slice(0,100)}\n${notes?notes+'\n':''}Here is the next screenshot. Think about what to do next.`}]});
     }else{
       if(observation)state.messages.push({role:'user',content:'<observation>'+observation+'</observation>'});
@@ -122,13 +124,15 @@ export class BrowserAgent {
     }
   }
 
-  async execute(step:BrowserAgentAction,ex:PageExtract,token:SessionToken,allowDownload:boolean, route?:BrowserRouteConstraint):Promise<'continue'|'done'|'human'>{
+  async execute(step:BrowserAgentAction,ex:PageExtract,token:SessionToken,allowDownload:boolean, route?:BrowserRouteConstraint,onClick?:(control:ExtractControl)=>void):Promise<'continue'|'done'|'human'>{
     this.session.assertLive(token,'Fara browser action');
     if(step.epoch!==token.epoch)throw new CancelledError('Stale browser action');
     const pending=this.tasks.get(step.taskKey);
     if(!pending?.pending||pending.turn!==step.turn)throw Error('This browser action has already completed');
     const {action:a,context,width,height}=step;
     const assertRoute = (control?: ExtractControl, url?: string) => {
+      if(control&&!control.inDialog&&ex.controls.some(c=>c.inDialog)&&isDownloadControl(control))throw new BrowserActionRejectedError('The download popup is open. Choose its direct download control instead of the covered page button. Nothing was clicked.');
+      if(isTorrentDownload(control?.text??'',url))throw new BrowserActionRejectedError('Torrent downloads are unsupported. Choose the direct download option; nothing was clicked.');
       if (allowDownload && route?.gamePageUrl && hostOf(ex.url) === hostOf(route.gamePageUrl) && control && isSearchField({label: control.text})) throw new BrowserActionRejectedError('This game already has a saved page. Do not open the site search during transfer. Nothing was clicked.');
       if (allowDownload && route?.gamePageUrl && url && isSiteBrowseUrl(url, route.gamePageUrl)) throw new BrowserActionRejectedError('The game is already indexed. Use its saved game page and download links; homepage/search navigation is not needed. Nothing was opened.');
       if (!route || ex.url.split('#')[0] !== route.pageUrl.split('#')[0]) return;
@@ -141,6 +145,7 @@ export class BrowserAgent {
         const target=await this.browser.inspectPoint(context,p.x,p.y,token.signal);
         if(process.env.CGL_DEBUG)console.log('[agent:target]',JSON.stringify({x:p.x,y:p.y,w:width,h:height,text:target.text?.slice(0,80),index:target.index,download:target.download}));
         this.session.assertLive(token);
+        if(isTorrentDownload(target.text,target.href))throw new BrowserActionRejectedError('Torrent downloads are unsupported. Choose the direct download option; nothing was clicked.');
         if(target.password||forbidden.test(target.text)||target.untrustedRegion)throw new BrowserActionRejectedError('Browser tool rejected a login, advertisement or unrelated page region. Nothing was clicked. Observed target: '+target.text);
         const observed=ex.controls.find(c=>c.i===target.index);
         if (allowDownload && route?.gamePageUrl && hostOf(ex.url) === hostOf(route.gamePageUrl) && isSearchField({label: target.text})) throw new BrowserActionRejectedError('This game already has a saved page. Do not open the site search during transfer. Nothing was clicked.');
@@ -149,6 +154,7 @@ export class BrowserAgent {
         if(!allowDownload&&target.download)throw Error('Discovery may inspect games but cannot start a transfer');
         const repeats=a.action==='double_click'?2:a.action==='triple_click'?3:1;
         for(let i=0;i<repeats;i++){this.session.assertLive(token);await this.browser.pointer(context,p.x,p.y,a.action==='right_click'?'right':'left',token.signal);}
+        if(observed&&a.action==='left_click')onClick?.(observed);
       }else if(a.action==='click_element'){
         const target=ex.controls.find(c=>c.i===a.element);
         assertRoute(target, target?.href ?? undefined);
@@ -156,6 +162,7 @@ export class BrowserAgent {
         if(target.inContent===false||forbidden.test(target.text)||isCatalogNavigation(ex,target))throw new BrowserActionRejectedError('Computer tool rejected an unrelated game, login or advertisement. Nothing was clicked. Observed target: '+target.text);
         if(!allowDownload&&target.href&&isFileUrl(target.href))throw new BrowserActionRejectedError('Discovery cannot start a file transfer. Nothing was clicked.');
         await this.browser.clickElement(context,target.i,token.signal);
+        onClick?.(target);
       }else if(a.action==='mouse_move'||a.action==='left_click_drag'){
         const p=point();await this.browser.movePointer(context,p.x,p.y,a.action==='left_click_drag',token.signal);
       }else if(a.action==='scroll'||a.action==='hscroll'){

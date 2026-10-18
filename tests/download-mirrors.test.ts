@@ -3,14 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
-import { downloadEvidence } from '../src/shared/download-evidence';
+import { downloadEvidence,scriptMirrorControl } from '../src/shared/download-evidence';
 import { extractPage, type PageExtract } from '../src/shared/page-extract';
 vi.mock('electron', () => ({ app: { isPackaged:false,getAppPath:()=>process.cwd() },shell:{} }));
 import { openDb } from '../src/main/db';
 import { CatalogRepo, DownloadsRepo, SourcesRepo, toDownloadItem } from '../src/main/repos';
 import { StoreSession } from '../src/main/store-session';
 import { Resolver } from '../src/main/resolver';
-import { sameMirrorFile, mirrorRoutes, mirrorsForPart, type MeasuredMirror } from '../src/main/download-mirrors';
+import { sameMirrorFile, mirrorRoutes, resumeMirrorRoutes, mirrorsForPart, type MeasuredMirror } from '../src/main/download-mirrors';
 import type { DownloadCandidate } from '../src/shared/types';
 const cleanup:Array<()=>void>=[];
 afterEach(()=>cleanup.splice(0).reverse().forEach(f=>f()));
@@ -39,6 +39,18 @@ function setup(routes=[candidate('slow.test'),candidate('fast.test')]){
  return {dir,db,session,token,deps,resolver,resolve,d,downloadsRepo,catalog,browser,downloadWorker,downloads,agent,current:()=>current};
 }
 describe('fastest working mirror selection',()=>{
+ it('follows a sole saved observed link without visual searching, then compares all hosts revealed by its link hub',async()=>{
+  const hub={url:'https://hub.test/build',label:'Download',fileName:null,platform:'windows' as const,sizeText:null};
+  const t=setup([hub]);
+  const hosts=['https://buzzheavier.com/abcdefgh','https://vikingfile.com/f/abcdefgh','https://megadb.net/abcdefgh','https://uploadhaven.com/download/abcdefgh'];
+  const root=page(`<a href="${hub.url}">Download</a>`),links=page(hosts.map((url,i)=>`<a href="${url}">Mirror ${i+1}</a>`).join(''),hub.url);
+  t.browser.extract.mockImplementation(async()=>t.current()===sourceUrl?root:t.current()===hub.url?links:page(`<a href="https://cdn.test/${new URL(t.current()).hostname}/orbit.zip">Download orbit.zip</a>`,t.current()));
+  t.downloadWorker.call.mockImplementation(async(method,args)=>method==='probe'?{isFile:true,fileName:'orbit.zip',totalBytes:1000000}:sample(args.url.includes('uploadhaven.com')?9000:100));
+  await t.resolve();
+  expect(t.agent.transfer.mock.calls.every(c=>c[0].url!==sourceUrl&&c[0].url!==hub.url)).toBe(true);
+  expect(t.downloadWorker.call.mock.calls.filter(c=>c[0]==='benchmarkMirror')).toHaveLength(4);
+  expect(t.downloadsRepo.get(t.d.id)?.url).toContain('/uploadhaven.com/orbit.zip');
+ });
  it('samples every observed mirror and selects the fastest equivalent file, not a faster different part',async()=>{
   const t=setup([candidate('slow.test'),candidate('fast.test'),candidate('broken.test'),candidate('wrong-part.test','orbit.part2.rar')]);
   t.downloadWorker.call.mockImplementation(async(method,args)=>{if(method==='probe')return {isFile:true,fileName:'orbit.zip',totalBytes:1000000} as any;if(args.url.includes('broken'))throw Error('HTTP 503');if(args.url.includes('wrong-part'))return sample(50000,'orbit.part2.rar','different');return sample(args.url.includes('fast')?2000:200);});
@@ -200,7 +212,7 @@ describe('dead host recovery',()=>{
   (t.browser as any).clickElement=vi.fn(async()=>t.browser.navigate('interactive',dead.url));
   t.agent.transfer.mockResolvedValue({kind:'click',index:0});
   await expect(t.resolve()).rejects.toThrow(/No other download link/);
-  expect(t.current()).toBe(sourceUrl);expect(t.agent.transfer).toHaveBeenCalledOnce();expect(t.downloads.handoff).not.toHaveBeenCalled();
+  expect(t.current()).toBe(sourceUrl);expect(t.agent.transfer).not.toHaveBeenCalled();expect(t.downloads.handoff).not.toHaveBeenCalled();
  });
  it('recovers an old checkpoint on a dead host and chooses an alternative without retrying the dead link',async()=>{
   const dead=landing('dead.test'),live=landing('live.test');const t=setup([dead,live]);const extract=t.browser.extract.getMockImplementation()!;
@@ -359,12 +371,61 @@ it('keeps the links position found by AI scrolling inside a script-mirror trial'
 });
 
 describe('verification during mirror comparisons',()=>{
- it('pauses on the exact host without rejecting it or searching, then resumes it after restart',async()=>{
+ it('returns to a saved hub when its first click opens a CAPTCHA host before the other mirrors appear',async()=>{
+  const hub={url:'https://hub.test/build',label:'Download',fileName:null,platform:'windows' as const,sizeText:null},t=setup([hub]);let revealed=false;
+  const links=page('<a href="https://fast.test/orbit.zip">Download fast</a><a href="https://slow.test/orbit.zip">Download slow</a>',hub.url);
+  t.browser.extract.mockImplementation(async()=>t.current()===sourceUrl?page(`<a href="${hub.url}">Download</a>`):t.current()===hub.url?revealed?links:page('<button>Continue</button>',hub.url):t.current().includes('gate.test')?page('<div class="g-recaptcha"></div>',t.current()):page('<a href="https://fast.test/orbit.zip">Download orbit.zip</a>',t.current()));
+  t.agent.transfer.mockImplementation(async ex=>ex.url===hub.url&&!revealed?{kind:'click',index:ex.controls[0].i}:{kind:'download',index:0});
+  (t.browser as any).clickElement=vi.fn(async()=>{revealed=true;await t.browser.navigate('interactive','https://gate.test/file/token');});
+  await t.resolve();
+  expect(t.downloadsRepo.get(t.d.id)?.state).toBe('active');
+  expect(t.browser.navigate.mock.calls.filter(c=>c[1]===sourceUrl)).toHaveLength(1);
+  expect((t.browser as any).returnToPage.mock.calls.some((c:any[])=>c[1]===hub.url)).toBe(true);
+  expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.routes).toHaveLength(2);
+ });
+ it('skips a CAPTCHA when the visual agent asks for human verification before the DOM reports it',async()=>{
+  const first={...candidate('gate.test','file/token'),fileName:null},t=setup([first,candidate('fast.test')]);
+  t.agent.transfer.mockResolvedValue({kind:'computer',computer:{action:{action:'ask_user',question:'Please complete this CAPTCHA'}}} as any);
+  (t.agent as any).actBrowser=vi.fn(async()=> 'human');
+  await t.resolve();expect(t.downloads.handoff.mock.calls[0][1]).toBe('https://fast.test/orbit.zip');expect(t.deps.openDrawer.mock.calls.some(c=>c[1]===true)).toBe(false);
+ });
+ it('continues with another mirror when the host closes its tab without transferring a file',async()=>{
+  const first={...candidate('closed.test','file/token'),fileName:null},t=setup([first,candidate('fast.test')]),extract=t.browser.extract.getMockImplementation()!;
+  t.browser.extract.mockImplementation(async()=>t.current()===first.url?{...await extract(),navigationRecovery:'closed-tab'}:extract());
+  await t.resolve();expect(t.downloads.handoff.mock.calls[0][1]).toBe('https://fast.test/orbit.zip');expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.failures[0].reason).toContain('closed its tab');
+ });
+ it('skips CAPTCHA hosts and keeps testing the remaining mirrors without asking the user',async()=>{
+  const routes=[{...candidate('gate-a.test','file/token'),fileName:null},{...candidate('gate-b.test','file/token'),fileName:null},candidate('fast.test')],t=setup(routes);
+  const extract=t.browser.extract.getMockImplementation()!,recoverGamePage=vi.fn();
+  t.browser.extract.mockImplementation(async()=>/^https:\/\/gate-/.test(t.current())?page('<h1>Verify you are human</h1><div class="g-recaptcha"></div>',t.current()):extract());
+  await t.resolve(new Resolver({...t.deps,recoverGamePage} as never));
+  expect(t.downloadsRepo.get(t.d.id)?.state).toBe('active');expect(t.downloads.handoff.mock.calls[0][1]).toBe(routes[2].url);
+  const comparison=t.downloadsRepo.get(t.d.id)?.resolution?.mirrors;expect(comparison?.tested).toHaveLength(3);expect(comparison?.failures).toHaveLength(2);expect(comparison?.failures.every(f=>f.reason.includes('CAPTCHA'))).toBe(true);
+  expect(t.deps.openDrawer.mock.calls.some(c=>c[1]===true)).toBe(false);expect(recoverGamePage).not.toHaveBeenCalled();
+ });
+ it('finishes with a clear failure when every file host needs CAPTCHA, without waiting or searching',async()=>{
+  const t=setup([{...candidate('gate-a.test','file/token'),fileName:null},{...candidate('gate-b.test','file/token'),fileName:null}]),extract=t.browser.extract.getMockImplementation()!,recoverGamePage=vi.fn();
+  t.browser.extract.mockImplementation(async()=>t.current()!==sourceUrl?page('<div class="g-recaptcha"></div>',t.current()):extract());
+  await expect(t.resolve(new Resolver({...t.deps,recoverGamePage} as never))).rejects.toThrow(/CAPTCHA/);
+  expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.tested).toHaveLength(2);expect(t.deps.openDrawer.mock.calls.some(c=>c[1]===true)).toBe(false);expect(recoverGamePage).not.toHaveBeenCalled();
+ });
+ it('does not automatically retry the CAPTCHA hosts after every available host was skipped',async()=>{
+  const t=setup([{...candidate('gate-a.test','file/token'),fileName:null},{...candidate('gate-b.test','file/token'),fileName:null}]),extract=t.browser.extract.getMockImplementation()!;
+  t.browser.extract.mockImplementation(async()=>t.current()!==sourceUrl?page('<div class="g-recaptcha"></div>',t.current()):extract());
+  t.resolver.enqueue(t.d.id);await vi.waitFor(()=>expect(t.downloadsRepo.get(t.d.id)?.state).toBe('failed'));t.resolver.shutdown();
+  expect(t.browser.navigate.mock.calls.filter(c=>/^https:\/\/gate-/.test(c[1]))).toHaveLength(2);
+  expect(t.downloadsRepo.get(t.d.id)?.errorDetail).toContain('CAPTCHA');expect(t.deps.openDrawer.mock.calls.some(c=>c[1]===true)).toBe(false);
+ });
+ it('still hands the game website CAPTCHA to the human',async()=>{
+  const t=setup();t.browser.extract.mockResolvedValue(page('<div class="g-recaptcha"></div>'));
+  await t.resolve();expect(t.downloadsRepo.get(t.d.id)?.state).toBe('needs-user');expect(t.deps.openDrawer).toHaveBeenLastCalledWith(expect.any(String),true,'captcha');expect(t.downloads.handoff).not.toHaveBeenCalled();
+ });
+ it('pauses for host login without rejecting it or searching, then resumes it after restart',async()=>{
   const first={...candidate('check.test','file/token'),fileName:null};
   const t=setup([first,candidate('fast.test')]);
   const original=t.browser.extract.getMockImplementation()!;
   let gated=true;
-  t.browser.extract.mockImplementation(async()=>t.current()===first.url&&gated?page('<h1>Verify you are human</h1><div class="g-recaptcha"></div>',first.url):original());
+  t.browser.extract.mockImplementation(async()=>t.current()===first.url&&gated?page('<form><input type="password"></form>',first.url):original());
   (t.browser as any).snapshot=vi.fn(async()=>({url:t.current()}));
   const recoverGamePage=vi.fn();
   const resolver=new Resolver({...t.deps,recoverGamePage} as never);
@@ -375,7 +436,7 @@ describe('verification during mirror comparisons',()=>{
   expect(paused.resolution?.mirrors?.paused).toEqual({route:first.url,pageUrl:first.url});
   expect(paused.resolution?.mirrors?.failures).toEqual([]);
   expect(paused.resolution?.mirrors?.tested).not.toContain(first.url);
-  expect(t.deps.openDrawer).toHaveBeenLastCalledWith(expect.any(String),true,'captcha');
+  expect(t.deps.openDrawer).toHaveBeenLastCalledWith(expect.any(String),true,'login');
   expect(t.agent.verify).not.toHaveBeenCalled();
   expect(recoverGamePage).not.toHaveBeenCalled();
   // A fresh resolver reads only the durable checkpoint, with the verified tab intact.
@@ -434,7 +495,7 @@ it('does not attribute a retained first-host transfer to a second host after ver
  const original={target:'/isolated/orbit.zip',url:'blob:https://browser.test/token',speedBps:500,currentBytes:20000,totalBytes:1000000,stopped:false,succeeded:false};
  t.browser.takeDownloads.mockImplementation(async()=>{if(t.current().includes('browser.test'))started=true;return started?[original]:[];});
  const extract=t.browser.extract.getMockImplementation()!;
- t.browser.extract.mockImplementation(async()=>t.current()===second.url&&gated?page('<title>Verify you are human</title>',second.url):extract());
+ t.browser.extract.mockImplementation(async()=>t.current()===second.url&&gated?page('<form><input type="password"></form>',second.url):extract());
  await t.resolve();expect(t.downloadsRepo.get(t.d.id)?.state).toBe('needs-user');expect(t.downloads.adoptBrowserDownload).not.toHaveBeenCalled();
  gated=false;t.downloadsRepo.update(t.d.id,{state:'resolving'});await t.resolve(new Resolver(t.deps as never));
  const samples=t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.samples;
@@ -446,4 +507,61 @@ it('does not attribute a retained first-host transfer to a second host after ver
 it('keeps third and fourth host links when the AI control observation was truncated', () => {
  const ex=page('<a href="https://megadb.net/aaaaaaaaaaaa">Mirror A</a><a href="https://bzzhr.to/bbbbbbbbbbbb">Mirror B</a><a href="https://gofile.io/d/cccccc">Mirror C</a><a href="https://1fichier.com/?dddddddddddd">Mirror D</a>');ex.controls=ex.controls.slice(0,2);
  expect(downloadEvidence(ex).map(c=>new URL(c.url).hostname)).toEqual(['megadb.net','bzzhr.to','gofile.io','1fichier.com']);
+});
+
+describe('Script mirror control identity',()=>{
+ it('retains tested host identities and adds a new host whose DOM ID was reused',()=>{
+  const initial=page('<button>Vikingfile 1</button><button>FileKeeper 1</button>');
+  const changed=page('<button>Datavaults 1</button><button>Vikingfile 1</button><button>FileKeeper 1</button>');
+  const saved=downloadEvidence(initial),merged=resumeMirrorRoutes(saved,downloadEvidence(changed));
+  expect(merged).toHaveLength(3);expect(new Set(merged.map(r=>r.url)).size).toBe(3);
+  expect(merged.find(r=>r.label==='Vikingfile 1')?.url).toBe(saved.find(r=>r.label==='Vikingfile 1')?.url);
+  expect(scriptMirrorControl(changed,merged.find(r=>r.label==='Datavaults 1')!)?.i).toBe(changed.controls.find(c=>c.text==='Datavaults 1')?.i);
+ });
+ it.each([false,true,'paused'])('selects all five visible hosts by their current labels after a banner disappears (restart: %s)',async(restart)=>{
+  const hub='https://hub.test/orbit',hosts=['Datavaults','FileKeeper','FileQ','Vikingfile','Akirabox'];
+  const t=setup([{url:hub,label:'Download',fileName:null,platform:null,sizeText:null}]);let banner=true;const clicked:string[]=[];
+  t.browser.extract.mockImplementation(async()=>{
+   if(t.current()===sourceUrl)return page(`<a href="${hub}">Download</a>`);
+   if(t.current()===hub){const ex=page(`${banner?'<button>Dismiss warning</button>':''}${hosts.map(h=>`<button>${h} 1</button>`).join('')}`,hub);ex.controls.forEach(c=>c.inViewport=true);return ex;}
+   return page(`<a href="https://cdn.test/${new URL(t.current()).pathname}/orbit.zip">Download orbit.zip</a>`,t.current());
+  });
+  (t.browser as any).clickElement=vi.fn(async(ctx:string,index:number)=>{
+   const ex=await t.browser.extract(),control=ex.controls.find(c=>c.i===index)!;
+   clicked.push(control.text);banner=false;
+   await t.browser.navigate(ctx,'https://host.test/'+control.text.split(' ')[0].toLowerCase());
+  });
+  const worker=t.downloadWorker.call.getMockImplementation()!;
+  let attempts=0,interrupted=false;
+  t.downloadWorker.call.mockImplementation(async(method,args,signal)=>{
+   if(method!=='benchmarkMirror')return worker(method,args,signal);
+   if(restart&&!interrupted&&++attempts===2){interrupted=true;t.session.leave();throw Object.assign(Error('Interrupted fixture'),{name:'AbortError'});}
+   return sample(args.url.includes('akirabox')?9000:100);
+  });
+  if(restart){
+   await expect(t.resolve()).rejects.toThrow(/stale/);expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.samples).toHaveLength(1);
+   if(restart==='paused'){
+    const checkpoint=t.downloadsRepo.get(t.d.id)!.resolution!;
+    checkpoint.mirrors!.paused={route:checkpoint.mirrors!.routes[1].url,pageUrl:t.current()};checkpoint.mirrors!.sourceUrl=sourceUrl;delete checkpoint.linkPage;
+    t.downloadsRepo.update(t.d.id,{resolution:checkpoint});
+   }
+   const session=new StoreSession(),token=session.enter();cleanup.push(()=>session.leave());const before=t.browser.navigate.mock.calls.length;
+   await t.resolve(new Resolver({...t.deps,session} as never),token);
+   expect(t.browser.navigate.mock.calls.slice(before).map(c=>c[1])).not.toContain(sourceUrl);
+  }else await t.resolve();
+  expect(clicked).toHaveLength(restart&&restart!=='paused'?6:5);expect([...new Set(clicked)].sort()).toEqual(hosts.map(h=>h+' 1').sort());
+  expect(t.downloadWorker.call.mock.calls.filter(c=>c[0]==='benchmarkMirror')).toHaveLength(restart?6:5);
+  expect(t.downloadsRepo.get(t.d.id)?.url).toContain('/akirabox/orbit.zip');
+ });
+ it('keeps the requested host when a dismissed banner shifts all numeric control IDs',()=>{
+  const initial=page('<button>Dismiss warning</button><button>Datavaults 1</button><button>FileKeeper 1</button><button>Vikingfile 1</button>');
+  const wanted=downloadEvidence(initial).find(c=>c.label==='Vikingfile 1')!;
+  const changed=page('<button>Datavaults 1</button><button>FileKeeper 1</button><button>Vikingfile 1</button><a href="https://wrong-host.test/file">Download</a>');
+  expect(scriptMirrorControl(changed,wanted)?.text).toBe('Vikingfile 1');expect(scriptMirrorControl(changed,wanted)?.i).not.toBe(Number(wanted.url.match(/(\d+)$/)![1]));
+ });
+ it('does not guess when a requested script host disappears or has duplicate labels',()=>{
+  const route={url:sourceUrl+'#cgl-control-2',label:'FileKeeper 1',fileName:null,platform:null,sizeText:null};
+  expect(scriptMirrorControl(page('<button>Datavaults 1</button>'),route)).toBeNull();
+  expect(scriptMirrorControl(page('<button>FileKeeper 1</button><button>FileKeeper 1</button>'),route)).toBeNull();
+ });
 });

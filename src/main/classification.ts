@@ -100,9 +100,12 @@ export class ClassificationService {
     const cached = this.images.get(url, CLASSIFIER_VERSION);
     let file: string | null = this.artwork.fileFor(url);
     if (cached && !cached.failed && file) return { score: cached.score, file };
+    const started = Date.now();
     try {
       file = await this.artwork.fetch(url, referer, signal);
+      const fetched = Date.now();
       const [score] = cached && !cached.failed ? [cached.score!] : await this.ai.classify({ path: this.artwork.path(file) }, signal);
+      if (process.env.CGL_DEBUG) console.log('[verification] image', { fetchMs: fetched - started, modelAndQueueMs: Date.now() - fetched, cachedScore: !!cached && !cached.failed });
       this.images.set(url, CLASSIFIER_VERSION, score);
       return { score, file };
     } catch (e) {

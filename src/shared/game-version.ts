@@ -3,9 +3,9 @@
 // "updated" date). Comparing the fingerprint recorded at install time with the
 // page's current one tells whether an installed game has an update.
 
-export type VersionScheme = 'semantic' | 'steam-build' | 'gog-build' | 'epic-build' | 'developer-build' | 'site-build';
+export type VersionScheme = 'semantic' | 'steam-build' | 'gog-build' | 'epic-build' | 'developer-build' | 'site-build' | 'date';
 export interface VersionIdentifier { version: string; scheme: VersionScheme; source: string }
-export interface VersionInspection { state: 'identified' | 'unresolved' | 'incomparable'; detail: string; checkedAt: string }
+export interface VersionInspection { state: 'identified' | 'unresolved' | 'incomparable'; detail: string; checkedAt: string; revision?: number }
 export interface VersionFingerprint {
   scheme?: VersionScheme;
   /** "1.2.3" or "build 15623144", from the title, file names or a labelled line. */
@@ -96,6 +96,24 @@ function isoDate(v: string | null | undefined): string | null {
 
 const normSize = (s: string) => s.toLowerCase().replace(/\s+/g, '').replace(/,/g, '.');
 
+function versionDate(v: string): number | null {
+  const parts = /^(\d{1,4})[.-](\d{1,2})[.-](\d{1,4})$/.exec(v);
+  if (!parts) return null;
+  const [, a, b, c] = parts.map(Number);
+  const [year, month, day] = a >= 1990 ? [a, b, c] : c >= 1990 ? [c, b, a] : [0, 0, 0];
+  if (year < 1990 || year > 2200 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date.getTime() : null;
+}
+
+/** Legacy fingerprints may have called dates/large site integers semantic. */
+export function versionScheme(f: Pick<VersionFingerprint, 'version' | 'scheme'>): VersionScheme | undefined {
+  if (!f.version) return f.scheme;
+  if (versionDate(f.version) !== null) return 'date';
+  if (/^\d{4,}$/.test(f.version)) return f.scheme && f.scheme !== 'semantic' ? f.scheme : 'site-build';
+  return f.scheme ?? (/^build /.test(f.version) ? 'site-build' : 'semantic');
+}
+
 export function makeFingerprint(input: {
   titles: Array<string | null | undefined>;
   text?: string | null;
@@ -116,12 +134,15 @@ export function makeFingerprint(input: {
 
 /** Numeric comparison of dotted versions or build numbers; null when they cannot be ordered. */
 export function compareVersions(a: string, b: string): number | null {
+  const da = versionDate(a), db = versionDate(b);
+  if (da !== null || db !== null) return da !== null && db !== null ? Math.sign(da - db) : null;
   const build = (v: string) => /^build (\d+)$/.exec(v)?.[1];
   const ba = build(a), bb = build(b);
   if (ba || bb) return ba && bb ? Math.sign(Number(ba) - Number(bb)) : null;
   const parse = (v: string) => /^(\d+(?:\.\d+)*)([a-z]?)$/.exec(v);
   const pa = parse(a), pb = parse(b);
   if (!pa || !pb) return null;
+  if (/^\d{4,}$/.test(a) !== /^\d{4,}$/.test(b)) return null;
   const na = pa[1].split('.').map(Number), nb = pb[1].split('.').map(Number);
   for (let i = 0; i < Math.max(na.length, nb.length); i++) {
     const d = (na[i] ?? 0) - (nb[i] ?? 0);
@@ -157,7 +178,7 @@ export function detectUpdate(installed: InstalledVersion | null | undefined, cur
   if (!installed || !current) return none('no fingerprint');
   const from = versionLabel(installed), to = versionLabel(current);
   if (installed.version && current.version) {
-    if (installed.scheme && current.scheme && installed.scheme !== current.scheme) return none('different version identifiers cannot be compared');
+    if (versionScheme(installed) !== versionScheme(current)) return none('different version identifiers cannot be compared');
     const c = compareVersions(current.version, installed.version);
     if (c === null) return none('different version identifiers cannot be compared');
     return c > 0 ? { update: true, from, to, reason: 'the site lists a newer version' } : none(c === 0 ? 'same version' : 'page offers an older version');

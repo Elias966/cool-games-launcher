@@ -13,12 +13,13 @@ import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
 
-type SectionId = 'sources' | 'accounts' | 'ai' | 'compat' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
+type SectionId = 'sources' | 'browser' | 'accounts' | 'ai' | 'compat' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
 
 interface SectionDef { id: SectionId; label: string; icon: IconName; blurb: string; keywords: string }
 
 const SECTIONS: SectionDef[] = [
   { id: 'sources', label: tk('Websites & indexing'), icon: 'globe', blurb: tk('Sites the AI indexes, and how often'), keywords: 'websites sources add site rescan pages batch request gap rate limit refresh re-check interval indexing crawl learned layout' },
+  { id: 'browser', label: tk('Browser'), icon: 'globe', blurb: tk('AI session or normal Firefox'), keywords: 'browser firefox normal ai session mode captcha cloudflare cookies ublock cookie editor' },
   { id: 'accounts', label: tk('GOG & Epic'), icon: 'gamepad', blurb: tk('Your game store accounts'), keywords: 'gog epic games store account login log in sign in library owned bought heroic legendary' },
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
@@ -117,6 +118,7 @@ export function SettingsTab() {
                   </div>
                 </header>
                 {section === 'sources' && <SourcesSection settings={settings} />}
+                {section === 'browser' && <BrowserSection settings={settings} />}
                 {section === 'ai' && <AiSection settings={settings} />}
                 {section === 'compat' && <CompatSection settings={settings} />}
                 {section === 'downloads' && <DownloadSection settings={settings} />}
@@ -156,6 +158,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
     appearance: `${settings.effects === 'full' ? t('Full effects') : t('Low effects')} · ${t(MOTION_STATUS[settings.motion])}`,
     sound: settings.uiSounds ? `${t('On')} · ${Math.round(settings.uiVolume * 100)}%` : t('Off'),
     accounts: [stores.accounts.gog.loggedIn ? 'GOG' : null, stores.accounts.epic.loggedIn ? 'Epic' : null].filter(Boolean).join(' · ') || t('Not connected'),
+    browser: settings.browserMode === 'installed' ? t('Installed Firefox (separate profile)') : settings.browserMode === 'normal' ? t('Normal browser mode') : t('AI session mode'),
     privacy: settings.sendDoNotTrack ? t('Do Not Track on') : t('Do Not Track off'),
     about: info ? t('Version {v}', { v: info.appVersion }) : undefined,
   };
@@ -253,6 +256,24 @@ function StatusCard({ icon, tone, title, detail, children }: { icon: IconName; t
 const STATUS_TEXT: Record<Source['status'], string> = {
   idle: tk('Waiting'), crawling: tk('Indexing'), ok: tk('Up to date'), blocked: tk('Needs a check'), unsupported: tk('No games found'), error: tk('Error'),
 };
+
+function BrowserSection({ settings }: { settings: Settings }) {
+  const [changing, setChanging] = useState(false);
+  const change = async (mode: Settings['browserMode']) => {
+    setChanging(true);
+    try { await update({browserMode: mode}); }
+    finally { setChanging(false); }
+  };
+  return <Group title={t('Session mode')}>
+    <Row label={t('Normal browser mode')} desc={t('Launch Firefox without WebDriver. The AI uses a private local connection to the same browser session.')}>
+      <Switch checked={settings.browserMode === 'normal'} disabled={changing} onChange={v => void change(v ? 'normal' : 'ai')} label={t('Normal browser mode')} />
+    </Row>
+    <Row label={t('Installed Firefox (separate profile)')} desc={t('Use the installed Firefox with a dedicated launcher profile. The browser stays hidden until a website needs you.')}><Switch checked={settings.browserMode === 'installed'} disabled={changing} onChange={v => void change(v ? 'installed' : 'normal')} label={t('Installed Firefox (separate profile)')} /></Row>
+    <StatusCard icon="globe" tone={changing ? 'busy' : 'ok'} title={changing ? t('Switching browser mode…') : settings.browserMode === 'installed' ? t('Installed Firefox (separate profile)') : settings.browserMode === 'normal' ? t('Normal browser mode') : t('AI session mode')} detail={settings.browserMode === 'installed' ? t('The launcher keeps its own cookies, extensions and website sessions. CAPTCHA opens the same live session for you.') : settings.browserMode === 'normal' ? t('Experimental. Website verification still requires you and may be refused by the website.') : t('The existing Selenium browser controls indexing and downloads.')} />
+    <p className="st-note">{settings.browserMode==='installed' ? t('Your personal Firefox profile is separate. uBlock Origin and Cookie-Editor are included in the launcher browser.') : t('Switching restarts Firefox and reopens saved pages. Cookies and extensions are shared. Finish manual browsing or pause the AI download before switching.')}</p>
+    <p className="st-note">{t('For CAPTCHA, use Take control of Firefox. Return control to launcher resumes the AI in the same live page.')}</p>
+  </Group>;
+}
 
 function SourcesSection({ settings }: { settings: Settings }) {
   const sources = useApp((s) => s.sources);
@@ -850,9 +871,10 @@ function AboutSection() {
   const info = useApp((s) => s.info);
   const ready = info?.vendorReady ?? {};
   const components: Array<[string, string, string, string?]> = [
-    ['firefox', 'Mozilla Firefox ESR', 'MPL-2.0'],
+    ['firefox', 'Mozilla Firefox', 'MPL-2.0'],
     ['geckodriver', 'geckodriver', 'MPL-2.0'],
     ['ublock', 'uBlock Origin', 'GPL-3.0'],
+    ['cookieEditor', 'Cookie-Editor', 'GPL-3.0-only'],
     ['llama', 'llama.cpp', 'MIT'],
     ['classifier', 'vit-base-nsfw-detector (fp16, GPU)', 'Apache-2.0'],
     ['umu', 'umu-launcher', 'GPL-3.0'],

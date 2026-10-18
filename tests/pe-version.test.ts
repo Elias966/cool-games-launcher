@@ -79,6 +79,14 @@ function read(data: Buffer, name = 'Adventure.exe') {
 }
 
 describe('bounded, read-only PE game version metadata', () => {
+  it.each<Record<string, string>>([
+    { ProductVersion: '5.0.4.13071451', 'Unity Version': '5.0.4f1_c7745b75bf55' },
+    { ProductVersion: '2019.4.36.870', 'Unity Version': '2019.4.36f1_870' },
+    { ProductName: 'REANIMAL', ProductVersion: 'UE5-CL-0' },
+  ])('rejects engine headers found in real imported games: %j', strings => {
+    const result = read(pe([version({ fixed: [5, 4, 4, 0], strings })]));
+    expect(result?.gameVersion).toBeNull(); expect(result?.rejectionReason).toMatch(/engine/);
+  });
   it.each([false, true])('reads mapped RT_VERSION from PE32+ = %s', plus => {
     const result = read(pe([version()], plus));
     expect(result?.gameVersion).toBe('1.2.3.4');
@@ -118,6 +126,9 @@ describe('bounded, read-only PE game version metadata', () => {
   it('uses FileVersion when ProductVersion is not a numeric game version', () => {
     expect(read(pe([version({ strings: { ProductName: 'Adventure', ProductVersion: 'release', FileVersion: '2, 4, 6, 8' } })]))?.gameVersion).toBe('2.4.6.8');
   });
+  it('uses the actual Ghost of Tsushima file build instead of its generic 1.0 product version', () => {
+    expect(read(pe([version({ fixed: [1053, 8, 1212, 1408], strings: { ProductName: "Ghost of Tsushima DIRECTOR'S CUT", ProductVersion: '1.0', FileVersion: '1053.8.1212.1408' } })]))?.gameVersion).toBe('1053.8.1212.1408');
+  });
 
   it.each(['++UE5+Release-5.5-CL-40574608', 'UnrealEngine', 'Unreal Engine', 'Unity Technologies'])('rejects engine provenance %s, retaining metadata for diagnostics', provenance => {
     const result = read(pe([version({ fixed: [5, 5, 4, 0], strings: { CompanyName: 'Epic Games, Inc.', ProductName: provenance, ProductVersion: provenance, FileVersion: '5.5.4.0' } })]));
@@ -126,7 +137,7 @@ describe('bounded, read-only PE game version metadata', () => {
     expect(result?.rejectionReason).toMatch(/engine metadata/);
   });
 
-  it.each(['0.0.0.0', '1.0.0.0', '1.0.0'])('rejects default/dummy version %s', value => {
+  it.each(['0.0.0.0', '1.0.0.0', '1.0.0', '1.0'])('rejects default/dummy version %s', value => {
     expect(read(pe([version({ fixed: [0, 0, 0, 0], strings: { ProductName: 'Adventure', ProductVersion: value, FileVersion: value } })]))?.gameVersion).toBeNull();
   });
 

@@ -1,6 +1,27 @@
 // Arabic interface texts, keyed by the English text they replace (see i18n.ts).
 // Placeholders such as {n} must stay as they are.
 export const ar: Record<string, string> = {
+  'All available download hosts require CAPTCHA and were skipped.': 'تتطلب جميع مستضيفات التنزيل المتاحة اختبار CAPTCHA وتم تجاوزها.',
+  'Found {n} games on this page — checking covers': 'عُثر على {n} لعبة في هذه الصفحة — جارٍ فحص الأغلفة',
+  'Complete the website check in Firefox. The window hides and work resumes automatically after verification.': 'أكمل التحقق من الموقع في Firefox. ستختفي النافذة ويُستأنف العمل تلقائيًا بعد التحقق.',
+
+  'AI session or normal Firefox': 'جلسة الذكاء الاصطناعي أو Firefox العادي',
+  'Your personal Firefox profile is separate. uBlock Origin and Cookie-Editor are included in the launcher browser.': 'يبقى ملف Firefox الشخصي منفصلًا. يتضمن متصفح المشغّل إضافتي uBlock Origin وCookie-Editor.',
+  'Installed Firefox (separate profile)': 'Firefox المثبّت (ملف شخصي منفصل)',
+  'Use the installed Firefox with a dedicated launcher profile. The browser stays hidden until a website needs you.': 'استخدم Firefox المثبّت بملف شخصي خاص بالمشغّل. يبقى المتصفح مخفيًا حتى يحتاج الموقع إلى تدخّلك.',
+  'The launcher keeps its own cookies, extensions and website sessions. CAPTCHA opens the same live session for you.': 'يحتفظ المشغّل بملفات تعريف الارتباط والإضافات وجلسات المواقع الخاصة به. يفتح التحقق البشري الجلسة نفسها لتتفاعل معها.',
+  'Session mode': 'وضع الجلسة',
+  'Normal browser mode': 'وضع المتصفح العادي',
+  'AI session mode': 'وضع جلسة الذكاء الاصطناعي',
+  'Switching browser mode…': 'جارٍ تبديل وضع المتصفح…',
+  'Launch Firefox without WebDriver. The AI uses a private local connection to the same browser session.': 'شغّل Firefox دون WebDriver. يستخدم الذكاء الاصطناعي اتصالًا محليًا خاصًا بجلسة المتصفح نفسها.',
+  'Experimental. Website verification still requires you and may be refused by the website.': 'تجريبي. لا يزال التحقق من الموقع يتطلب تدخّلك وقد يرفضه الموقع.',
+  'The existing Selenium browser controls indexing and downloads.': 'يتولى متصفح Selenium الحالي الفهرسة والتنزيلات.',
+  'Switching restarts Firefox and reopens saved pages. Cookies and extensions are shared. Finish manual browsing or pause the AI download before switching.': 'يُعيد التبديل تشغيل Firefox ويفتح الصفحات المحفوظة. تُشارك ملفات الارتباط والإضافات بين الوضعين. أنهِ التصفح اليدوي أو أوقف تنزيل الذكاء الاصطناعي مؤقتًا قبل التبديل.',
+  'For CAPTCHA, use Take control of Firefox. Return control to launcher resumes the AI in the same live page.': 'للتحقق البشري، استخدم التحكم في Firefox. تُعيد استعادة التحكم للمشغّل تشغيل الذكاء الاصطناعي في الصفحة المفتوحة نفسها.',
+  'Return control to the launcher before switching browser mode.': 'أعد التحكم إلى المشغّل قبل تبديل وضع المتصفح.',
+  'Pause or finish the current AI download before switching browser mode.': 'أوقف تنزيل الذكاء الاصطناعي الحالي مؤقتًا أو أنهِه قبل تبديل وضع المتصفح.',
+
   'Indexing paused · {n} saved games': 'الفهرسة متوقفة مؤقتًا · {n} لعبة محفوظة',
   'Date checks wait while indexing or another task runs.': 'ينتظر فحص التواريخ حتى تنتهي الفهرسة أو المهمة الأخرى.',
   '{n} unavailable or different files': '{n} مضيفين غير متاحين أو بملفات مختلفة',
