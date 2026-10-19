@@ -26,7 +26,7 @@ import { tm } from './i18n';
 import { fastestMirrors, mirrorRoutes, resumeMirrorRoutes, mirrorsForPart, recordMirror, mirrorFileName, type MeasuredMirror, type MirrorComparison } from './download-mirrors';
 import type { MirrorSample } from '../workers/mirror-probe';
 import { formatSpeed } from '@shared/format';
-import { unavailableHostReason } from '@shared/download-host';
+import { unavailableHostReason, DownloadHostProgress } from '@shared/download-host';
 import { downloadPageKey, isGameBookmark, isSiteBrowseUrl } from '@shared/download-page';
 import { pageFingerprint } from './updates';
 
@@ -304,6 +304,8 @@ export class Resolver {
     let note = '';
     let routeUrl = this.trial?.route.url ?? checkpoint.routeUrl ?? checkpoint.pageUrl;
     let emptyHostSteps = 0;
+    const hostProgress=new DownloadHostProgress();
+    let clickedHost=false;
     let seenGamePage = false, sourceReturns = 0;
     // Keep cumulative progress for restart, but grant each explicit resume a
     // bounded new attempt instead of permanently exhausting its saved budget.
@@ -317,6 +319,8 @@ export class Resolver {
       session.assertLive(token, 'page state');
       if(this.trial&&ex.navigationRecovery==='closed-tab')throw new Error('This file host closed its tab without starting a usable file transfer.');
       checkpoint.pageUrl = ex.url;
+      const noClickProgress=hostOf(ex.url)!==hostOf(entry.pageUrl)?hostProgress.observe(ex,clickedHost):null;
+      clickedHost=false;
       // A saved download link can be a hub whose host selectors appear only
       // after dismissing a warning. Keep its live viewport before any click
       // leaves it, even when its mirrors are not observable yet.
@@ -325,7 +329,7 @@ export class Resolver {
       if (hostOf(ex.url) !== hostOf(entry.pageUrl) && (skippedCaptcha||!ex.gates.captcha && !ex.gates.blocked && !ex.gates.login && !ex.gates.ageGate && !ex.gates.payment)) {
         if (downloadEvidence(ex).length || countdownSeconds(ex.text) !== null) emptyHostSteps = 0;
         const unavailable = (skippedCaptcha?`Skipped ${hostOf(ex.url)}: this download host requires a CAPTCHA.`:unavailableHostReason(ex, routeUrl))
-          ?? (emptyHostSteps >= 4 ? 'This host made no progress toward a file after several actions.' : null);
+          ?? noClickProgress ?? (emptyHostSteps >= 4 ? 'This host made no progress toward a file after several actions.' : null);
         if (unavailable) {
           if (this.trial) throw new Error(unavailable);
           // Older/resumed jobs can arrive on a host without a comparison. Go
@@ -468,6 +472,7 @@ export class Resolver {
           // screenshot. No alternative control is chosen by launcher code.
           continue;
         }
+        clickedHost=['left_click','double_click','triple_click','click_element'].includes(action.computer.action.action);
         // Do not add another 1.5s to waits, scrolling or pointer movement.
         // A terminal decision still needs time to observe a delayed transfer;
         // the model saying "done" is never itself proof that a download began.
@@ -504,6 +509,7 @@ export class Resolver {
         // Click the observed control so host scripts, tokens and popups work
         // exactly as they do in Firefox; naked navigation can skip that logic.
         await browser.clickElement('interactive', action.index!, token.signal);
+        clickedHost=true;
         if(chosen)this.agent.rememberDownloadAction?.(ex,chosen,action.label?.startsWith('Learned download step:'));
         // Script/HTMX controls can start a transfer only after an async host
         // response. Give that request time before trying another mirror.

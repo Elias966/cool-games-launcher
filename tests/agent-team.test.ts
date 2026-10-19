@@ -281,3 +281,22 @@ it('keeps an observed file-host download query usable while blocking game search
  await s.agent.execute(await s.agent.next(page,'interactive',s.token,'Download'),page,s.token,true,scope);
  expect(s.browser.navigate).toHaveBeenCalledWith('interactive','https://host.test/?file=token',s.token.signal);
 });
+
+it('gives Fara measured centers for visible buttons instead of requiring an approximate visual click', async () => {
+ const s=setup({action:'left_click',coordinate:[880,345]});
+ const page={...ex,viewport:{w:1198,h:914,scrollY:0,docH:914},controls:[{i:4,text:'Download',tag:'button',inViewport:true,inContent:true,rect:{x:1003,y:302,w:102,h:26}}]} as PageExtract;
+ s.browser.snapshot.mockResolvedValue({png:'image',w:1198,h:914,url:page.url});
+ const step=await s.agent.next(page,'interactive',s.token,'Download Orbit');
+ const messages=s.ai.chatTools.mock.calls[0][2] as any[];
+ expect(messages[1].content[0].type).toBe('image_url');
+ expect(messages[1].content[1].text).toContain('"label":"Download","coordinate":[880,345]');
+ await s.agent.execute(step,page,s.token,true);
+ expect(s.browser.pointer).toHaveBeenCalledWith('interactive',1054,315,'left',s.token.signal);
+});
+
+it('re-observes a resized download viewport before sending stale button coordinates to Fara', async () => {
+ const s=setup({action:'left_click',coordinate:[880,345]});
+ const page={...ex,viewport:{w:1198,h:914,scrollY:0,docH:914}} as PageExtract;
+ await expect(s.agent.next(page,'interactive',s.token,'Download Orbit')).rejects.toMatchObject({name:'BrowserObservationChangedError'});
+ expect(s.ai.chatTools).not.toHaveBeenCalled();expect(s.browser.pointer).not.toHaveBeenCalled();
+});

@@ -191,6 +191,24 @@ describe('dead host recovery',()=>{
   expect(nav.slice(nav.indexOf(dead.url),nav.indexOf(live.url)+1)).toEqual([dead.url,sourceUrl,live.url]);
   expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.failures).toContainEqual(expect.objectContaining({route:dead.url,reason:expect.stringMatching(/unavailable/)}));
  });
+ it('skips a server-busy file with a visible Download button and continues through the remaining mirror',async()=>{
+  const busy=landing('busy.test'),live=landing('live.test'),t=setup([busy,live]);
+  const extract=t.browser.extract.getMockImplementation()!;
+  t.browser.extract.mockImplementation(async()=>t.current().includes('busy.test')?page('<main><h1>Orbit.zip</h1><span>server busy</span> <button>Download</button></main>',t.current()):extract());
+  await t.resolve();
+  expect(t.agent.transfer).toHaveBeenCalledOnce();expect(t.downloads.handoff).toHaveBeenCalledOnce();
+  expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.failures).toContainEqual(expect.objectContaining({route:busy.url,reason:expect.stringMatching(/temporarily busy/)}));
+ });
+ it('stops repeated native clicks on a host even with download evidence and tests the next mirror',async()=>{
+  const dead=landing('dead.test'),live=landing('live.test'),t=setup([dead,live]);
+  const extract=t.browser.extract.getMockImplementation()!;
+  t.browser.extract.mockImplementation(async()=>t.current().includes('dead.test')?page('<main><h1>Orbit.zip</h1><button>Download</button></main>',t.current()):extract());
+  (t.agent as any).actBrowser=vi.fn(async()=> 'continue');
+  t.agent.transfer.mockImplementation(async()=>t.current().includes('dead.test')?{kind:'computer',computer:{action:{action:'left_click',coordinate:[500,500]}}} as any:{kind:'download',index:0});
+  await t.resolve();
+  expect((t.agent as any).actBrowser).toHaveBeenCalledTimes(3);expect(t.downloads.handoff).toHaveBeenCalledOnce();
+  expect(t.downloadsRepo.get(t.d.id)?.resolution?.mirrors?.failures).toContainEqual(expect.objectContaining({route:dead.url,reason:expect.stringMatching(/three clicks/)}));
+ });
  it('skips a missing link that silently redirects to the host homepage',async()=>{
   const dead=landing('dead.test'),live=landing('live.test');const t=setup([dead,live]);
   const navigate=t.browser.navigate.getMockImplementation()!,extract=t.browser.extract.getMockImplementation()!;

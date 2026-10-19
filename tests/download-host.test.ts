@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { extractPage, type PageExtract } from '../src/shared/page-extract';
-import { unavailableHostReason } from '../src/shared/download-host';
+import { unavailableHostReason, DownloadHostProgress } from '../src/shared/download-host';
 const doms:JSDOM[]=[];
 afterEach(()=>doms.splice(0).forEach(dom=>dom.window.close()));
 function page(html:string,url='https://host.test/file/token') {
@@ -35,4 +35,22 @@ describe('unavailable download host evidence',()=>{
  it('keeps root URLs containing file tokens and legitimate CDN routes available',()=>{
   for(const url of ['https://host.test/?id=token','https://host.test/#file-token','https://cdn.test/files/orbit.zip'])expect(unavailableHostReason(page('<h1>Orbit.zip</h1>',url),'https://host.test/file/token')).toBeNull();
  });
+});
+
+
+it('recognises a server-busy file badge even when Download is visible', () => {
+ const ex=page('<main><h1>Bloodborne-SteamRIP.com.rar</h1><span>31.0 GB</span> <span>server busy</span> <button>Download</button></main>');
+ expect(unavailableHostReason(ex,ex.url)).toMatch(/temporarily busy/);
+ expect(unavailableHostReason(page('<main><h1>Server Busy Simulator.zip</h1><button>Download</button></main>'),ex.url)).toBeNull();
+});
+
+it('stops three ineffective clicks despite a visible Download control, but keeps countdowns and real progress', () => {
+ const ex=page('<main><h1>Orbit.rar</h1><button>Download</button></main>'), progress=new DownloadHostProgress();
+ expect(progress.observe(ex,false)).toBeNull();
+ expect(progress.observe(ex,true)).toBeNull();expect(progress.observe(ex,true)).toBeNull();
+ expect(progress.observe(ex,true)).toMatch(/three clicks/);
+ const countdown=page('<main><h1>Orbit.rar</h1><p>Your download starts in 15 seconds.</p><button>Download</button></main>');
+ for(let i=0;i<5;i++)expect(progress.observe(countdown,true)).toBeNull();
+ expect(progress.observe({...ex,text:ex.text+' A new download option appeared'},true)).toBeNull();
+ expect(progress.observe(ex,false)).toBeNull();
 });
