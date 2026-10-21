@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { KineticTitle } from '../components/KineticTitle';
 import { RECOMMENDED_MODEL_ID, type ModelList, type ModelOption } from '@shared/models';
-import type { CustomSound, LauncherUpdate, ProtonInstall, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
+import type { CustomSound, DlssPreset, GraphicsVersions, NrStatus, LauncherUpdate, ProtonInstall, ProtonReleaseList, Settings, SoundGroup, SoundGroups, Source } from '@shared/types';
 import { formatBytes } from '@shared/format';
 import { api } from '../api';
 import { attempt, pushToast, useApp } from '../state';
@@ -13,7 +13,7 @@ import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
 
-type SectionId = 'sources' | 'browser' | 'accounts' | 'ai' | 'compat' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
+type SectionId = 'sources' | 'browser' | 'accounts' | 'ai' | 'compat' | 'graphics' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
 
 interface SectionDef { id: SectionId; label: string; icon: IconName; blurb: string; keywords: string }
 
@@ -23,6 +23,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'accounts', label: tk('GOG & Epic'), icon: 'gamepad', blurb: tk('Your game store accounts'), keywords: 'gog epic games store account login log in sign in library owned bought heroic legendary' },
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
+  { id: 'graphics', label: tk('Graphics'), icon: 'sparkle', blurb: tk('Newer DLSS for NVIDIA, FSR 4 for AMD'), keywords: 'graphics gpu nvidia rtx dlss dlss5 neural rendering nr model preset transformer amd radeon fsr fsr4 upscaling upscaler neuralhub' },
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
   { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('What the Store hides'), keywords: 'nsfw adult content classifier safe mature woman women female girl anime cover filter' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
@@ -121,6 +122,7 @@ export function SettingsTab() {
                 {section === 'browser' && <BrowserSection settings={settings} />}
                 {section === 'ai' && <AiSection settings={settings} />}
                 {section === 'compat' && <CompatSection settings={settings} />}
+                {section === 'graphics' && <GraphicsSection settings={settings} />}
                 {section === 'downloads' && <DownloadSection settings={settings} />}
                 {section === 'content' && <ContentSection settings={settings} />}
                 {section === 'appearance' && <AppearanceSection settings={settings} />}
@@ -152,6 +154,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
   return {
     sources: sources.length ? `${sources.length === 1 ? t('1 site') : t('{n} sites', { n: sources.length })} · ${t('{n} games', { n: games })}` : t('No websites yet'),
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
+    graphics: [settings.dlssUpgrade ? 'DLSS' : null, settings.fsr4Upgrade ? 'FSR 4' : null].filter(Boolean).join(' · ') || t('Off'),
     compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
     content: settings.hideWomenCovers ? t('Women covers hidden') : t('Everything shown'),
@@ -568,6 +571,145 @@ function CompatSection({ settings }: { settings: Settings }) {
         </Group>
       </details>
     </>
+  );
+}
+
+const DLSS_PRESETS: Array<{ value: DlssPreset; label: string }> = [
+  { value: 'latest', label: tk('Newest recommended model (updates automatically)') },
+  { value: 'm', label: tk('Model M · second-generation transformer, sharpest (heavier on RTX 20 and 30)') },
+  { value: 'l', label: tk('Model L · second-generation transformer for Ultra Performance') },
+  { value: 'k', label: tk('Model K · transformer, best balance on RTX 20 and 30') },
+  { value: 'j', label: tk('Model J · transformer, a little sharper than K') },
+  { value: 'e', label: tk('Model E · older CNN model, fastest') },
+  { value: 'game', label: tk('The game\'s own choice') },
+];
+
+function GraphicsSection({ settings }: { settings: Settings }) {
+  const [versions, setVersions] = useState<GraphicsVersions | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = (refresh: boolean) => { setBusy(true); void api.invoke('graphics:versions', { refresh }).then(setVersions).catch(() => undefined).finally(() => setBusy(false)); };
+  useEffect(() => load(false), []);
+  const versionOptions = (list: string[] | undefined, current: string) => {
+    const all = [...new Set([...(list ?? []), ...(current !== 'latest' ? [current] : [])])];
+    return [<option key="latest" value="latest">{list?.[0] ? t('Newest ({version}, updates automatically)', { version: list[0] }) : t('Newest (updates automatically)')}</option>, ...all.map((v) => <option key={v} value={v}>{v}</option>)];
+  };
+  const nr = versions?.nrAmd;
+  return (
+    <>
+      <Group title={t('NVIDIA (GeForce RTX)')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => load(true)}>{t('Check for new versions')}</Button>}>
+        <Row label={t('Newer DLSS in Windows games')} desc={t('Proton downloads NVIDIA\'s newest DLSS files into each game\'s prefix and uses them instead of the ones the game shipped with. Turn DLSS on in the game\'s own settings. Applies to games started with Proton.')}>
+          <Switch label={t('Newer DLSS in Windows games')} checked={settings.dlssUpgrade} onChange={(v) => void update({ dlssUpgrade: v })} />
+        </Row>
+        <Row label={t('DLSS version')} desc={t('Newest follows each new DLSS release by itself. Pick a version to keep a game on it.')}>
+          <select className="input" aria-label={t('DLSS version')} disabled={!settings.dlssUpgrade} value={settings.dlssVersion} onChange={(e) => void update({ dlssVersion: e.target.value })}>
+            {versionOptions(versions?.dlss, settings.dlssVersion)}
+          </select>
+        </Row>
+        <Row label={t('DLSS model')} desc={t('The upscaling model DLSS runs with. Newest picks the model NVIDIA recommends for your card and moves to new models as they ship.')}>
+          <select className="input" aria-label={t('DLSS model')} disabled={!settings.dlssUpgrade} value={settings.dlssPreset} onChange={(e) => void update({ dlssPreset: e.target.value as DlssPreset })}>
+            {DLSS_PRESETS.map((p) => <option key={p.value} value={p.value}>{t(p.label)}</option>)}
+          </select>
+        </Row>
+      </Group>
+      <NeuralRenderingGroup settings={settings} />
+      <Group title={t('AMD (Radeon)')}>
+        <Row label={t('FSR 4 in games with FSR 3.1')} desc={t('GE-Proton downloads AMD\'s FSR 4 library and uses it in games that offer FSR 3.1. Pick FSR in the game\'s own settings. Needs GE-Proton 10-26 or newer and a supported Radeon card.')}>
+          <Switch label={t('FSR 4 in games with FSR 3.1')} checked={settings.fsr4Upgrade} onChange={(v) => void update({ fsr4Upgrade: v })} />
+        </Row>
+        <Row label={t('FSR 4 version')} desc={t('Newest follows each new FSR 4 release by itself.')}>
+          <select className="input" aria-label={t('FSR 4 version')} disabled={!settings.fsr4Upgrade} value={settings.fsr4Version} onChange={(e) => void update({ fsr4Version: e.target.value })}>
+            {versionOptions(versions?.fsr4, settings.fsr4Version)}
+          </select>
+        </Row>
+        <Row
+          label={t('DLSS Neural Rendering on AMD (NeuralHub)')}
+          desc={nr
+            ? (nr.linux
+              ? t('Version {version} has a Linux build. Its licence does not allow launchers to bundle or install it: download it from its release page.', { version: nr.version })
+              : t('Version {version} runs on Windows 11 only; Linux support is planned. The launcher checks each new release and tells you here when a Linux build is out.', { version: nr.version }))
+            : t('Runs on Windows 11 only for now; Linux support is planned.')}
+        >
+          <Button size="sm" variant="ghost" icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: nr?.page ?? 'https://github.com/danielblnc/DLSS-NR-on-AMD/releases/latest' }))}>{t('Release page')}</Button>
+        </Row>
+      </Group>
+    </>
+  );
+}
+
+const BUILD_LABEL: Record<NrStatus['runtimes'][number]['build'], string> = {
+  nvidia: tk('NVIDIA build (RTX 50)'),
+  'cross-generation': tk('Cross-generation build (RTX 20/30/40)'),
+  patched: tk('Patched build'),
+};
+
+/** DLSS 5 Neural Rendering: the runtime (from the person's games), rebuilt for their card, and OptiScaler. */
+function NeuralRenderingGroup({ settings }: { settings: Settings }) {
+  const [st, setSt] = useState<NrStatus | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const load = (refresh: boolean) => {
+    if (refresh) setScanning(true);
+    return api.invoke('nr:status', { refresh }).then(setSt).catch(() => undefined).finally(() => setScanning(false));
+  };
+  useEffect(() => {
+    let live = true;
+    void load(false);
+    const off = api.on('nr:changed', () => { if (live) void api.invoke('nr:status', { refresh: false }).then(setSt).catch(() => undefined); });
+    return () => { live = false; off(); };
+  }, []);
+  const sel = st?.runtimes.find((r) => r.sha256 === st.selected) ?? null;
+  const archName = st?.gpu.arch ? { turing: 'RTX 20', ampere: 'RTX 30', ada: 'RTX 40', blackwell: 'RTX 50' }[st.gpu.arch] : null;
+  return (
+    <Group title={t('NVIDIA · DLSS 5 Neural Rendering')} aside={<Button size="sm" variant="ghost" icon="search" disabled={scanning} onClick={() => void load(true)}>{scanning ? t('Scanning your games…') : t('Scan my games')}</Button>}>
+      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s DLSS picture. Turn it on per game in its Launch options, then turn DLSS on in the game. Works in DirectX 12 games that have DLSS. Do not use it in online games with anti-cheat.')} />
+      <Row label={t('Graphics card')} desc={st ? `${st.gpu.name ?? t('No NVIDIA card found')}${archName ? ` · ${archName}` : ''}` : t('Checking…')} />
+      <Row
+        label={t('Neural Rendering model')}
+        desc={st?.runtimes.length
+          ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
+          : t('No nvngx_dlssnr.dll yet. It ships with games that have DLSS 5 (NBA 2K27, Hogwarts Legacy from 5 November); a scan finds it in your games, and newer models arrive with their updates. You can also import the file.')}
+      >
+        <div className="st-inline">
+          {!!st?.runtimes.length && (
+            <select className="input" aria-label={t('Neural Rendering model')} value={settings.nrRuntime} onChange={(e) => void update({ nrRuntime: e.target.value })}>
+              <option value="latest">{t('Newest (updates automatically)')}</option>
+              {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])}`}</option>)}
+            </select>
+          )}
+          <Button size="sm" variant="ghost" icon="import" onClick={() => void attempt(async () => setSt(await api.invoke('nr:import')))}>{t('Import…')}</Button>
+          {sel && settings.nrRuntime !== 'latest' && <IconButton icon="trash" label={t('Remove this model')} onClick={() => void attempt(async () => { await update({ nrRuntime: 'latest' }); setSt(await api.invoke('nr:remove', { sha256: sel.sha256 })); })} />}
+        </div>
+      </Row>
+      {sel?.needsPatch && (
+        <Row
+          label={t('Rebuild for your card')}
+          desc={st?.cuda
+            ? t('NVIDIA builds the model for RTX 50. dlssnr-patcher (open source) rebuilds its GPU code for your card on this computer, using the CUDA Toolkit in {path}. This happens once per model, by itself at the first launch, or now.', { path: st.cuda })
+            : t('NVIDIA builds the model for RTX 50. To run it on your card, dlssnr-patcher (open source) rebuilds it on this computer and needs NVIDIA\'s CUDA Toolkit 13 (ptxas, fatbinary, cuobjdump). Install it from NVIDIA, then come back here.')}
+        >
+          {st?.cuda
+            ? <Button size="sm" variant="primary" icon="sparkle" disabled={!!st.busy || sel.patched} onClick={() => void attempt(async () => setSt(await api.invoke('nr:prepare')), t('DLSS 5 is ready for your card.'))}>{st.busy === 'patching' ? t('Rebuilding…') : sel.patched ? t('Ready') : t('Rebuild now')}</Button>
+            : <Button size="sm" variant="ghost" icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://developer.nvidia.com/cuda-downloads' }))}>{t('Get the CUDA Toolkit')}</Button>}
+        </Row>
+      )}
+      {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}
+      <Row label={t('OptiScaler build')} desc={t('Newest follows each nightly build by itself. The marked build is the one tested under Proton on FF7 Rebirth, 007 First Light and Horizon.')}>
+        <select className="input" aria-label={t('OptiScaler build')} value={settings.nrOptiscaler} onChange={(e) => void update({ nrOptiscaler: e.target.value })}>
+          <option value="latest">{st?.optiscaler[0] ? t('Newest ({version}, updates automatically)', { version: st.optiscaler[0].date }) : t('Newest (updates automatically)')}</option>
+          {[...new Set([...(st?.optiscaler.map((o) => o.name) ?? []), ...(st?.downloaded ?? []), ...(settings.nrOptiscaler !== 'latest' ? [settings.nrOptiscaler] : [])])].map((n) => {
+            const o = st?.optiscaler.find((x) => x.name === n);
+            return <option key={n} value={n}>{`${o?.date ?? n}${o?.tested ? ` · ${t('tested')}` : ''}${st?.downloaded.includes(n) ? ` · ${t('downloaded')}` : ''}`}</option>;
+          })}
+        </select>
+      </Row>
+      <Row label={t('Neural Rendering quality')} desc={t('How much of the picture the model works on. On RTX 20 and 30 cards Balanced or Fast keeps the frame rate playable. More settings are in OptiScaler\'s in-game menu.')}>
+        <select className="input" aria-label={t('Neural Rendering quality')} value={settings.nrQuality} onChange={(e) => void update({ nrQuality: e.target.value as Settings['nrQuality'] })}>
+          <option value="auto">{t('OptiScaler\'s default')}</option>
+          <option value="full">{t('Full (slowest)')}</option>
+          <option value="balanced">{t('Balanced')}</option>
+          <option value="fast">{t('Fast')}</option>
+        </select>
+      </Row>
+    </Group>
   );
 }
 

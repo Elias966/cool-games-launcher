@@ -34,7 +34,7 @@ import { ProtonReleases, RELEASE_REFRESH_MS } from './proton-releases';
 import { CompatManager } from './compat';
 import manifest from '../../scripts/vendor-manifest.json';
 import { Library, detectProton, detectWine, detectTools } from './library';
-import { GameInfoService } from './descriptions';
+import { GameInfoService, sameGame } from './descriptions';
 import { WishlistService } from './wishlist';
 import { LauncherTray } from './tray';
 import { ensureLauncherEntry, gameFromArgs } from './shortcuts';
@@ -45,6 +45,9 @@ import { UpdateService } from './updates';
 import { CustomSounds, SOUND_EXTENSIONS } from './custom-sounds';
 import { GameIdentifier } from './game-identify';
 import { GameImagesService, IMAGE_EXTENSIONS } from './game-images';
+import { ProtonAdvisor } from './proton-advice';
+import { UpscalerVersions } from './upscalers';
+import { NeuralRendering } from './neural-rendering';
 import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
 import type { StoreId } from '@shared/types';
 import { handleMedia, registerMediaScheme } from './media';
@@ -511,10 +514,40 @@ async function main() {
   library.storeUpdates = (g) => stores.hasUpdate(g);
   library.storeBusy = (id) => stores.isBusy(id);
   library.storeLaunchArgs = (g) => stores.launchArgs(g);
+  const neural = new NeuralRendering({
+    dataDir: paths.data,
+    fetch: (url, init) => fetch(url, init),
+    settings: () => settingsRepo.get(),
+    gameDirs: () => gamesRepo.list().flatMap((g) => (g.installDir ? [g.installDir] : [])),
+    extract: (archive, dest) => installWorker.call('extractCompat', { path: archive, dest }),
+    changed: () => publish('nr:changed', undefined),
+  });
+  // DLSS 5 Neural Rendering: its files go in before a launch and come out when it is turned off.
+  library.launchEnv = async (g) => {
+    if (!g.launch.neuralRendering || !g.executable) { neural.removeFrom(g.id); return []; }
+    if (neural.selected() && !neural.installed(g.id)) toast('info', tm('Setting up DLSS 5 Neural Rendering for {title}…', { title: g.title }));
+    return neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable });
+  };
   library.onUninstalled = (g) => stores.forget(g);
   stores.recover();
   setTimeout(() => void stores.refresh().catch((e) => console.warn('[stores]', (e as Error).message)), 8_000).unref();
   setInterval(() => void stores.refresh().catch(() => undefined), 6 * 3600_000).unref();
+
+  /** The download for a Proton release from the list. */
+  const releasePackage = async (id: string) => {
+    await protonReleases.refresh();
+    const release = protonReleases.find(id);
+    if (!release || release.unavailableReason || !release.url || !release.sha256 || !release.size) throw new Error(release?.unavailableReason ?? 'This version is not available. Refresh the release list.');
+    return { provider: release.provider, version: release.version, url: release.url, sha256: release.sha256, size: release.size, dir: `${release.provider}-${release.version}`.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 160) };
+  };
+  const upscalerVersions = new UpscalerVersions({ fetch: (url, init) => fetch(url, init), cache: aiCache });
+  const protonAdvisor = new ProtonAdvisor({
+    fetch: (url, init) => fetch(url, init),
+    cache: aiCache,
+    steamAppFor: async (title) => (await descriptions.searchSteam(title)).find((r) => sameGame(r.name, title))?.appid ?? null,
+    installed: () => compat.installed(),
+    releases: async () => (await protonReleases.refresh()).releases,
+  });
 
   const gameImages = new GameImagesService({
     games: gamesRepo, catalog: catalogRepo, policy: () => policy.policy(), cache: aiCache,
@@ -578,12 +611,7 @@ async function main() {
       for (const g of gamesRepo.list()) if (g.launch.protonPath === path) library.configure(g.id, { launch: { protonPath: null } });
       return protonsWithUse();
     },
-    'compat:installVersion': async ({ id }) => {
-      await protonReleases.refresh();
-      const release = protonReleases.find(id);
-      if (!release || release.unavailableReason || !release.url || !release.sha256 || !release.size) throw new Error(release?.unavailableReason ?? 'This version is not available. Refresh the release list.');
-      return compat.installPackage({ provider: release.provider, version: release.version, url: release.url, sha256: release.sha256, size: release.size, dir: `${release.provider}-${release.version}`.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 160) });
-    },
+    'compat:installVersion': async ({ id }) => compat.installPackage(await releasePackage(id)),
     'compat:openRelease': async ({ id }) => {
       const release = protonReleases.find(id);
       if (!release) throw new Error('Release no longer available. Refresh the list.');
@@ -868,7 +896,23 @@ async function main() {
     'library:stop': ({ id }) => library.stop(id),
     'library:favorite': ({ id, favorite }) => library.setFavorite(id, favorite),
     'library:uninstall': ({ id, removePrefix }) => library.uninstall(id, removePrefix),
-    'library:configure': ({ id, ...patch }) => library.configure(id, patch),
+    'library:configure': ({ id, ...patch }) => {
+      if (patch.launch?.neuralRendering === false) neural.removeFrom(id);
+      return library.configure(id, patch);
+    },
+    'nr:status': ({ refresh }) => neural.status(refresh),
+    'nr:import': async () => {
+      const r = await dialog.showOpenDialog(mainWindow!, { title: tm('Choose nvngx_dlssnr.dll'), properties: ['openFile'], filters: [{ name: 'nvngx_dlssnr.dll', extensions: ['dll'] }] });
+      if (!r.canceled && r.filePaths[0]) await neural.add(r.filePaths[0], r.filePaths[0]);
+      return neural.status();
+    },
+    'nr:prepare': async () => {
+      const sel = neural.selected();
+      if (!sel) throw new Error('Import nvngx_dlssnr.dll first.');
+      await neural.ready(sel);
+      return neural.status();
+    },
+    'nr:remove': async ({ sha256 }) => { neural.remove(sha256); return neural.status(); },
     'library:import': async () => {
       const game = await library.importGame();
       if (game) void identifier.imported(game.id).catch((e) => console.warn('[identify]', (e as Error).message));
@@ -876,6 +920,30 @@ async function main() {
     },
     'library:searchCover': ({ term }) => identifier.search(term),
     'library:imageOptions': ({ id }) => gameImages.options(id),
+    // Downloads the suggested Proton and makes this game use it once it is installed.
+    'library:installSuggestedProton': async ({ id, release }) => {
+      if (!gamesRepo.get(id)) throw new Error('Game not found');
+      const pin = await releasePackage(release);
+      let ready = false;
+      compat.afterInstall(pin.dir, (path) => {
+        ready = true;
+        if (!gamesRepo.get(id)) return;
+        library.configure(id, { launch: { protonPath: path } });
+        const g = gamesRepo.get(id);
+        if (g) toast('success', tm('{title} now uses {name}.', { title: g.title, name: pin.version }));
+      });
+      if (!ready) await compat.installPackage(pin);
+      return { ready };
+    },
+    'graphics:versions': ({ refresh }) => upscalerVersions.list(refresh),
+    'library:protonAdvice': async ({ id }) => {
+      const g = gamesRepo.get(id);
+      if (!g) throw new Error('Game not found');
+      const advice = await protonAdvisor.advise({ title: g.title, appid: g.art?.appid ?? null, store: g.store, storeId: g.storeId });
+      // A Steam id found by title also lets umu apply this game's community fixes at launch.
+      if (advice.appid && !g.art) { gamesRepo.update(id, { art: { hero: null, logo: null, capsule: null, appid: advice.appid } }); library.broadcast(); }
+      return advice;
+    },
     'stores:state': () => stores.state(),
     'stores:refresh': () => stores.refresh(),
     'stores:login': ({ store }) => stores.login(store),
@@ -944,7 +1012,6 @@ async function main() {
     'library:restoreSaves': ({ id, stamp }) => library.restoreSaves(id, stamp),
     'library:openSaves': ({ id }) => library.openSaves(id),
     'library:shortcut': ({ id, where }) => library.shortcut(id, where, appIcon()),
-    'library:resetRuntimes': ({ id }) => library.resetRuntimes(id),
     'launcher:updateStatus': () => selfUpdate.status(),
     'library:stats': () => gamesRepo.playStats(),
     'launcher:checkUpdate': () => selfUpdate.check(true),

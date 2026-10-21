@@ -4,7 +4,6 @@
 import { discoverVersionEvidence, type VersionEvidenceInput } from './version-evidence';
 import { carryOver, snapshotBuild } from './carry-over';
 import { backupSaves, pruneBackups, restoreSaves } from './save-backup';
-import { findRedists } from './redist';
 import { applyExtras, type LaunchExtras } from './launch-wrap';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -107,23 +106,6 @@ function launch(p: LaunchParams) {
   return { pid: child.pid };
 }
 
-/** Runs a runtime installer silently in the game's prefix and waits for it (10 minutes at most). */
-function runSetup(p: LaunchParams, signal: AbortSignal): Promise<{ code: number | null }> {
-  if (!existsSync(p.executable) || !within(p.allowedRoot, p.executable)) throw new Error('The runtime installer is outside the game folder');
-  const { cmd, args, env } = buildCommand(p);
-  mkdirSync(dirname(p.logPath), { recursive: true });
-  const logFd = openSync(p.logPath, 'a');
-  const child = spawn(cmd, args, { cwd: dirname(p.executable), env, detached: true, stdio: ['ignore', logFd, logFd] });
-  closeSync(logFd);
-  return new Promise((resolve) => {
-    const kill = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* gone */ } };
-    const timer = setTimeout(() => { kill(); resolve({ code: null }); }, 10 * 60_000);
-    signal.addEventListener('abort', () => { kill(); }, { once: true });
-    child.on('error', () => { clearTimeout(timer); resolve({ code: null }); });
-    child.on('exit', (code) => { clearTimeout(timer); resolve({ code }); });
-  });
-}
-
 function stop(p: { gameId: number }) {
   const r = running.get(p.gameId);
   if (!r || !r.child.pid) return { ok: false };
@@ -181,8 +163,6 @@ serve({
   },
   launch,
   stop,
-  runSetup,
-  findRedists(p: { dir: string }) { return findRedists(p.dir); },
   removeManaged,
   snapshotBuild,
   carryOver,

@@ -272,7 +272,6 @@ export interface Game {
   /** Installed build ("v1.2", "build 1234"), when the site publishes one. */
   version: string | null;
   versionCheck?: import('./game-version').VersionInspection;
-  runtimeInstallerDisabled?: boolean;
   update: GameUpdateInfo | null;
   /** The previous build is kept after an update until the new one has been played. */
   previousVersion: string | null;
@@ -308,6 +307,8 @@ export interface LaunchOptions {
   nvapi: boolean;
   /** Proton's OpenGL renderer for games that crash with DXVK/VKD3D. */
   wined3d: boolean;
+  /** DLSS 5 Neural Rendering through OptiScaler (Settings → Graphics). */
+  neuralRendering: boolean;
   /** Extra environment variables, one KEY=VALUE per line. */
   env: string;
 }
@@ -330,7 +331,7 @@ export interface SaveBackup {
   version: string | null;
 }
 
-export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, env: '' };
+export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, neuralRendering: false, env: '' };
 
 export type GameUpdateState = 'available' | 'downloading' | 'preparing' | 'waiting' | 'updated' | 'failed' | 'ignored';
 
@@ -404,6 +405,21 @@ export interface Settings {
   saveBackups: boolean;
   /** Backups kept per game. */
   saveBackupsKeep: number;
+  /** NVIDIA: newer DLSS files for Proton games, and the DLSS model to use. */
+  dlssUpgrade: boolean;
+  /** 'latest' or a DLSS version such as 310.9.16.0. */
+  dlssVersion: string;
+  dlssPreset: DlssPreset;
+  /** AMD: FSR 4 in games with FSR 3.1, through GE-Proton. */
+  fsr4Upgrade: boolean;
+  /** 'latest' or an FSR 4 version such as 4.1.1. */
+  fsr4Version: string;
+  /** DLSS 5 Neural Rendering: 'latest' or the SHA-256 of a stored nvngx_dlssnr.dll. */
+  nrRuntime: string;
+  /** OptiScaler build: 'latest' or an archive name from its nightly releases. */
+  nrOptiscaler: string;
+  /** How much of the frame the model works on (OptiScaler's WorkingScale). */
+  nrQuality: 'auto' | 'full' | 'balanced' | 'fast';
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
@@ -513,6 +529,43 @@ export interface ProtonInstall {
   removable: boolean;
   /** How many games use this version instead of the default. */
   usedBy?: number;
+}
+
+/** Which Proton to use for a game, from ProtonDB, Steam Deck verification, AreWeAntiCheatYet and umu. */
+/** DLSS model (DXVK-NVAPI render preset); 'game' leaves the game's own choice. */
+export type DlssPreset = 'latest' | 'm' | 'l' | 'k' | 'j' | 'e' | 'game';
+
+export interface NrStatus {
+  gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null };
+  /** The CUDA Toolkit's bin folder, needed to rebuild the runtime for RTX 20/30/40. */
+  cuda: string | null;
+  busy: 'patching' | 'downloading' | null;
+  error: string | null;
+  selected: string | null;
+  runtimes: Array<{ sha256: string; version: string | null; source: string; build: 'nvidia' | 'cross-generation' | 'patched'; needsPatch: boolean; patched: boolean }>;
+  optiscaler: Array<{ name: string; date: string; tested: boolean }>;
+  downloaded: string[];
+}
+
+export interface GraphicsVersions {
+  dlss: string[];
+  fsr4: string[];
+  /** DLSS-NR on AMD (NeuralHub): its newest release, and whether it has a Linux build. */
+  nrAmd: { version: string; linux: boolean; page: string } | null;
+}
+
+export interface ProtonAdvice {
+  /** The game's Steam id (also found by title for GOG, Epic and imported games). */
+  appid: number | null;
+  protondb: { tier: string; trendingTier: string | null; bestReportedTier: string | null; total: number } | null;
+  deck: 'verified' | 'playable' | 'unsupported' | 'unknown' | null;
+  /** Anti-cheat and whether it works on Linux (Supported, Running, Broken, Denied, Planned). */
+  antiCheat: { status: string; anticheats: string[] } | null;
+  verdict: 'great' | 'good' | 'risky' | 'blocked' | 'unknown';
+  /** The installed Proton build to use. */
+  recommended: { path: string; name: string } | null;
+  /** A newer GE-Proton to install first, when there is one. */
+  installRelease: { id: string; name: string } | null;
 }
 
 export interface ProtonReleaseList {

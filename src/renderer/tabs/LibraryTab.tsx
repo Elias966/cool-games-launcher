@@ -6,7 +6,7 @@ import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
 import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
-import type { DownloadItem, Game, ImageOptions, LaunchOptions, OwnedGame, ProtonInstall, Runner, SaveBackup } from '@shared/types';
+import type { DownloadItem, Game, ImageOptions, ProtonAdvice, LaunchOptions, OwnedGame, ProtonInstall, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { PlayWeek, usePlayStats } from '../components/PlayWeek';
@@ -597,6 +597,11 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
             <input type="checkbox" checked={l.wined3d} onChange={(e) => set({ wined3d: e.target.checked })} />
             <span>{t('Compatibility renderer (WineD3D) — for games that crash or show black screens')}</span>
           </label>
+          <label className="check">
+            <input type="checkbox" checked={l.neuralRendering} onChange={(e) => set({ neuralRendering: e.target.checked })} />
+            <span>{t('DLSS 5 Neural Rendering (OptiScaler, set up in Settings → Graphics)')}</span>
+          </label>
+          {l.neuralRendering && <span className="field__hint">{t('Its files go into the game folder at the next start and come out when you turn this off. Turn DLSS on in the game; OptiScaler\'s menu opens with the Insert key.')}</span>}
         </div>
       )}
       <div className="field">
@@ -671,6 +676,7 @@ function LibraryHero({ game }: { game: Game }) {
               <Button size="sm" variant="ghost" icon="trash" onClick={() => void attempt(() => api.invoke('library:uninstall', { id: game.id, removePrefix: false }))}>{t('Remove the copy from the Library')}</Button>
             </div>
           )}
+          {game.kind === 'windows' && <ProtonAdviceBox game={game} />}
           {game.store && (storeJob || game.storeUpdate) && (
             <div className="hero__store-update">
               {storeJob
@@ -802,15 +808,6 @@ function LibraryHero({ game }: { game: Game }) {
           </div>
           <LaunchOptionsPanel game={game} />
           <SavesPanel game={game} />
-          {game.kind === 'windows' && game.managed && (
-            <div className="field">
-              <span className="field__label">{t('Game runtimes')}</span>
-              <span className="field__hint">{game.runtimeInstallerDisabled ? t('Runtime installation is disabled with Valve Proton. Choose GE-Proton, CachyOS Proton or Wine to use game runtime installers.') : t('Visual C++, DirectX, OpenAL and similar installers shipped with the game are installed silently before its first start.')}</span>
-              <div className="launch-row">
-                <Button disabled={game.runtimeInstallerDisabled} variant="ghost" size="sm" icon="retry" onClick={() => void attempt(() => api.invoke('library:resetRuntimes', { id: game.id }), t('The runtimes will be installed again before the next start.'))}>{t('Reinstall runtimes')}</Button>
-              </div>
-            </div>
-          )}
           <div className="field">
             <span className="field__label">{t('Shortcuts')}</span>
             <div className="launch-row">
@@ -1057,5 +1054,50 @@ function OwnedHero({ o }: { o: OwnedGame }) {
         </div>
       </div>
     </section>
+  );
+}
+
+const TIER_LABEL: Record<string, string> = { platinum: 'Platinum', gold: 'Gold', silver: 'Silver', bronze: 'Bronze', borderline: 'Borderline', native: 'Native', pending: 'Pending' };
+
+/** The Proton build that suits this game, from ProtonDB, Steam Deck verification, anti-cheat and umu. */
+function ProtonAdviceBox({ game }: { game: Game }) {
+  const [a, setA] = useState<ProtonAdvice | null>(null);
+  const [loading, setLoading] = useState(false);
+  // The suggested build being downloaded; the game switches to it once it is installed.
+  const [fetching, setFetching] = useState<string | null>(null);
+  const load = () => { setLoading(true); void api.invoke('library:protonAdvice', { id: game.id }).then(setA).catch(() => setA(null)).finally(() => setLoading(false)); };
+  useEffect(load, [game.id, game.launch.protonPath]);
+  useEffect(() => setFetching(null), [game.launch.protonPath]);
+  if (loading && !a) return <p className="proton-advice proton-advice--loading muted">{t('Checking ProtonDB and other sources for the best Proton…')}</p>;
+  if (!a) return null;
+  const facts = [
+    a.protondb ? t('ProtonDB: {tier} ({n} reports)', { tier: TIER_LABEL[a.protondb.tier] ?? a.protondb.tier, n: a.protondb.total }) + (a.protondb.trendingTier && a.protondb.trendingTier !== a.protondb.tier ? ` · ${t('trending {tier}', { tier: TIER_LABEL[a.protondb.trendingTier] ?? a.protondb.trendingTier })}` : '') : t('ProtonDB: no reports found'),
+    a.deck && a.deck !== 'unknown' ? t('Steam Deck: {status}', { status: a.deck === 'verified' ? t('Verified') : a.deck === 'playable' ? t('Playable') : t('Unsupported') }) : null,
+  ].filter(Boolean).join(' · ');
+  const using = game.launch.protonPath && a.recommended?.path === game.launch.protonPath;
+  const install = (release: { id: string; name: string }) => void attempt(async () => {
+    const r = await api.invoke('library:installSuggestedProton', { id: game.id, release: release.id });
+    if (!r.ready) setFetching(release.name);
+  });
+  return (
+    <div className={`proton-advice proton-advice--${a.verdict}`}>
+      <span className="field__label">{t('Suggested Proton')}</span>
+      <span className="field__hint">{facts}</span>
+      {a.antiCheat && ['Denied', 'Broken'].includes(a.antiCheat.status) && (
+        <span className="field__hint proton-advice__warn">{t('Uses {list}, which blocks Linux: it will most likely not start on any Proton.', { list: a.antiCheat.anticheats.join(', ') })}</span>
+      )}
+      <div className="launch-row">
+        {fetching
+          ? <span className="field__hint" role="status"><span className="spinner" aria-hidden="true" /> {t('Downloading {name} (see Downloads); this game switches to it when it is ready.', { name: fetching })}</span>
+          : a.installRelease
+            ? <Button size="sm" variant="primary" icon="downloads" onClick={() => install(a.installRelease!)}>{t('Install and use {name}', { name: a.installRelease.name })}</Button>
+            : null}
+        {a.recommended && (using
+          ? <span className="field__hint">{t('This game uses {name}, the suggested build.', { name: a.recommended.name })}</span>
+          : <Button size="sm" variant={a.installRelease ? 'ghost' : 'primary'} icon="check" onClick={() => void attempt(() => api.invoke('library:configure', { id: game.id, launch: { protonPath: a.recommended!.path } }), t('{title} now uses {name}.', { title: game.title, name: a.recommended!.name }))}>{t('Use {name}', { name: a.recommended.name })}</Button>)}
+        <Button size="sm" variant="ghost" icon="reload" disabled={loading} onClick={load}>{t('Check again')}</Button>
+      </div>
+      <span className="field__hint">{t('GE-Proton is suggested first: it is Valve\'s Proton plus media codecs and the community\'s fixes for each game.')}</span>
+    </div>
   );
 }

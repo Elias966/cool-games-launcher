@@ -1,0 +1,499 @@
+// DLSS 5 Neural Rendering for Windows games under Proton, the way the Linux
+// community tools do it (dlss5-linux, DLSS5oneclick): an OptiScaler build with
+// Neural Rendering (GPL-3, y4my4my4m's fork of Dagherbou's) goes into the game
+// folder as a proxy DLL, loaded through WINEDLLOVERRIDES, and runs NVIDIA's
+// neural-rendering runtime (nvngx_dlssnr.dll) on the game's DLSS output.
+//
+// The runtime is NVIDIA's and is never downloaded: it comes from the person's
+// own games that ship DLSS 5 (found by a scan, so newer models arrive with game
+// updates) or from a file they import. NVIDIA builds it for RTX 50 cards; for
+// RTX 20/30/40 the open-source dlssnr-patcher (GPL-2) rebuilds its GPU code for
+// the card, here on the person's machine, with their CUDA Toolkit.
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, relative } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { NrStatus, Settings } from '@shared/types';
+import { readPeVersion } from './pe-version';
+
+type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
+
+export const OPTISCALER_REPO = 'y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG';
+export const PATCHER_REPO = 'dev-camo/dlssnr-patcher';
+/** The reviewed patcher (2026-09-03); moving it means reading the new commit first. */
+export const PATCHER_COMMIT = '98dac112990e5cea30ab03d74625fc848bce5c92';
+export const PATCHER_SHA256 = '6dabddd81214130b8a9daebbbc0dde3f6592f9806f42b0bd6bda355a2f46be10';
+/** The nightly dlss5-linux tested on FF7 Rebirth, 007 First Light and Horizon under Proton. */
+export const TESTED_OPTISCALER = 'OptiScaler_v10.0.0-pre1_20260906.7z';
+const RUNTIME = 'nvngx_dlssnr.dll';
+/** Proxy names OptiScaler answers to, in the order dlss5-linux tries them. */
+export const PROXY_NAMES = ['dxgi.dll', 'winmm.dll', 'version.dll', 'dbghelp.dll', 'wininet.dll', 'winhttp.dll'];
+
+/** What a runtime is, from its SHA-256 (dlss5-linux's FINDINGS.md lists the circulating builds). */
+export function identifyBuild(sha256: string): NrStatus['runtimes'][number]['build'] {
+  if (sha256.startsWith('e67dee209320cdaf')) return 'cross-generation';
+  if (sha256.startsWith('8270b350cd82de5c')) return 'patched';
+  return 'nvidia';
+}
+
+/** GPU generation from nvidia-smi's compute capability ("8.6" → ampere). */
+export function archFor(computeCap: string | null): NrStatus['gpu']['arch'] {
+  const m = /^(\d+)\.(\d+)/.exec(computeCap ?? '');
+  if (!m) return null;
+  const v = Number(m[1]) * 10 + Number(m[2]);
+  if (v === 75) return 'turing';
+  if (v >= 80 && v <= 87) return 'ampere';
+  if (v === 89) return 'ada';
+  if (v >= 100) return 'blackwell';
+  return null;
+}
+
+const ARCH_FLAG = { turing: '--turing', ampere: '--ampere', ada: '--ada', blackwell: '--blackwell' } as const;
+
+/** Compares dotted versions; missing parts count as 0. */
+export function compareVersions(a: string | null, b: string | null): number {
+  const x = (a ?? '').split('.').map(Number), y = (b ?? '').split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+  return 0;
+}
+
+/** Sets one key in one [section] of an ini text, adding either when missing. */
+export function setIniKey(text: string, section: string, key: string, value: string): string {
+  const lines = text.split(/\r?\n/);
+  const head = lines.findIndex((l) => l.trim().toLowerCase() === `[${section.toLowerCase()}]`);
+  if (head < 0) return `${text.replace(/\s*$/, '')}\n\n[${section}]\n${key}=${value}\n`;
+  let end = lines.findIndex((l, i) => i > head && /^\s*\[/.test(l));
+  if (end < 0) end = lines.length;
+  const at = lines.findIndex((l, i) => i > head && i < end && new RegExp(`^\\s*${key}\\s*=`, 'i').test(l));
+  if (at >= 0) lines[at] = `${key}=${value}`;
+  else lines.splice(head + 1, 0, `${key}=${value}`);
+  return lines.join('\n');
+}
+
+/** OptiScaler nightly archives, newest first; the copies bundled with NVIDIA's DLSS files are left out. */
+export function nightlyAssets(assets: Array<{ name?: string; browser_download_url?: string; digest?: string | null; size?: number }>) {
+  return assets
+    .filter((a) => /^OptiScaler_[\w.-]+_(\d{8})\.7z$/.test(a.name ?? '') && a.browser_download_url && /^sha256:[a-f0-9]{64}$/.test(a.digest ?? ''))
+    .map((a) => ({ name: a.name!, url: a.browser_download_url!, sha256: a.digest!.slice(7), date: /_(\d{8})\.7z$/.exec(a.name!)![1] }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * The folder holding the game's rendering executable: the Unreal shipping
+ * build in Binaries/Win64 rather than the small launcher at the top, a folder
+ * that already holds the game's DLSS above all.
+ */
+export function renderFolder(installDir: string | null, executable: string): string {
+  if (!installDir) return dirname(executable);
+  let best = { score: -1, dir: dirname(executable) };
+  const walk = (dir: string, depth: number) => {
+    let entries: import('node:fs').Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    const names = new Set(entries.map((e) => e.name.toLowerCase()));
+    for (const e of entries) {
+      if (e.isDirectory() && depth < 5 && !/^(engine|redist|_commonredist|directx|support)$/i.test(e.name)) walk(join(dir, e.name), depth + 1);
+      if (!e.isFile() || !/\.exe$/i.test(e.name) || /unins|crash|setup|redist|launcher/i.test(e.name)) continue;
+      const parts = relative(installDir, dir).toLowerCase().split('/');
+      let score = 0;
+      if (join(dir, e.name) === executable) score += 50;
+      if (parts.slice(-2).join('/') === 'binaries/win64') score += 65;
+      if (/shipping\.exe$/i.test(e.name)) score += 70;
+      if (names.has('nvngx_dlss.dll')) score += 220;
+      if (names.has('sl.interposer.dll')) score += 60;
+      if (score > best.score) best = { score, dir };
+    }
+  };
+  walk(installDir, 0);
+  return best.dir;
+}
+
+/** Folders under the game that hold its own DLSS: NGX looks for the runtime there too. */
+function dlssFolders(installDir: string | null): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    let entries: import('node:fs').Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    if (entries.some((e) => e.isFile() && e.name.toLowerCase() === 'nvngx_dlss.dll')) out.push(dir);
+    if (depth < 7) for (const e of entries) if (e.isDirectory()) walk(join(dir, e.name), depth + 1);
+  };
+  if (installDir) walk(installDir, 0);
+  return out;
+}
+
+function sha256File(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const h = createHash('sha256');
+    createReadStream(path).on('data', (c) => h.update(c)).on('error', reject).on('end', () => resolve(h.digest('hex')));
+  });
+}
+
+function run(cmd: string, args: string[], opts: { cwd?: string; timeout?: number } = {}): Promise<{ code: number; out: string }> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { cwd: opts.cwd, timeout: opts.timeout ?? 15_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ code: err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0, out: `${stdout}\n${stderr}`.trim() });
+    });
+  });
+}
+
+interface RuntimeMeta { sha256: string; version: string | null; source: string; addedAt: string }
+interface GameManifest { proxy: string; files: Array<{ path: string; backup: string | null }>; optiscaler: string; runtime: string }
+
+export interface NrDeps {
+  dataDir: string;
+  fetch: Fetch;
+  settings: () => Settings;
+  /** Install folders of the person's games, scanned for DLSS 5 runtimes. */
+  gameDirs: () => string[];
+  /** Extracts an archive (7z) into a folder, in the worker. */
+  extract: (archive: string, dest: string) => Promise<void>;
+  changed: () => void;
+}
+
+export class NeuralRendering {
+  private root: string;
+  private busy: NrStatus['busy'] = null;
+  private lastError: string | null = null;
+  private scanned = false;
+  private gpu: NrStatus['gpu'] | null = null;
+  private nightlies: ReturnType<typeof nightlyAssets> | null = null;
+
+  constructor(private deps: NrDeps) {
+    this.root = join(deps.dataDir, 'neural-rendering');
+  }
+
+  private dir(...p: string[]) { return join(this.root, ...p); }
+
+  /* ------------------------------------------------------------- runtimes */
+
+  runtimes(): RuntimeMeta[] {
+    const base = this.dir('runtimes');
+    if (!existsSync(base)) return [];
+    return readdirSync(base).flatMap((sha) => {
+      try { return [JSON.parse(readFileSync(join(base, sha, 'meta.json'), 'utf8')) as RuntimeMeta]; } catch { return []; }
+    }).sort((a, b) => compareVersions(b.version, a.version));
+  }
+
+  /** The runtime in use: the one chosen in Settings, or the newest. */
+  selected(): RuntimeMeta | null {
+    const all = this.runtimes();
+    const pick = this.deps.settings().nrRuntime;
+    return (pick !== 'latest' && all.find((r) => r.sha256 === pick)) || all[0] || null;
+  }
+
+  /** Copies a runtime into the launcher's store (each build once). */
+  async add(path: string, source: string): Promise<RuntimeMeta> {
+    const meta = readPeVersion(path);
+    const desc = meta?.resources.flatMap((r) => r.stringTables.map((t) => `${t.values.FileDescription ?? ''} ${t.values.ProductName ?? ''}`)).join(' ') ?? '';
+    if (!meta || !/dlss|ngx|neural/i.test(desc + basename(path))) throw new Error('This file is not NVIDIA\'s DLSS Neural Rendering runtime (nvngx_dlssnr.dll).');
+    const sha256 = await sha256File(path);
+    if (this.ownCopies().has(sha256)) throw new Error('This is a copy the launcher patched; import the original file.');
+    const dest = this.dir('runtimes', sha256);
+    const existing = this.runtimes().find((r) => r.sha256 === sha256);
+    if (existing) return existing;
+    mkdirSync(dest, { recursive: true });
+    copyFileSync(path, join(dest, `${RUNTIME}.part`));
+    renameSync(join(dest, `${RUNTIME}.part`), join(dest, RUNTIME));
+    const version = meta.resources.find((r) => r.fixedFileVersion)?.fixedFileVersion ?? null;
+    const rec: RuntimeMeta = { sha256, version, source, addedAt: new Date().toISOString() };
+    writeFileSync(join(dest, 'meta.json'), JSON.stringify(rec));
+    this.deps.changed();
+    return rec;
+  }
+
+  remove(sha256: string) {
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Unknown runtime');
+    rmSync(this.dir('runtimes', sha256), { recursive: true, force: true });
+    this.deps.changed();
+  }
+
+  /** Hashes of the files the launcher wrote (patched runtimes), so a scan does not import them back. */
+  private ownCopies(): Set<string> {
+    const own = new Set<string>();
+    for (const r of this.runtimes()) {
+      for (const f of safeList(this.dir('runtimes', r.sha256))) { const m = /^patched-.+-([a-f0-9]{64})\.dll$/.exec(f); if (m) own.add(m[1]); }
+    }
+    return own;
+  }
+
+  /** Steam libraries on this computer, for games installed outside the launcher (NBA 2K27). */
+  private steamLibraries(): string[] {
+    const roots = [join(homedir(), '.local/share/Steam'), join(homedir(), '.steam/steam'), join(homedir(), '.var/app/com.valvesoftware.Steam/.local/share/Steam')];
+    const libs = new Set<string>();
+    for (const r of roots) {
+      const vdf = join(r, 'steamapps/libraryfolders.vdf');
+      if (existsSync(join(r, 'steamapps/common'))) libs.add(join(r, 'steamapps/common'));
+      try { for (const m of readFileSync(vdf, 'utf8').matchAll(/"path"\s+"([^"]+)"/g)) libs.add(join(m[1].replace(/\\\\/g, '\\'), 'steamapps/common')); } catch { /* no Steam here */ }
+    }
+    return [...libs].filter((p) => existsSync(p));
+  }
+
+  /** Finds DLSS 5 runtimes in the person's games and adds the new ones: newer models arrive with game updates. */
+  async scan(): Promise<number> {
+    const own = this.ownCopies();
+    const installedByUs = new Set(this.manifests().flatMap((m) => m.files.map((f) => f.path)));
+    let found = 0, visited = 0;
+    const walk = async (dir: string, depth: number) => {
+      if (++visited > 150_000) return;
+      let entries: import('node:fs').Dirent[];
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const p = join(dir, e.name);
+        if (e.isDirectory() && depth < 8 && !e.isSymbolicLink()) await walk(p, depth + 1);
+        else if (e.isFile() && e.name.toLowerCase() === RUNTIME && !installedByUs.has(p)) {
+          try {
+            if (own.has(await sha256File(p))) continue;
+            const before = this.runtimes().length;
+            await this.add(p, p);
+            if (this.runtimes().length > before) found++;
+          } catch { /* not a runtime */ }
+        }
+      }
+    };
+    for (const d of new Set([...this.deps.gameDirs(), ...this.steamLibraries()])) await walk(d, 0);
+    this.scanned = true;
+    return found;
+  }
+
+  /* ---------------------------------------------------------- GPU and CUDA */
+
+  private async detectGpu(): Promise<NrStatus['gpu']> {
+    if (this.gpu) return this.gpu;
+    const r = await run('nvidia-smi', ['--query-gpu=name,compute_cap', '--format=csv,noheader']);
+    const [name, cap] = r.code === 0 ? r.out.split('\n')[0].split(',').map((s) => s.trim()) : [null, null];
+    this.gpu = { name: name || null, arch: archFor(cap ?? null) };
+    return this.gpu;
+  }
+
+  /** The CUDA Toolkit's bin folder (ptxas, fatbinary, cuobjdump), newest first. */
+  cudaBin(): string | null {
+    const dirs = [...(process.env.PATH ?? '').split(':'), '/opt/cuda/bin', '/usr/local/cuda/bin',
+      ...safeList('/usr/local').filter((n) => /^cuda-\d/.test(n)).sort((a, b) => compareVersions(b.slice(5), a.slice(5))).map((n) => `/usr/local/${n}/bin`)];
+    return dirs.find((d) => d && ['ptxas', 'fatbinary', 'cuobjdump'].every((t) => existsSync(join(d, t)))) ?? null;
+  }
+
+  /** Whether this card needs the runtime rebuilt: NVIDIA's own build runs on RTX 50 only. */
+  private needsPatch(r: RuntimeMeta, arch: NrStatus['gpu']['arch']): boolean {
+    return identifyBuild(r.sha256) === 'nvidia' && arch !== 'blackwell';
+  }
+
+  private patchedPath(r: RuntimeMeta, arch: string, patcherSha: string) {
+    return this.dir('runtimes', r.sha256, `patched-${arch}-${patcherSha.slice(0, 12)}`);
+  }
+
+  /**
+   * dlssnr-patcher at the reviewed commit, checked against its SHA-256 before
+   * it runs: a later commit is never run unseen. It reads the DLL, calls the
+   * CUDA tools and writes the result; it makes no network requests.
+   */
+  private async patcher(): Promise<{ sha: string; script: string }> {
+    const script = this.dir('patcher', PATCHER_COMMIT, 'dlssnr_patcher.py');
+    if (existsSync(script) && (await sha256File(script)) === PATCHER_SHA256) return { sha: PATCHER_COMMIT, script };
+    const res = await this.deps.fetch(`https://raw.githubusercontent.com/${PATCHER_REPO}/${PATCHER_COMMIT}/dlssnr_patcher.py`, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Could not download dlssnr-patcher (HTTP ${res.status}).`);
+    const body = Buffer.from(await res.arrayBuffer());
+    if (createHash('sha256').update(body).digest('hex') !== PATCHER_SHA256) throw new Error('The dlssnr-patcher download does not match the reviewed version; it was not run.');
+    mkdirSync(dirname(script), { recursive: true });
+    writeFileSync(script, body);
+    return { sha: PATCHER_COMMIT, script };
+  }
+
+  /** The runtime file for this card: the original, or one rebuilt for it. */
+  async ready(r: RuntimeMeta): Promise<string> {
+    const original = this.dir('runtimes', r.sha256, RUNTIME);
+    const gpu = await this.detectGpu();
+    if (!this.needsPatch(r, gpu.arch)) return original;
+    const arch = gpu.arch ?? 'all';
+    const done = safeList(this.dir('runtimes', r.sha256)).find((f) => f.startsWith(`patched-${arch}-`) && f.endsWith('.dll'));
+    if (done) return this.dir('runtimes', r.sha256, done);
+    return this.patch(r);
+  }
+
+  /** Rebuilds the runtime's GPU code for this card with dlssnr-patcher and the CUDA Toolkit. */
+  async patch(r: RuntimeMeta): Promise<string> {
+    if (this.busy) throw new Error('DLSS 5 is already being prepared; wait for it to finish.');
+    this.busy = 'patching';
+    this.lastError = null;
+    this.deps.changed();
+    try {
+      const cuda = this.cudaBin();
+      if (!cuda) throw new Error('Rebuilding DLSS 5 for this card needs NVIDIA\'s CUDA Toolkit (ptxas, fatbinary and cuobjdump). Install it, then try again.');
+      const gpu = await this.detectGpu();
+      const { sha, script } = await this.patcher();
+      const work = this.dir('work');
+      rmSync(work, { recursive: true, force: true });
+      mkdirSync(work, { recursive: true });
+      const out = join(work, RUNTIME);
+      const flags = gpu.arch ? [ARCH_FLAG[gpu.arch]] : [];
+      // -I: the patcher's folder and the working folder are not on Python's import path.
+      const res = await run('python3', ['-I', script, ...flags, '--cuda-bin', cuda, '--output', out, this.dir('runtimes', r.sha256, RUNTIME)], { cwd: work, timeout: 60 * 60_000 });
+      if (res.code !== 0 || !existsSync(out)) throw new Error(`dlssnr-patcher failed: ${res.out.split('\n').filter(Boolean).slice(-3).join(' ')}`);
+      const outSha = await sha256File(out);
+      const dest = `${this.patchedPath(r, gpu.arch ?? 'all', sha)}-${outSha}.dll`;
+      renameSync(out, dest);
+      return dest;
+    } catch (e) {
+      this.lastError = (e as Error).message;
+      throw e;
+    } finally {
+      this.busy = null;
+      this.deps.changed();
+    }
+  }
+
+  /* ------------------------------------------------------------ OptiScaler */
+
+  private async optiscalerList(refresh = false) {
+    if (this.nightlies && !refresh) return this.nightlies;
+    try {
+      const res = await this.deps.fetch(`https://api.github.com/repos/${OPTISCALER_REPO}/releases/tags/nightly`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20_000) });
+      if (res.ok) {
+        // The newest builds, and the one tested under Proton however old it gets.
+        const all = nightlyAssets(((await res.json()) as { assets?: [] }).assets ?? []);
+        this.nightlies = all.filter((a, i) => i < 20 || a.name === TESTED_OPTISCALER);
+      }
+    } catch { /* offline: downloaded builds stay usable */ }
+    return this.nightlies ?? [];
+  }
+
+  /** The OptiScaler build's folder, downloaded and checked against GitHub's SHA-256 when needed. */
+  private async optiscaler(): Promise<{ name: string; dir: string }> {
+    const want = this.deps.settings().nrOptiscaler;
+    const list = await this.optiscalerList();
+    const local = safeList(this.dir('optiscaler')).filter((n) => existsSync(join(this.dir('optiscaler', n), '.ok'))).sort().reverse();
+    const asset = want === 'latest' ? list[0] : list.find((a) => a.name === want);
+    const name = asset?.name ?? (want === 'latest' ? local[0] : local.find((n) => n === want));
+    if (!name) throw new Error('Could not reach GitHub to download OptiScaler.');
+    const dir = this.dir('optiscaler', name);
+    if (existsSync(join(dir, '.ok'))) return { name, dir };
+    if (!asset) throw new Error(`OptiScaler ${name} is no longer available; pick another build in Settings.`);
+    this.busy = 'downloading';
+    this.deps.changed();
+    try {
+      const tmp = this.dir('optiscaler', `${name}.part`);
+      mkdirSync(dirname(tmp), { recursive: true });
+      const res = await this.deps.fetch(asset.url, { signal: AbortSignal.timeout(30 * 60_000) });
+      if (!res.ok || !res.body) throw new Error(`OptiScaler download failed (HTTP ${res.status}).`);
+      await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), createWriteStream(tmp));
+      if ((await sha256File(tmp)) !== asset.sha256) { rmSync(tmp, { force: true }); throw new Error('The OptiScaler download does not match its published SHA-256.'); }
+      rmSync(dir, { recursive: true, force: true });
+      await this.deps.extract(tmp, dir);
+      rmSync(tmp, { force: true });
+      if (!existsSync(join(dir, 'OptiScaler.dll'))) throw new Error('The OptiScaler archive has no OptiScaler.dll.');
+      writeFileSync(join(dir, '.ok'), asset.sha256);
+      return { name, dir };
+    } finally {
+      this.busy = null;
+      this.deps.changed();
+    }
+  }
+
+  /* ------------------------------------------------------------- per game */
+
+  private manifestPath(gameId: number) { return this.dir('games', `${gameId}.json`); }
+  private manifests(): GameManifest[] {
+    return safeList(this.dir('games')).flatMap((f) => { try { return [JSON.parse(readFileSync(this.dir('games', f), 'utf8')) as GameManifest]; } catch { return []; } });
+  }
+  installed(gameId: number): GameManifest | null {
+    try { return JSON.parse(readFileSync(this.manifestPath(gameId), 'utf8')) as GameManifest; } catch { return null; }
+  }
+
+  /**
+   * Puts OptiScaler and the runtime into the game (again after a game update)
+   * and returns the environment lines for the launch.
+   */
+  async apply(game: { id: number; installDir: string | null; executable: string }): Promise<string[]> {
+    const runtime = this.selected();
+    if (!runtime) throw new Error('DLSS 5 needs nvngx_dlssnr.dll: open Settings → Graphics and import it, or scan your games for it.');
+    const dll = await this.ready(runtime);
+    const opti = await this.optiscaler();
+    const prev = this.installed(game.id);
+    const folder = renderFolder(game.installDir, game.executable);
+    // Another install (a newer build, or the game moved) is taken out first.
+    if (prev && (prev.optiscaler !== opti.name || prev.runtime !== basename(dll) || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder)) this.removeFrom(game.id);
+    const current = this.installed(game.id);
+    const proxy = current?.proxy ?? PROXY_NAMES.find((n) => !existsSync(join(folder, n))) ?? 'dxgi.dll';
+    const files: GameManifest['files'] = current?.files ?? [];
+    const backups = this.dir('backups', String(game.id));
+    const place = (from: string, to: string) => {
+      const known = files.find((f) => f.path === to);
+      let backup = known?.backup ?? null;
+      if (!known && existsSync(to)) {
+        backup = join(backups, createHash('sha1').update(to).digest('hex').slice(0, 12) + '-' + basename(to));
+        mkdirSync(backups, { recursive: true });
+        copyFileSync(to, backup);
+      }
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(from, to);
+      if (!known) files.push({ path: to, backup });
+    };
+    if (!current) {
+      place(join(opti.dir, 'OptiScaler.dll'), join(folder, proxy));
+      const tree = (rel: string) => {
+        for (const e of readdirSync(join(opti.dir, rel), { withFileTypes: true })) {
+          const r = rel ? join(rel, e.name) : e.name;
+          if (e.isDirectory()) { if (r !== 'Licenses') tree(r); }
+          else if (!/^(OptiScaler\.dll|OptiScaler\.ini|setup_\w+\.(sh|bat)|\.ok)$|\.(pdb|lib|exp)$/i.test(r)) place(join(opti.dir, r), join(folder, r));
+        }
+      };
+      tree('');
+      // The ini keeps what the person tunes in OptiScaler's overlay; it is written once.
+      if (!existsSync(join(folder, 'OptiScaler.ini'))) place(join(opti.dir, 'OptiScaler.ini'), join(folder, 'OptiScaler.ini'));
+      for (const d of new Set([folder, ...dlssFolders(game.installDir)])) place(dll, join(d, RUNTIME));
+    }
+    const ini = join(folder, 'OptiScaler.ini');
+    if (existsSync(ini)) {
+      const q = this.deps.settings().nrQuality;
+      let text = setIniKey(readFileSync(ini, 'utf8'), 'DlssNr', 'Enabled', 'true');
+      text = setIniKey(text, 'DlssNr', 'WorkingScale', q === 'fast' ? '0.5' : q === 'balanced' ? '0.75' : q === 'full' ? '1.0' : 'auto');
+      writeFileSync(ini, text);
+    }
+    mkdirSync(this.dir('games'), { recursive: true });
+    writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: basename(dll) } satisfies GameManifest));
+    return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, 'PROTON_ENABLE_NVAPI=1'];
+  }
+
+  /** Takes OptiScaler and the runtime out of the game and puts back what was there before. */
+  removeFrom(gameId: number) {
+    const m = this.installed(gameId);
+    if (!m) return;
+    for (const f of [...m.files].reverse()) {
+      try {
+        if (f.backup && existsSync(f.backup)) copyFileSync(f.backup, f.path);
+        else rmSync(f.path, { force: true });
+      } catch { /* the game folder may be gone */ }
+    }
+    rmSync(this.manifestPath(gameId), { force: true });
+    rmSync(this.dir('backups', String(gameId)), { recursive: true, force: true });
+  }
+
+  /* --------------------------------------------------------------- status */
+
+  async status(refresh = false): Promise<NrStatus> {
+    if (refresh || !this.scanned) await this.scan().catch(() => 0);
+    const gpu = await this.detectGpu();
+    const list = await this.optiscalerList(refresh);
+    const sel = this.selected();
+    return {
+      gpu,
+      cuda: this.cudaBin(),
+      busy: this.busy,
+      error: this.lastError,
+      selected: sel?.sha256 ?? null,
+      runtimes: this.runtimes().map((r) => ({
+        sha256: r.sha256, version: r.version, source: r.source, build: identifyBuild(r.sha256),
+        needsPatch: this.needsPatch(r, gpu.arch),
+        patched: safeList(this.dir('runtimes', r.sha256)).some((f) => f.startsWith(`patched-${gpu.arch ?? 'all'}-`)),
+      })),
+      optiscaler: list.map((a) => ({ name: a.name, date: a.date, tested: a.name === TESTED_OPTISCALER })),
+      downloaded: safeList(this.dir('optiscaler')).filter((n) => existsSync(join(this.dir('optiscaler', n), '.ok'))),
+    };
+  }
+}
+
+function safeList(dir: string): string[] {
+  try { return readdirSync(dir); } catch { return []; }
+}

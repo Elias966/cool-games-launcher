@@ -26,6 +26,8 @@ export class CompatManager {
   /** Archives that finished downloading while another version was being unpacked. */
   private unpackQueue: Array<[number, string]> = [];
   private waiting: Array<() => void> = [];
+  /** Work to run once a given package is installed, by package folder. */
+  private afterInstalled = new Map<string, Array<(path: string) => void>>();
   private runtimeNoticeShown = false;
   private python3: boolean;
 
@@ -170,6 +172,13 @@ export class CompatManager {
     else this.waiting.push(run);
   }
 
+  /** Runs once this package is installed: right away when it already is. */
+  afterInstall(dir: string, run: (path: string) => void) {
+    const dest = join(this.deps.dataDir, 'compat', dir);
+    if (this.valid(dest)) { run(dest); return; }
+    this.afterInstalled.set(dir, [...(this.afterInstalled.get(dir) ?? []), run]);
+  }
+
   recover() {
     for (const d of this.deps.repo.byState('completed')) {
       if (this.isOwnDownload(d.id) && d.finalPath && existsSync(d.finalPath) && ['none', 'installing'].includes(d.installState) ) {
@@ -222,6 +231,8 @@ export class CompatManager {
         ? tm('Proton is ready. Windows games can now use the Proton runner.')
         : tm('{name} is installed. Make it the default in Settings → Windows games, or choose it for one game in its Launch options.', { name: pin.version }));
       for (const run of this.waiting.splice(0)) run();
+      for (const run of this.afterInstalled.get(pin.dir) ?? []) run(dest);
+      this.afterInstalled.delete(pin.dir);
     } catch (e) {
       this.deps.repo.update(id, { installState: 'failed', installDetail: (e as Error).message });
       toast('error', tm('Proton setup failed: {detail}', { detail: (e as Error).message }));

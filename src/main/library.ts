@@ -1,3 +1,4 @@
+import { upscalerEnv } from './upscalers';
 import type { ForegroundWork } from './foreground';
 import type { SessionToken } from './store-session';
 import type { LocalGameAgent } from './game-agent';
@@ -109,7 +110,6 @@ export class Library {
   private removing = new Set<number>();
   private applying = new Set<number>();
   storeBusy: ((id: number) => boolean) | null = null;
-  private installingRuntimes = new Set<number>();
   private runningIds = new Set<number>();
   private installing = new Set<number>();
   private preparationQueue: number[] = [];
@@ -275,11 +275,10 @@ export class Library {
       lastPlayedAt: g.lastPlayedAt,
       playtimeSeconds: g.playtimeSeconds,
       status: g.status,
-      running: this.runningIds.has(g.id) || this.installingRuntimes.has(g.id),
+      running: this.runningIds.has(g.id),
       executableCandidates: g.candidates,
       version: versionLabel(g.installedVersion),
       versionCheck: g.installedVersion?.inspection,
-      runtimeInstallerDisabled: this.runtimeInstallerDisabled(g, undefined, protons),
       update: this.updateView(g),
       previousVersion: g.previous ? versionLabel(g.previous.version) ?? 'previous version' : null,
       canRollback: !!g.previous?.installDir && existsSync(g.previous.installDir),
@@ -398,6 +397,8 @@ export class Library {
   storeUpdates?: (g: GameRecord) => boolean;
   /** GOG/Epic: arguments the game needs at each start (Epic's login tokens), or null. */
   storeLaunchArgs?: (g: GameRecord) => Promise<string[] | null>;
+  /** Environment lines for a Proton launch (DLSS 5 Neural Rendering puts its files in place). */
+  launchEnv?: (g: GameRecord) => Promise<string[]>;
   /** GOG/Epic: a store game left the Library. */
   onUninstalled?: (g: GameRecord) => void;
 
@@ -845,14 +846,6 @@ export class Library {
 
   private tools = detectTools();
 
-  private runtimeInstallerDisabled(g: GameRecord, actualPath?: string, context?: { installed: ProtonInstall[]; defaultPath: string | null }) {
-    if (g.kind !== 'windows' || g.runner === 'wine') return false;
-    const installed = context?.installed ?? this.compat.installed();
-    const own = g.launch.protonPath && installed.some(p => p.path === g.launch.protonPath) ? g.launch.protonPath : null;
-    const path = actualPath ?? own ?? context?.defaultPath ?? this.compat.protonPath?.() ?? this.settings.get().protonPath;
-    return !!path && (installed.find(p => p.path === path)?.provider ?? protonProvider(basename(path))) === 'valve';
-  }
-
   private async runnerEnv(runner: Runner, launch?: LaunchOptions) {
     const s = this.settings.get();
     // A game's own Proton build, when it is still installed; otherwise the default.
@@ -865,8 +858,10 @@ export class Library {
   }
 
   /** Wrappers and environment from the game's launch options, for the install worker. */
-  private extras(launch: LaunchOptions) {
-    return { ...launch, tools: this.tools };
+  private extras(launch: LaunchOptions, proton: boolean, more: string[] = []) {
+    // Newer DLSS / FSR 4 from Settings → Graphics go first, so the game's own lines win.
+    const upscalers = proton ? upscalerEnv(this.settings.get()) : [];
+    return { ...launch, env: [...upscalers, ...more, launch.env].filter(Boolean).join('\n'), tools: this.tools };
   }
 
   private allowedRoot(g: GameRecord) {
@@ -905,9 +900,9 @@ export class Library {
       return;
     }
     if (runner === 'proton') this.compat.notifyRuntime();
-    if (g.kind === 'windows' && g.redistDone === null && g.managed && g.installDir) await this.installRuntimes(g, runner, env);
     // Epic games get their login tokens from legendary at each start.
     const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
+    const launchEnv = runner === 'proton' && this.launchEnv ? await this.launchEnv(g) : [];
     // Free the GPU (AI model and classifier) before the game starts, not after.
     await this.beforeGame?.().catch(() => undefined);
     this.work.signal.throwIfAborted();
@@ -920,7 +915,7 @@ export class Library {
       ...env,
       logPath: join(paths.logs, `game-${id}.log`),
       allowedRoot: this.allowedRoot(g),
-      extras: this.extras(g.launch),
+      extras: this.extras(g.launch, runner === 'proton', launchEnv),
       // The Steam id lets umu apply this game's known fixes (protonfixes).
       umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
     }).catch((e) => {
@@ -928,42 +923,6 @@ export class Library {
       if (this.runningIds.size === 0) this.playingListener?.(false);
       throw e;
     });
-  }
-
-  /**
-   * Before a Windows game's first start: the runtimes it ships (Visual C++,
-   * DirectX, OpenAL, XNA, Unreal prerequisites) are installed silently into
-   * its prefix. A failing installer never blocks the game.
-   */
-  private async installRuntimes(g: GameRecord, runner: Runner, env: Awaited<ReturnType<Library['runnerEnv']>>) {
-    if (runner === 'proton' && this.runtimeInstallerDisabled(g, env.protonPath)) return;
-    const found = await this.worker.call<Array<{ path: string; rel: string; label: string; args: string[] }>>('findRedists', { dir: g.installDir }).catch(() => []);
-    const done: string[] = [];
-    if (found.length) {
-      this.installingRuntimes.add(g.id);
-      this.broadcast();
-      toast('info', tm('First start of {title}: installing {list} into its Windows environment (once)…', { title: g.title, list: [...new Set(found.map((r) => r.label))].join(', ') }));
-      for (const r of found) {
-        const result = await this.worker.call<{ code: number | null }>('runSetup', {
-          gameId: g.id, executable: r.path, args: r.args, runner, prefixDir: g.prefixDir ?? join(paths.prefixes, `game-${g.id}`), ...env,
-          logPath: join(paths.logs, `game-${g.id}-runtimes.log`), allowedRoot: this.allowedRoot(g), installer: true,
-          umuId: g.art?.appid ? `umu-${g.art.appid}` : null,
-        }, AbortSignal.timeout(11 * 60_000)).catch(() => ({ code: null }));
-        console.log(`[library] ${g.title}: ${r.label} (${r.rel}) exited ${result.code}`);
-        done.push(r.rel);
-      }
-      this.installingRuntimes.delete(g.id);
-    }
-    this.games.update(g.id, { redistDone: done });
-    this.broadcast();
-  }
-
-  /** "Reinstall runtimes": they run again before the next start. */
-  resetRuntimes(id: number) {
-    const g = this.games.get(id);
-    if (g && this.runtimeInstallerDisabled(g)) throw new Error('Runtime installation is disabled with Valve Proton.');
-    this.games.update(id, { redistDone: null });
-    this.broadcast();
   }
 
   async stop(id: number) {

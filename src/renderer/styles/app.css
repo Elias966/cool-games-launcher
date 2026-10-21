@@ -3474,3 +3474,13 @@ kbd {
   .st-row { flex-wrap: wrap; }
   .st-row__control { max-width: 100%; }
 }
+
+/* The suggested Proton for a game. */
+.proton-advice { display: grid; gap: 6px; max-width: 640px; padding: 12px 14px; margin: 10px 0 6px; border-radius: 12px; border: 1px solid rgba(150, 172, 214, 0.18); background: rgba(8, 11, 18, 0.6); }
+.proton-advice--great { border-color: rgba(73, 255, 154, 0.35); }
+.proton-advice--good { border-color: rgba(72, 225, 255, 0.35); }
+.proton-advice--risky { border-color: rgba(255, 212, 71, 0.4); }
+.proton-advice--blocked { border-color: rgba(255, 79, 139, 0.5); }
+.proton-advice__warn { color: #ff9ab8; }
+.proton-advice--loading { display: block; font-size: 0.85rem; }
+.proton-advice .spinner { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; }

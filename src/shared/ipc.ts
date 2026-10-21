@@ -7,6 +7,7 @@ import type {
   AiStatus,
   DateCheckPhase,
   ImageOptions,
+  ProtonAdvice, GraphicsVersions, NrStatus,
   StoresState,
   StoreSearchResult,
   ProtonReleaseList,
@@ -71,6 +72,14 @@ export const settingsPatch = z
     afterInstall: z.enum(['ask', 'delete', 'keep']),
     saveBackups: z.boolean(),
     saveBackupsKeep: z.number().int().min(1).max(50),
+    dlssUpgrade: z.boolean(),
+    dlssVersion: z.string().regex(/^(?:latest|\d+(?:\.\d+){1,3})$/),
+    dlssPreset: z.enum(['latest', 'm', 'l', 'k', 'j', 'e', 'game']),
+    fsr4Upgrade: z.boolean(),
+    fsr4Version: z.string().regex(/^(?:latest|\d+(?:\.\d+){1,3})$/),
+    nrRuntime: z.string().regex(/^(?:latest|[a-f0-9]{64})$/),
+    nrOptiscaler: z.string().regex(/^(?:latest|OptiScaler_[\w.-]+\.7z)$/),
+    nrQuality: z.enum(['auto', 'full', 'balanced', 'fast']),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
     checkLauncherUpdates: z.boolean(),
@@ -149,7 +158,7 @@ export const requests = {
   'catalog:similar': z.object({ id }).strict(),
   'compat:protondb': z.object({ appid: z.number().int().positive().max(100_000_000) }).strict(),
   /** Opens ProtonDB / Steam store pages in the user's own browser (nothing else). */
-  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher)(?:\/|$)/) }).strict(),
+  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher|github\.com\/danielblnc\/DLSS-NR-on-AMD|developer\.nvidia\.com\/cuda-downloads)(?:\/|$)/) }).strict(),
   'wishlist:list': z.undefined(),
   'wishlist:add': z.object({ catalogId: id.optional(), title: z.string().min(1).max(200).optional() }).strict(),
   'wishlist:remove': z.object({ id: id.optional(), catalogId: id.optional() }).strict(),
@@ -201,6 +210,7 @@ export const requests = {
         gamemode: z.boolean(),
         nvapi: z.boolean(),
         wined3d: z.boolean(),
+        neuralRendering: z.boolean(),
         env: z.string().max(4000),
       }).partial().strict().optional(),
     })
@@ -211,6 +221,14 @@ export const requests = {
   'library:chooseCover': z.object({ id, appid: z.number().int().positive(), name: z.string().min(1).max(200) }).strict(),
   /** The cover and background images a Library game can be switched to. */
   'library:imageOptions': z.object({ id }).strict(),
+  /** Which Proton suits this game best (ProtonDB, Steam Deck, anti-cheat, umu). */
+  'library:protonAdvice': z.object({ id }).strict(),
+  'graphics:versions': z.object({ refresh: z.boolean() }).strict(),
+  'nr:status': z.object({ refresh: z.boolean() }).strict(),
+  'nr:import': z.undefined(),
+  'nr:prepare': z.undefined(),
+  'nr:remove': z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  'library:installSuggestedProton': z.object({ id, release: z.string().min(1).max(160) }).strict(),
   /** GOG and Epic accounts and the games they own. */
   'stores:state': z.undefined(),
   'stores:refresh': z.undefined(),
@@ -246,7 +264,6 @@ export const requests = {
   'library:restoreSaves': z.object({ id, stamp: z.string().regex(/^[0-9TZ-]{10,40}$/) }).strict(),
   'library:openSaves': z.object({ id }).strict(),
   'library:shortcut': z.object({ id, where: z.enum(['menu', 'desktop']) }).strict(),
-  'library:resetRuntimes': z.object({ id }).strict(),
   'app:diagnostics': z.undefined(),
   'launcher:updateStatus': z.undefined(),
   'library:stats': z.undefined(),
@@ -349,6 +366,13 @@ export interface Responses {
   'library:searchCover': Array<{ appid: number; name: string; image: string | null }>;
   'library:chooseCover': Game | null;
   'library:imageOptions': ImageOptions;
+  'library:protonAdvice': ProtonAdvice;
+  'graphics:versions': GraphicsVersions;
+  'nr:status': NrStatus;
+  'nr:import': NrStatus;
+  'nr:prepare': NrStatus;
+  'nr:remove': NrStatus;
+  'library:installSuggestedProton': { ready: boolean };
   'stores:state': StoresState;
   'stores:refresh': StoresState;
   'stores:login': StoresState;
@@ -381,7 +405,6 @@ export interface Responses {
   'library:restoreSaves': { files: number };
   'library:openSaves': void;
   'library:shortcut': { path: string };
-  'library:resetRuntimes': void;
   'app:diagnostics': { path: string };
   'launcher:updateStatus': LauncherUpdate;
   'library:stats': PlayStats;
@@ -398,6 +421,8 @@ export interface Responses {
 export interface Events {
   'policy:changed': { showNsfw: boolean; policyRevision: number };
   'settings:changed': Settings;
+  /** DLSS 5 Neural Rendering: a runtime was added, or preparing it started or finished. */
+  'nr:changed': void;
   'catalog:changed': { policyRevision: number; sourceId: number | null };
   'catalog:hidden': { policyRevision: number; ids: number[] };
   'sources:changed': Source[];
