@@ -11,7 +11,7 @@
 // the card, here on the person's machine, with their CUDA Toolkit.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
@@ -140,6 +140,8 @@ function run(cmd: string, args: string[], opts: { cwd?: string; timeout?: number
 }
 
 interface RuntimeMeta { sha256: string; version: string | null; source: string; addedAt: string }
+/** 'nr': NVIDIA's Neural Rendering on the upscaled picture; 'fsr4': OptiScaler's FSR 4 for AMD cards. */
+export type OptiMode = 'nr' | 'fsr4';
 interface GameManifest { proxy: string; files: Array<{ path: string; backup: string | null }>; optiscaler: string; runtime: string }
 
 export interface NrDeps {
@@ -402,18 +404,23 @@ export class NeuralRendering {
   }
 
   /**
-   * Puts OptiScaler and the runtime into the game (again after a game update)
-   * and returns the environment lines for the launch.
+   * Puts OptiScaler (and, for Neural Rendering, the runtime) into the game,
+   * again after a game update, and returns the environment lines for the launch.
+   * On AMD cards ('fsr4') OptiScaler turns the game's DLSS, XeSS or FSR 2 into FSR 4.
    */
-  async apply(game: { id: number; installDir: string | null; executable: string }): Promise<string[]> {
-    const runtime = this.selected();
-    if (!runtime) throw new Error('DLSS 5 needs nvngx_dlssnr.dll: open Settings → Graphics and import it, or scan your games for it.');
-    const dll = await this.ready(runtime);
+  async apply(game: { id: number; installDir: string | null; executable: string }, mode: OptiMode = 'nr'): Promise<string[]> {
+    let dll: string | null = null;
+    if (mode === 'nr') {
+      const runtime = this.selected();
+      if (!runtime) throw new Error('DLSS 5 needs nvngx_dlssnr.dll: open Settings → Graphics and import it, or scan your games for it.');
+      dll = await this.ready(runtime);
+    }
+    const tag = dll ? basename(dll) : 'fsr4';
     const opti = await this.optiscaler();
     const prev = this.installed(game.id);
     const folder = renderFolder(game.installDir, game.executable);
     // Another install (a newer build, or the game moved) is taken out first.
-    if (prev && (prev.optiscaler !== opti.name || prev.runtime !== basename(dll) || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder)) this.removeFrom(game.id);
+    if (prev && (prev.optiscaler !== opti.name || prev.runtime !== tag || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder)) this.removeFrom(game.id);
     const current = this.installed(game.id);
     const proxy = current?.proxy ?? PROXY_NAMES.find((n) => !existsSync(join(folder, n))) ?? 'dxgi.dll';
     const files: GameManifest['files'] = current?.files ?? [];
@@ -442,17 +449,34 @@ export class NeuralRendering {
       tree('');
       // The ini keeps what the person tunes in OptiScaler's overlay; it is written once.
       if (!existsSync(join(folder, 'OptiScaler.ini'))) place(join(opti.dir, 'OptiScaler.ini'), join(folder, 'OptiScaler.ini'));
-      for (const d of new Set([folder, ...dlssFolders(game.installDir)])) place(dll, join(d, RUNTIME));
+      if (dll) for (const d of new Set([folder, ...dlssFolders(game.installDir)])) place(dll, join(d, RUNTIME));
     }
     const ini = join(folder, 'OptiScaler.ini');
     if (existsSync(ini)) {
-      const q = this.deps.settings().nrQuality;
-      let text = setIniKey(readFileSync(ini, 'utf8'), 'DlssNr', 'Enabled', 'true');
+      const { nrQuality: q, nrPasses } = this.deps.settings();
+      let text = readFileSync(ini, 'utf8');
+      if (mode === 'fsr4') {
+        // FSR 2.3/3.1/4 through AMD's FidelityFX loader; DirectX 11 games through OptiScaler's 11on12 bridge.
+        text = setIniKey(setIniKey(setIniKey(text, 'Upscalers', 'Dx12Upscaler', 'ffx'), 'Upscalers', 'Dx11Upscaler', 'ffx_12'), 'DlssNr', 'Enabled', 'false');
+        writeFileSync(ini, text);
+        mkdirSync(this.dir('games'), { recursive: true });
+        writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: tag } satisfies GameManifest));
+        const v = this.deps.settings().fsr4Version;
+        // GE-Proton fetches AMD's FSR 4 library (amdxcffx64.dll) that OptiScaler hands the game to.
+        return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, `PROTON_FSR4_UPGRADE=${v === 'latest' ? '1' : v}`];
+      }
+      // DirectX 11 games reach Neural Rendering only through DLSS on the 11on12 bridge.
+      text = setIniKey(setIniKey(text, 'Upscalers', 'Dx11Upscaler', 'dlss_12'), 'DlssNr', 'Enabled', 'true');
       text = setIniKey(text, 'DlssNr', 'WorkingScale', q === 'fast' ? '0.5' : q === 'balanced' ? '0.75' : q === 'full' ? '1.0' : 'auto');
+      // Multipass: each pass sees the last one's picture. Later passes are eased so they refine
+      // rather than re-amplify (OptiScaler's own advice for PassOverrides).
+      const passes = Math.min(5, Math.max(1, Math.round(nrPasses || 1)));
+      text = setIniKey(text, 'DlssNr', 'Passes', passes > 1 ? String(passes) : 'auto');
+      text = setIniKey(text, 'DlssNr', 'PassOverrides', passes > 2 ? Array.from({ length: passes - 2 }, (_, i) => `${i + 3}:intensity=${Math.max(0.4, 0.8 - i * 0.15).toFixed(2)}`).join(';') : 'auto');
       writeFileSync(ini, text);
     }
     mkdirSync(this.dir('games'), { recursive: true });
-    writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: basename(dll) } satisfies GameManifest));
+    writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: tag } satisfies GameManifest));
     return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, 'PROTON_ENABLE_NVAPI=1'];
   }
 
@@ -466,6 +490,9 @@ export class NeuralRendering {
         else rmSync(f.path, { force: true });
       } catch { /* the game folder may be gone */ }
     }
+    // OptiScaler's own folder goes too, once empty (it held only what was placed above).
+    const proxyDir = dirname(m.files[0]?.path ?? '');
+    for (const d of [join(proxyDir, 'OptiScaler', 'D3D12_OptiScaler'), join(proxyDir, 'OptiScaler')]) { try { rmdirSync(d); } catch { /* not empty, or gone */ } }
     rmSync(this.manifestPath(gameId), { force: true });
     rmSync(this.dir('backups', String(gameId)), { recursive: true, force: true });
   }

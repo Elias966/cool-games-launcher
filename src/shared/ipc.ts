@@ -80,6 +80,7 @@ export const settingsPatch = z
     nrRuntime: z.string().regex(/^(?:latest|[a-f0-9]{64})$/),
     nrOptiscaler: z.string().regex(/^(?:latest|OptiScaler_[\w.-]+\.7z)$/),
     nrQuality: z.enum(['auto', 'full', 'balanced', 'fast']),
+    nrPasses: z.number().int().min(1).max(5),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
     checkLauncherUpdates: z.boolean(),
@@ -211,6 +212,7 @@ export const requests = {
         nvapi: z.boolean(),
         wined3d: z.boolean(),
         neuralRendering: z.boolean(),
+        optiscalerFsr4: z.boolean(),
         env: z.string().max(4000),
       }).partial().strict().optional(),
     })

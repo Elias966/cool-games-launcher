@@ -601,7 +601,12 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
             <input type="checkbox" checked={l.neuralRendering} onChange={(e) => set({ neuralRendering: e.target.checked })} />
             <span>{t('DLSS 5 Neural Rendering (OptiScaler, set up in Settings → Graphics)')}</span>
           </label>
-          {l.neuralRendering && <span className="field__hint">{t('Its files go into the game folder at the next start and come out when you turn this off. Turn DLSS on in the game; OptiScaler\'s menu opens with the Insert key.')}</span>}
+          <label className="check">
+            <input type="checkbox" checked={l.optiscalerFsr4} disabled={l.neuralRendering} onChange={(e) => set({ optiscalerFsr4: e.target.checked })} />
+            <span>{t('AMD: FSR 4 in this game through OptiScaler (for games with DLSS, XeSS or FSR 2)')}</span>
+          </label>
+          {l.optiscalerFsr4 && !l.neuralRendering && <span className="field__hint">{t('Needs a Radeon RX 7000 or 9000 card and GE-Proton 10-26 or newer. Its files go into the game folder at the next start and come out when you turn this off. Pick DLSS, XeSS or FSR in the game.')}</span>}
+          {l.neuralRendering && <span className="field__hint">{t('Its files go into the game folder at the next start and come out when you turn this off. Turn DLSS, FSR or XeSS on in the game; OptiScaler\'s menu opens with the Insert key.')}</span>}
         </div>
       )}
       <div className="field">

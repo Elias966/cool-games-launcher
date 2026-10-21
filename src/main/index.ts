@@ -524,9 +524,10 @@ async function main() {
   });
   // DLSS 5 Neural Rendering: its files go in before a launch and come out when it is turned off.
   library.launchEnv = async (g) => {
-    if (!g.launch.neuralRendering || !g.executable) { neural.removeFrom(g.id); return []; }
-    if (neural.selected() && !neural.installed(g.id)) toast('info', tm('Setting up DLSS 5 Neural Rendering for {title}…', { title: g.title }));
-    return neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable });
+    const mode = g.launch.neuralRendering ? 'nr' : g.launch.optiscalerFsr4 ? 'fsr4' : null;
+    if (!mode || !g.executable) { neural.removeFrom(g.id); return []; }
+    if (!neural.installed(g.id) && (mode === 'fsr4' || neural.selected())) toast('info', mode === 'nr' ? tm('Setting up DLSS 5 Neural Rendering for {title}…', { title: g.title }) : tm('Setting up FSR 4 (OptiScaler) for {title}…', { title: g.title }));
+    return neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable }, mode);
   };
   library.onUninstalled = (g) => stores.forget(g);
   stores.recover();
@@ -897,7 +898,9 @@ async function main() {
     'library:favorite': ({ id, favorite }) => library.setFavorite(id, favorite),
     'library:uninstall': ({ id, removePrefix }) => library.uninstall(id, removePrefix),
     'library:configure': ({ id, ...patch }) => {
-      if (patch.launch?.neuralRendering === false) neural.removeFrom(id);
+      const was = gamesRepo.get(id)?.launch;
+      const next = { ...was, ...patch.launch };
+      if (patch.launch && was && !next.neuralRendering && !next.optiscalerFsr4) neural.removeFrom(id);
       return library.configure(id, patch);
     },
     'nr:status': ({ refresh }) => neural.status(refresh),

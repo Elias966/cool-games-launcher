@@ -309,6 +309,8 @@ export interface LaunchOptions {
   wined3d: boolean;
   /** DLSS 5 Neural Rendering through OptiScaler (Settings → Graphics). */
   neuralRendering: boolean;
+  /** AMD: FSR 4 through OptiScaler in games that have DLSS, XeSS or FSR 2 (Settings → Graphics). */
+  optiscalerFsr4: boolean;
   /** Extra environment variables, one KEY=VALUE per line. */
   env: string;
 }
@@ -331,7 +333,7 @@ export interface SaveBackup {
   version: string | null;
 }
 
-export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, neuralRendering: false, env: '' };
+export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, neuralRendering: false, optiscalerFsr4: false, env: '' };
 
 export type GameUpdateState = 'available' | 'downloading' | 'preparing' | 'waiting' | 'updated' | 'failed' | 'ignored';
 
@@ -420,6 +422,8 @@ export interface Settings {
   nrOptiscaler: string;
   /** How much of the frame the model works on (OptiScaler's WorkingScale). */
   nrQuality: 'auto' | 'full' | 'balanced' | 'fast';
+  /** Times the model runs over the picture, each pass on the last one's result (stronger, real-life look). */
+  nrPasses: number;
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */

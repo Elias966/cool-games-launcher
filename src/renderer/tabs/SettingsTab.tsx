@@ -621,6 +621,9 @@ function GraphicsSection({ settings }: { settings: Settings }) {
             {versionOptions(versions?.fsr4, settings.fsr4Version)}
           </select>
         </Row>
+        <Row label={t('FSR 4 in more games (OptiScaler)')} desc={t('For games that only have DLSS, XeSS or FSR 2: OptiScaler goes into the game folder and runs FSR 4 in their place, with the FSR 4 version chosen above. Turn it on per game in its Launch options. Needs a Radeon RX 7000 or 9000 card. Do not use it in online games with anti-cheat.')}>
+          <OptiscalerBuild settings={settings} />
+        </Row>
         <Row
           label={t('DLSS Neural Rendering on AMD (NeuralHub)')}
           desc={nr
@@ -643,6 +646,21 @@ const BUILD_LABEL: Record<NrStatus['runtimes'][number]['build'], string> = {
 };
 
 /** DLSS 5 Neural Rendering: the runtime (from the person's games), rebuilt for their card, and OptiScaler. */
+/** The OptiScaler build list, shared by Neural Rendering (NVIDIA) and FSR 4 (AMD). */
+function OptiscalerBuild({ settings }: { settings: Settings }) {
+  const [st, setSt] = useState<NrStatus | null>(null);
+  useEffect(() => { void api.invoke('nr:status', { refresh: false }).then(setSt).catch(() => undefined); }, []);
+  return (
+    <select className="input" aria-label={t('OptiScaler build')} value={settings.nrOptiscaler} onChange={(e) => void update({ nrOptiscaler: e.target.value })}>
+      <option value="latest">{st?.optiscaler[0] ? t('Newest ({version}, updates automatically)', { version: st.optiscaler[0].date }) : t('Newest (updates automatically)')}</option>
+      {[...new Set([...(st?.optiscaler.map((o) => o.name) ?? []), ...(st?.downloaded ?? []), ...(settings.nrOptiscaler !== 'latest' ? [settings.nrOptiscaler] : [])])].map((n) => {
+        const o = st?.optiscaler.find((x) => x.name === n);
+        return <option key={n} value={n}>{`${o?.date ?? n}${o?.tested ? ` · ${t('tested')}` : ''}${st?.downloaded.includes(n) ? ` · ${t('downloaded')}` : ''}`}</option>;
+      })}
+    </select>
+  );
+}
+
 function NeuralRenderingGroup({ settings }: { settings: Settings }) {
   const [st, setSt] = useState<NrStatus | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -660,13 +678,13 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
   const archName = st?.gpu.arch ? { turing: 'RTX 20', ampere: 'RTX 30', ada: 'RTX 40', blackwell: 'RTX 50' }[st.gpu.arch] : null;
   return (
     <Group title={t('NVIDIA · DLSS 5 Neural Rendering')} aside={<Button size="sm" variant="ghost" icon="search" disabled={scanning} onClick={() => void load(true)}>{scanning ? t('Scanning your games…') : t('Scan my games')}</Button>}>
-      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s DLSS picture. Turn it on per game in its Launch options, then turn DLSS on in the game. Works in DirectX 12 games that have DLSS. Do not use it in online games with anti-cheat.')} />
+      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s upscaled picture. The game does not need DLSS 5: any game with DLSS 2 or newer, FSR 2 or newer, or XeSS works, older games included (DirectX 12, and DirectX 11 through OptiScaler\'s bridge). Turn it on per game in its Launch options, then turn that upscaler on in the game. Do not use it in online games with anti-cheat.')} />
       <Row label={t('Graphics card')} desc={st ? `${st.gpu.name ?? t('No NVIDIA card found')}${archName ? ` · ${archName}` : ''}` : t('Checking…')} />
       <Row
         label={t('Neural Rendering model')}
         desc={st?.runtimes.length
           ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
-          : t('No nvngx_dlssnr.dll yet. It ships with games that have DLSS 5 (NBA 2K27, Hogwarts Legacy from 5 November); a scan finds it in your games, and newer models arrive with their updates. You can also import the file.')}
+          : t('No nvngx_dlssnr.dll yet. Only the file comes from a DLSS 5 game (NBA 2K27, Hogwarts Legacy from 5 November); after that it works in your other games too. A scan finds it in your games, and newer models arrive with their updates. You can also import the file.')}
       >
         <div className="st-inline">
           {!!st?.runtimes.length && (
@@ -693,12 +711,14 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
       )}
       {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}
       <Row label={t('OptiScaler build')} desc={t('Newest follows each nightly build by itself. The marked build is the one tested under Proton on FF7 Rebirth, 007 First Light and Horizon.')}>
-        <select className="input" aria-label={t('OptiScaler build')} value={settings.nrOptiscaler} onChange={(e) => void update({ nrOptiscaler: e.target.value })}>
-          <option value="latest">{st?.optiscaler[0] ? t('Newest ({version}, updates automatically)', { version: st.optiscaler[0].date }) : t('Newest (updates automatically)')}</option>
-          {[...new Set([...(st?.optiscaler.map((o) => o.name) ?? []), ...(st?.downloaded ?? []), ...(settings.nrOptiscaler !== 'latest' ? [settings.nrOptiscaler] : [])])].map((n) => {
-            const o = st?.optiscaler.find((x) => x.name === n);
-            return <option key={n} value={n}>{`${o?.date ?? n}${o?.tested ? ` · ${t('tested')}` : ''}${st?.downloaded.includes(n) ? ` · ${t('downloaded')}` : ''}`}</option>;
-          })}
+        <OptiscalerBuild settings={settings} />
+      </Row>
+      <Row label={t('Realism strength')} desc={t('How many times the model runs over the picture, each time on its own result: two passes doubles the real-life look. Each pass costs as much as the first, so on an RTX 3070 two passes roughly halves the frame rate; pair it with Balanced or Fast below.')}>
+        <select className="input" aria-label={t('Realism strength')} value={String(settings.nrPasses)} onChange={(e) => void update({ nrPasses: Number(e.target.value) })}>
+          <option value="1">{t('Natural (1 pass)')}</option>
+          <option value="2">{t('Double (2 passes)')}</option>
+          <option value="3">{t('Triple (3 passes)')}</option>
+          <option value="5">{t('Maximum (5 passes, very heavy)')}</option>
         </select>
       </Row>
       <Row label={t('Neural Rendering quality')} desc={t('How much of the picture the model works on. On RTX 20 and 30 cards Balanced or Fast keeps the frame rate playable. More settings are in OptiScaler\'s in-game menu.')}>

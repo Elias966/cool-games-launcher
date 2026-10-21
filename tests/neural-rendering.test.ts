@@ -63,7 +63,7 @@ describe('neural rendering in a game folder', () => {
     put(join(game, 'Plugins/DLSS/Win64/nvngx_dlss.dll'));
     put(join(game, 'Plugins/DLSS/Win64/nvngx_dlssnr.dll'), 'older model');
 
-    const settings = { nrRuntime: 'latest', nrOptiscaler: 'OptiScaler_v10.0.0-pre1_20260906.7z', nrQuality: 'balanced' } as Settings;
+    const settings = { nrRuntime: 'latest', nrOptiscaler: 'OptiScaler_v10.0.0-pre1_20260906.7z', nrQuality: 'balanced', nrPasses: 1 } as Settings;
     const nr = new NeuralRendering({
       dataDir: data, settings: () => settings, gameDirs: () => [], changed: () => undefined,
       fetch: async () => new Response('', { status: 503 }), extract: async () => { throw new Error('no download in tests'); },
@@ -85,8 +85,15 @@ describe('neural rendering in a game folder', () => {
     expect(ini).toContain('Enabled=true');
     expect(ini).toContain('WorkingScale=0.75');
 
-    // A second start leaves the install alone.
+    expect(ini).toContain('Passes=auto');
+    expect(ini).toContain('Dx11Upscaler=dlss_12');
+
+    // A second start leaves the install alone, and takes the new strength: three passes, later ones eased.
+    settings.nrPasses = 3;
     expect(await nr.apply({ id: 7, installDir: game, executable: exe })).toEqual(env);
+    const ini3 = readFileSync(join(win64, 'OptiScaler.ini'), 'utf8');
+    expect(ini3).toContain('Passes=3');
+    expect(ini3).toContain('PassOverrides=3:intensity=0.80');
 
     nr.removeFrom(7);
     expect(existsSync(join(win64, 'winmm.dll'))).toBe(false);
@@ -95,6 +102,32 @@ describe('neural rendering in a game folder', () => {
     expect(readFileSync(join(game, 'Plugins/DLSS/Win64/nvngx_dlssnr.dll'), 'utf8')).toBe('older model');
     expect(readFileSync(join(win64, 'dxgi.dll'), 'utf8')).toBe('the game\'s own dxgi');
     expect(nr.installed(7)).toBeNull();
+  });
+
+  it('gives AMD cards FSR 4 through OptiScaler, without NVIDIA\'s model', async () => {
+    const data = temp(), game = temp();
+    const opti = join(data, 'neural-rendering', 'optiscaler', 'OptiScaler_v10.0.0-pre1_20261021.7z');
+    for (const f of ['.ok', 'OptiScaler.dll', 'OptiScaler/amd_fidelityfx_upscaler_dx12.dll']) put(join(opti, f), f);
+    put(join(opti, 'OptiScaler.ini'), '[Upscalers]\nDx11Upscaler=auto\nDx12Upscaler=auto\n\n[DlssNr]\nEnabled=auto\n');
+    const exe = join(game, 'game.exe');
+    put(exe);
+    const nr = new NeuralRendering({
+      dataDir: data, settings: () => ({ nrRuntime: 'latest', nrOptiscaler: 'latest', nrQuality: 'auto', nrPasses: 1, fsr4Version: '4.1.1' }) as Settings, gameDirs: () => [], changed: () => undefined,
+      fetch: async () => new Response('', { status: 503 }), extract: async () => undefined,
+    });
+    const env = await nr.apply({ id: 3, installDir: game, executable: exe }, 'fsr4');
+    expect(env).toEqual(['WINEDLLOVERRIDES=dxgi=n,b', 'PROTON_FSR4_UPGRADE=4.1.1']);
+    const ini = readFileSync(join(game, 'OptiScaler.ini'), 'utf8');
+    expect(ini).toContain('Dx12Upscaler=ffx');
+    expect(ini).toContain('Dx11Upscaler=ffx_12');
+    expect(ini).toContain('Enabled=false');
+    expect(existsSync(join(game, 'nvngx_dlssnr.dll'))).toBe(false);
+    // Switching to Neural Rendering needs NVIDIA's model; nothing changes in the game without it.
+    await expect(nr.apply({ id: 3, installDir: game, executable: exe }, 'nr')).rejects.toThrow(/nvngx_dlssnr/);
+    nr.removeFrom(3);
+    expect(existsSync(join(game, 'dxgi.dll'))).toBe(false);
+    expect(existsSync(join(game, 'OptiScaler.ini'))).toBe(false);
+    expect(existsSync(join(game, 'OptiScaler'))).toBe(false);
   });
 
   it('asks for the model before anything goes into the game', async () => {

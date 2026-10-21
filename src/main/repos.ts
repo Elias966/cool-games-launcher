@@ -88,6 +88,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     nrRuntime: 'latest',
     nrOptiscaler: 'latest',
     nrQuality: 'auto',
+    nrPasses: 1,
     closeToTray: true,
     freeGpuWhilePlaying: true,
     hideWomenCovers: false,
