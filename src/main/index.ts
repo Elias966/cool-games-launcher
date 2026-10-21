@@ -522,6 +522,11 @@ async function main() {
     extract: (archive, dest) => installWorker.call('extractCompat', { path: archive, dest }),
     changed: () => publish('nr:changed', undefined),
   });
+  // A Neural Rendering file downloaded in the browser is picked up from Downloads by itself.
+  const nrDownloadsTimer = setInterval(() => {
+    void neural.fromDownloads().then((n) => { if (n) toast('success', tm('Found a new DLSS 5 Neural Rendering file in Downloads; games use the newest one.')); }).catch(() => undefined);
+  }, 2 * 60_000);
+  nrDownloadsTimer.unref?.();
   // DLSS 5 Neural Rendering: its files go in before a launch and come out when it is turned off.
   library.launchEnv = async (g) => {
     const mode = g.launch.neuralRendering ? 'nr' : g.launch.optiscalerFsr4 ? 'fsr4' : null;
@@ -915,6 +920,7 @@ async function main() {
       await neural.ready(sel);
       return neural.status();
     },
+    'nr:installCuda': async () => { await neural.fetchCuda(); return neural.status(); },
     'nr:remove': async ({ sha256 }) => { neural.remove(sha256); return neural.status(); },
     'library:import': async () => {
       const game = await library.importGame();
@@ -1146,6 +1152,7 @@ async function main() {
       shuttingDown = true;
       storeRequestedActive = false;
       clearInterval(protonRefreshTimer);
+      clearInterval(nrDownloadsTimer);
       coverCheck.stop();
       siteDates.stop();
       updates.stop();

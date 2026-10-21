@@ -639,6 +639,13 @@ function GraphicsSection({ settings }: { settings: Settings }) {
   );
 }
 
+const DLSS_KIND_LABEL: Record<NrStatus['downloads'][number]['files'][number]['kind'], string> = {
+  'super-resolution': tk('DLSS Super Resolution'),
+  'ray-reconstruction': tk('DLSS Ray Reconstruction'),
+  'frame-generation': tk('DLSS Frame Generation'),
+  other: tk('another DLSS file'),
+};
+
 const BUILD_LABEL: Record<NrStatus['runtimes'][number]['build'], string> = {
   nvidia: tk('NVIDIA build (RTX 50)'),
   'cross-generation': tk('Cross-generation build (RTX 20/30/40)'),
@@ -678,13 +685,13 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
   const archName = st?.gpu.arch ? { turing: 'RTX 20', ampere: 'RTX 30', ada: 'RTX 40', blackwell: 'RTX 50' }[st.gpu.arch] : null;
   return (
     <Group title={t('NVIDIA · DLSS 5 Neural Rendering')} aside={<Button size="sm" variant="ghost" icon="search" disabled={scanning} onClick={() => void load(true)}>{scanning ? t('Scanning your games…') : t('Scan my games')}</Button>}>
-      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s upscaled picture. The game does not need DLSS 5: any game with DLSS 2 or newer, FSR 2 or newer, or XeSS works, older games included (DirectX 12, and DirectX 11 through OptiScaler\'s bridge). Turn it on per game in its Launch options, then turn that upscaler on in the game. Do not use it in online games with anti-cheat.')} />
+      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s upscaled picture. The game does not need DLSS 5: any game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS works, older games included (DirectX 12, and DirectX 11 through OptiScaler\'s bridge). Turn it on per game in its Launch options, then turn that upscaler on in the game. Do not use it in online games with anti-cheat.')} />
       <Row label={t('Graphics card')} desc={st ? `${st.gpu.name ?? t('No NVIDIA card found')}${archName ? ` · ${archName}` : ''}` : t('Checking…')} />
       <Row
         label={t('Neural Rendering model')}
         desc={st?.runtimes.length
           ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
-          : t('No nvngx_dlssnr.dll yet. Only the file comes from a DLSS 5 game (NBA 2K27, Hogwarts Legacy from 5 November); after that it works in your other games too. A scan finds it in your games, and newer models arrive with their updates. You can also import the file.')}
+          : t('No nvngx_dlssnr.dll yet. Only the file comes from DLSS 5: after that it works in your DLSS 2, 3 and 4 games too. Download it in your browser (on TechSpot\'s DLSS files page, the download named DLSS Neural Rendering) and the launcher picks it up from your Downloads folder by itself, also inside a .zip or .7z; download a newer one whenever it is updated. Games that ship it are found too (NBA 2K27, Hogwarts Legacy from 5 November). Note the name: nvngx_dlss.dll is regular DLSS, nvngx_dlssnr.dll is Neural Rendering.')}
       >
         <div className="st-inline">
           {!!st?.runtimes.length && (
@@ -693,20 +700,39 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
               {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])}`}</option>)}
             </select>
           )}
+          <Button size="sm" variant={st?.runtimes.length ? 'ghost' : 'primary'} icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html' }))}>{t('Get it from TechSpot')}</Button>
           <Button size="sm" variant="ghost" icon="import" onClick={() => void attempt(async () => setSt(await api.invoke('nr:import')))}>{t('Import…')}</Button>
           {sel && settings.nrRuntime !== 'latest' && <IconButton icon="trash" label={t('Remove this model')} onClick={() => void attempt(async () => { await update({ nrRuntime: 'latest' }); setSt(await api.invoke('nr:remove', { sha256: sel.sha256 })); })} />}
         </div>
       </Row>
+      {st?.gpu.arch && st.gpu.arch !== 'blackwell' && (
+        <Row
+          label={t('CUDA tools')}
+          desc={st.cuda
+            ? t('Ready in {path}. dlssnr-patcher uses them to rebuild the model for your card.', { path: st.cuda })
+            : t('NVIDIA\'s ptxas, fatbinary and cuobjdump (CUDA 13.3.1), needed to rebuild the model for RTX 20, 30 and 40 cards. They are downloaded from NVIDIA (about 32 MB), checked against NVIDIA\'s published SHA-256 and kept in the launcher\'s folder; nothing is installed on the system and the graphics driver is not touched.')}
+        >
+          {!st.cuda && <Button size="sm" variant="primary" icon="downloads" disabled={!!st.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:installCuda')), t('The CUDA tools are ready.'))}>{st.busy === 'cuda' ? t('Downloading…') : t('Download from NVIDIA')}</Button>}
+        </Row>
+      )}
+      {!!st?.downloads.length && !st.runtimes.length && (
+        <Row
+          label={t('In your Downloads')}
+          desc={<>{st.downloads.map((d) => (
+            <span key={d.file} className="proton-advice__warn" style={{ display: 'block' }}>
+              {d.files.length
+                ? t('{file} holds {list}, not Neural Rendering (nvngx_dlssnr.dll). Newer DLSS above already keeps that file up to date. Look for the download named DLSS Neural Rendering (nvngx_dlssnr.dll).', { file: d.file, list: d.files.map((f) => `${f.name}${f.version ? ` ${f.version}` : ''} (${t(DLSS_KIND_LABEL[f.kind])})`).join(', ') })
+                : t('{file} has no NVIDIA DLSS files in it.', { file: d.file })}
+            </span>
+          ))}</>}
+        />
+      )}
       {sel?.needsPatch && (
         <Row
           label={t('Rebuild for your card')}
-          desc={st?.cuda
-            ? t('NVIDIA builds the model for RTX 50. dlssnr-patcher (open source) rebuilds its GPU code for your card on this computer, using the CUDA Toolkit in {path}. This happens once per model, by itself at the first launch, or now.', { path: st.cuda })
-            : t('NVIDIA builds the model for RTX 50. To run it on your card, dlssnr-patcher (open source) rebuilds it on this computer and needs NVIDIA\'s CUDA Toolkit 13 (ptxas, fatbinary, cuobjdump). Install it from NVIDIA, then come back here.')}
+          desc={t('NVIDIA builds the model for RTX 50. dlssnr-patcher (open source) rebuilds its GPU code for your card on this computer with the CUDA tools above (downloaded first when missing). This happens once per model, by itself at the first launch, or now.')}
         >
-          {st?.cuda
-            ? <Button size="sm" variant="primary" icon="sparkle" disabled={!!st.busy || sel.patched} onClick={() => void attempt(async () => setSt(await api.invoke('nr:prepare')), t('DLSS 5 is ready for your card.'))}>{st.busy === 'patching' ? t('Rebuilding…') : sel.patched ? t('Ready') : t('Rebuild now')}</Button>
-            : <Button size="sm" variant="ghost" icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://developer.nvidia.com/cuda-downloads' }))}>{t('Get the CUDA Toolkit')}</Button>}
+          <Button size="sm" variant="primary" icon="sparkle" disabled={!!st?.busy || sel.patched} onClick={() => void attempt(async () => setSt(await api.invoke('nr:prepare')), t('DLSS 5 is ready for your card.'))}>{st?.busy === 'patching' ? t('Rebuilding…') : sel.patched ? t('Ready') : t('Rebuild now')}</Button>
         </Row>
       )}
       {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}

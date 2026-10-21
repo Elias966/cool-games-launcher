@@ -543,12 +543,14 @@ export interface NrStatus {
   gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null };
   /** The CUDA Toolkit's bin folder, needed to rebuild the runtime for RTX 20/30/40. */
   cuda: string | null;
-  busy: 'patching' | 'downloading' | null;
+  busy: 'patching' | 'downloading' | 'cuda' | null;
   error: string | null;
   selected: string | null;
   runtimes: Array<{ sha256: string; version: string | null; source: string; build: 'nvidia' | 'cross-generation' | 'patched'; needsPatch: boolean; patched: boolean }>;
   optiscaler: Array<{ name: string; date: string; tested: boolean }>;
   downloaded: string[];
+  /** Archives found in Downloads that held other DLSS files, not Neural Rendering. */
+  downloads: Array<{ file: string; files: Array<{ name: string; version: string | null; kind: 'super-resolution' | 'ray-reconstruction' | 'frame-generation' | 'other' }> }>;
 }
 
 export interface GraphicsVersions {

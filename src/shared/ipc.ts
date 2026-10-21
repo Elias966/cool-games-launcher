@@ -159,7 +159,7 @@ export const requests = {
   'catalog:similar': z.object({ id }).strict(),
   'compat:protondb': z.object({ appid: z.number().int().positive().max(100_000_000) }).strict(),
   /** Opens ProtonDB / Steam store pages in the user's own browser (nothing else). */
-  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher|github\.com\/danielblnc\/DLSS-NR-on-AMD|developer\.nvidia\.com\/cuda-downloads)(?:\/|$)/) }).strict(),
+  'app:openExternal': z.object({ url: z.string().regex(/^https:\/\/(?:www\.protondb\.com|store\.steampowered\.com|github\.com\/Elias966\/cool-games-launcher|github\.com\/danielblnc\/DLSS-NR-on-AMD|developer\.nvidia\.com\/cuda-downloads|www\.techspot\.com\/downloads\/7544-nvidia-dlss-files\.html)(?:\/|$)/) }).strict(),
   'wishlist:list': z.undefined(),
   'wishlist:add': z.object({ catalogId: id.optional(), title: z.string().min(1).max(200).optional() }).strict(),
   'wishlist:remove': z.object({ id: id.optional(), catalogId: id.optional() }).strict(),
@@ -229,6 +229,7 @@ export const requests = {
   'nr:status': z.object({ refresh: z.boolean() }).strict(),
   'nr:import': z.undefined(),
   'nr:prepare': z.undefined(),
+  'nr:installCuda': z.undefined(),
   'nr:remove': z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   'library:installSuggestedProton': z.object({ id, release: z.string().min(1).max(160) }).strict(),
   /** GOG and Epic accounts and the games they own. */
@@ -373,6 +374,7 @@ export interface Responses {
   'nr:status': NrStatus;
   'nr:import': NrStatus;
   'nr:prepare': NrStatus;
+  'nr:installCuda': NrStatus;
   'nr:remove': NrStatus;
   'library:installSuggestedProton': { ready: boolean };
   'stores:state': StoresState;

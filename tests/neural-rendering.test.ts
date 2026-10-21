@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -137,5 +139,67 @@ describe('neural rendering in a game folder', () => {
       fetch: async () => new Response('', { status: 503 }), extract: async () => undefined,
     });
     await expect(nr.apply({ id: 1, installDir: game, executable: join(game, 'g.exe') })).rejects.toThrow(/nvngx_dlssnr\.dll/);
+  });
+});
+
+describe('CUDA tools from NVIDIA', () => {
+  const archives = () => {
+    const src = temp();
+    const make = (name: string, tools: string[]) => {
+      for (const t of tools) put(join(src, name, 'bin', t), `#!/bin/sh\necho ${t}\n`);
+      const file = join(src, `${name}.tar.xz`);
+      execFileSync('tar', ['-cJf', file, '-C', src, name]);
+      return { file, sha: createHash('sha256').update(readFileSync(file)).digest('hex') };
+    };
+    return { nvcc: make('cuda_nvcc-linux-x86_64-13.3.73-archive', ['ptxas', 'fatbinary', 'nvcc']), obj: make('cuda_cuobjdump-linux-x86_64-13.3.73-archive', ['cuobjdump']) };
+  };
+  const service = (a: ReturnType<typeof archives>, tamper = false) => async (url: string) => {
+    if (url.endsWith('redistrib_13.3.1.json')) return Response.json({
+      cuda_nvcc: { 'linux-x86_64': { relative_path: 'cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.3.73-archive.tar.xz', sha256: a.nvcc.sha } },
+      cuda_cuobjdump: { 'linux-x86_64': { relative_path: 'cuda_cuobjdump/linux-x86_64/cuda_cuobjdump-linux-x86_64-13.3.73-archive.tar.xz', sha256: a.obj.sha } },
+    });
+    const body = readFileSync(url.includes('cuobjdump') ? a.obj.file : a.nvcc.file);
+    return new Response(tamper ? Buffer.concat([body, Buffer.from('x')]) : body);
+  };
+  const extract = async (archive: string, dest: string) => { mkdirSync(dest, { recursive: true }); execFileSync('tar', ['-xJf', archive, '-C', dest]); };
+
+  it('keeps ptxas, fatbinary and cuobjdump in the launcher\'s folder', async () => {
+    const data = temp();
+    const nr = new NeuralRendering({ dataDir: data, settings: () => ({}) as Settings, gameDirs: () => [], changed: () => undefined, fetch: service(archives()), extract });
+    const bin = await nr.fetchCuda();
+    expect(bin).toBe(join(data, 'neural-rendering', 'cuda', 'bin'));
+    for (const t of ['ptxas', 'fatbinary', 'cuobjdump']) expect(statSync(join(bin, t)).mode & 0o111).toBeTruthy();
+    expect(existsSync(join(bin, 'nvcc'))).toBe(false);
+    expect(existsSync(join(data, 'neural-rendering', 'cuda', 'work'))).toBe(false);
+    expect(nr.cudaBin()).toBe(bin);
+  });
+
+  it('refuses a download that does not match NVIDIA\'s SHA-256', async () => {
+    const data = temp();
+    const nr = new NeuralRendering({ dataDir: data, settings: () => ({}) as Settings, gameDirs: () => [], changed: () => undefined, fetch: service(archives(), true), extract });
+    await expect(nr.fetchCuda()).rejects.toThrow(/SHA-256/);
+    expect(existsSync(join(data, 'neural-rendering', 'cuda', 'bin', 'ptxas'))).toBe(false);
+  });
+});
+
+describe('Neural Rendering files from the Downloads folder', () => {
+  const unzip = async (archive: string, dest: string) => { mkdirSync(dest, { recursive: true }); execFileSync('unzip', ['-q', '-o', archive, '-d', dest]); };
+  it('says what a DLSS archive held when it is not Neural Rendering, and opens each archive once', async () => {
+    const data = temp(), dl = temp(), src = temp();
+    put(join(src, 'nvngx_dlss.dll'), 'MZ not really');
+    execFileSync('zip', ['-q', '-j', join(dl, 'nvngx_dlss_310.9.1.zip'), join(src, 'nvngx_dlss.dll')]);
+    put(join(dl, 'holiday.zip'), 'ignored: no DLSS in the name');
+    let opened = 0;
+    const nr = new NeuralRendering({
+      dataDir: data, settings: () => ({}) as Settings, gameDirs: () => [], changed: () => undefined, downloadsDir: () => dl,
+      fetch: async () => new Response('', { status: 503 }), extract: async (a, d) => { opened++; await unzip(a, d); },
+    });
+    expect(await nr.fromDownloads()).toBe(0);
+    expect(opened).toBe(1);
+    const st = await nr.status(false);
+    expect(st.downloads).toEqual([{ file: 'nvngx_dlss_310.9.1.zip', files: [{ name: 'nvngx_dlss.dll', version: null, kind: 'super-resolution' }] }]);
+    expect(st.runtimes).toEqual([]);
+    await nr.fromDownloads();
+    expect(opened).toBe(1);
   });
 });
