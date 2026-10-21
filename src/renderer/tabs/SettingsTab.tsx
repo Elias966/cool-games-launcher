@@ -659,10 +659,11 @@ function OptiscalerBuild({ settings }: { settings: Settings }) {
   useEffect(() => { void api.invoke('nr:status', { refresh: false }).then(setSt).catch(() => undefined); }, []);
   return (
     <select className="input" aria-label={t('OptiScaler build')} value={settings.nrOptiscaler} onChange={(e) => void update({ nrOptiscaler: e.target.value })}>
-      <option value="latest">{st?.optiscaler[0] ? t('Newest ({version}, updates automatically)', { version: st.optiscaler[0].date }) : t('Newest (updates automatically)')}</option>
+      <option value="latest">{(() => { const n = st?.optiscaler.find((o) => o.source === 'shyvortex') ?? st?.optiscaler[0]; return n ? t('Newest ({version}, updates automatically)', { version: n.source === 'shyvortex' ? `ShyVortex v${n.version}` : n.date }) : t('Newest (updates automatically)'); })()}</option>
       {[...new Set([...(st?.optiscaler.map((o) => o.name) ?? []), ...(st?.downloaded ?? []), ...(settings.nrOptiscaler !== 'latest' ? [settings.nrOptiscaler] : [])])].map((n) => {
         const o = st?.optiscaler.find((x) => x.name === n);
-        return <option key={n} value={n}>{`${o?.date ?? n}${o?.tested ? ` · ${t('tested')}` : ''}${st?.downloaded.includes(n) ? ` · ${t('downloaded')}` : ''}`}</option>;
+        const label = o?.source === 'dagherbou' ? `Dagherbou v${o.version} · ${o.date}` : o?.source === 'shyvortex' ? `ShyVortex v${o.version} · ${o.date}` : o ? `y4my4my4m · ${o.date}` : n;
+        return <option key={n} value={n}>{`${label}${o?.tested ? ` · ${t('tested')}` : ''}${st?.downloaded.includes(n) ? ` · ${t('downloaded')}` : ''}`}</option>;
       })}
     </select>
   );
@@ -736,7 +737,7 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
         </Row>
       )}
       {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}
-      <Row label={t('OptiScaler build')} desc={t('Newest follows each nightly build by itself. The marked build is the one tested under Proton on FF7 Rebirth, 007 First Light and Horizon.')}>
+      <Row label={t('OptiScaler build')} desc={t('Newest follows ShyVortex\'s releases: the full package behind DLSS Unlocked, with Neural Rendering, pre-upscale multipass, Proton support and frame generation for RTX 20 and 30 cards. Also listed: y4my4my4m\'s nightly builds (the marked one was tested under Proton on FF7 Rebirth, 007 First Light and Horizon) and Dagherbou\'s original, with the newest colour controls in its in-game menu.')}>
         <OptiscalerBuild settings={settings} />
       </Row>
       <Row label={t('Realism strength')} desc={t('How many times the model runs over the picture, each time on its own result: two passes doubles the real-life look. Each pass costs as much as the first, so on an RTX 3070 two passes roughly halves the frame rate; pair it with Balanced or Fast below.')}>
@@ -746,6 +747,16 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
           <option value="3">{t('Triple (3 passes)')}</option>
           <option value="5">{t('Maximum (5 passes, very heavy)')}</option>
         </select>
+      </Row>
+      <Row label={t('Frame generation')} desc={t('With the ShyVortex build: DLSS Frame Generation in games that have it, unlocked for RTX 20 and 30 cards (pick 2X to 4X in the game\'s own menu), or OptiScaler\'s FSR 3 frame generation for games without it.')}>
+        <select className="input" aria-label={t('Frame generation')} value={settings.nrFrameGen} onChange={(e) => void update({ nrFrameGen: e.target.value as Settings['nrFrameGen'] })}>
+          <option value="dlssg">{t('DLSS Frame Generation, unlocked for my card')}</option>
+          <option value="optifg">{t('FSR 3 frame generation (games without DLSS FG)')}</option>
+          <option value="off">{t('Off')}</option>
+        </select>
+      </Row>
+      <Row label={t('Run before upscaling')} desc={t('The model works on the picture before DLSS enlarges it, at render resolution: far cheaper, the best choice on RTX 20 and 30 cards. Supported by the y4my4my4m and ShyVortex builds.')}>
+        <Switch label={t('Run before upscaling')} checked={settings.nrPreUpscale} onChange={(v) => void update({ nrPreUpscale: v })} />
       </Row>
       <Row label={t('Neural Rendering quality')} desc={t('How much of the picture the model works on. On RTX 20 and 30 cards Balanced or Fast keeps the frame rate playable. More settings are in OptiScaler\'s in-game menu.')}>
         <select className="input" aria-label={t('Neural Rendering quality')} value={settings.nrQuality} onChange={(e) => void update({ nrQuality: e.target.value as Settings['nrQuality'] })}>

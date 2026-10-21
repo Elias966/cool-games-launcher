@@ -89,6 +89,8 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     nrOptiscaler: 'latest',
     nrQuality: 'auto',
     nrPasses: 1,
+    nrPreUpscale: false,
+    nrFrameGen: 'dlssg',
     closeToTray: true,
     freeGpuWhilePlaying: true,
     hideWomenCovers: false,

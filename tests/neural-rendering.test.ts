@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { archFor, compareVersions, identifyBuild, NeuralRendering, nightlyAssets, renderFolder, setIniKey } from '../src/main/neural-rendering';
+import { archFor, compareVersions, dagherbouAssets, frameGenIni, identifyBuild, NeuralRendering, nightlyAssets, proxyFor, renderFolder, setIniKey, shyVortexAssets } from '../src/main/neural-rendering';
 import type { Settings } from '../src/shared/types';
 
 const dirs: string[] = [];
@@ -37,6 +37,39 @@ describe('neural rendering helpers', () => {
     const d = (n: string) => ({ name: n, browser_download_url: `https://example.invalid/${n}`, digest: `sha256:${'a'.repeat(64)}` });
     const list = nightlyAssets([d('OptiScaler_v10.0.0-pre1_20260906.7z'), d('OptiScaler_v10.0.0-pre1_20261021.7z'), d('OptiScaler_v10.0.0-dev_20260905_with_DLSS.7z'), { name: 'OptiScaler_v10.0.0-pre1_20261001.7z' }]);
     expect(list.map((a) => a.date)).toEqual(['20261021', '20260906']);
+  });
+
+  it('reads ShyVortex\'s and Dagherbou\'s releases', () => {
+    const asset = (name: string) => ({ name, browser_download_url: `https://example.invalid/${name}`, digest: `sha256:${'b'.repeat(64)}` });
+    const shy = shyVortexAssets([
+      { tag_name: 'v0.9.71', published_at: '2026-10-21T08:57:30Z', assets: [asset('OptiScaler-NR-v0.9.71.zip')] },
+      { tag_name: 'v0.9.69-pre1', published_at: '2026-10-17T20:29:26Z', prerelease: true, assets: [asset('OptiScaler-NR-v0.9.69-pre1.zip'), asset('OptiScaler-NR-v0.9.69-rtx40-mfg.zip')] },
+    ]);
+    expect(shy.map((a) => [a.version, a.date, a.prerelease])).toEqual([['0.9.71', '20261021', false], ['0.9.69-pre1', '20261017', true]]);
+    expect(dagherbouAssets([{ published_at: '2026-09-03T19:49:55Z', assets: [asset('OptiScaler-DLSSNR-v0.2.0.zip')] }])[0].version).toBe('0.2.0');
+  });
+
+  it('turns on the right frame generation for the card, never two unlockers at once', () => {
+    const base = '[FrameGen]\nEnabled=auto\nFGInput=auto\nFGOutput=auto\n\n[DLSSG]\nAdaMfgUnlock=false\nAmpereMfgUnlock=false\n';
+    const ampere = frameGenIni(base, 'dlssg', 'ampere');
+    expect(ampere).toContain('AmpereMfgUnlock=true');
+    expect(ampere).toContain('AdaMfgUnlock=false');
+    expect(ampere).toContain('FGInput=auto');
+    expect(frameGenIni(base, 'dlssg', 'ada')).toContain('AdaMfgUnlock=true');
+    expect(frameGenIni(base, 'dlssg', 'blackwell')).toMatch(/AmpereMfgUnlock=false[\s\S]*|AdaMfgUnlock=false/);
+    const fsr = frameGenIni(base, 'optifg', 'ampere');
+    expect(fsr).toContain('AmpereMfgUnlock=false');
+    expect(fsr).toContain('[FrameGen]\nEnabled=true\nFGInput=upscaler\nFGOutput=fsrfg');
+    expect(frameGenIni(fsr, 'off', 'ampere')).toContain('Enabled=auto\nFGInput=auto\nFGOutput=auto');
+  });
+
+  it('gives Cyberpunk the dbghelp proxy and other games the first free name', () => {
+    const cp = temp(), other = temp();
+    put(join(cp, 'Cyberpunk2077.exe'));
+    put(join(other, 'Game.exe'));
+    put(join(other, 'dxgi.dll'));
+    expect(proxyFor(cp)).toBe('dbghelp.dll');
+    expect(proxyFor(other)).toBe('winmm.dll');
   });
 
   it('finds the Unreal shipping build next to the game\'s DLSS', () => {
@@ -89,6 +122,8 @@ describe('neural rendering in a game folder', () => {
 
     expect(ini).toContain('Passes=auto');
     expect(ini).toContain('Dx11Upscaler=dlss_12');
+    expect(ini).toContain('VulkanUpscaler=dlss');
+    expect(ini).toContain('RunBeforeSR=auto');
 
     // A second start leaves the install alone, and takes the new strength: three passes, later ones eased.
     settings.nrPasses = 3;
@@ -109,7 +144,7 @@ describe('neural rendering in a game folder', () => {
   it('gives AMD cards FSR 4 through OptiScaler, without NVIDIA\'s model', async () => {
     const data = temp(), game = temp();
     const opti = join(data, 'neural-rendering', 'optiscaler', 'OptiScaler_v10.0.0-pre1_20261021.7z');
-    for (const f of ['.ok', 'OptiScaler.dll', 'OptiScaler/amd_fidelityfx_upscaler_dx12.dll']) put(join(opti, f), f);
+    for (const f of ['.ok', 'OptiScaler.dll', 'OptiScaler/amd_fidelityfx_upscaler_dx12.dll', 'OptiScaler/dlssg_sm86/runtime/nvngx_dlssg.dll', 'docs/NOTES.md']) put(join(opti, f), f);
     put(join(opti, 'OptiScaler.ini'), '[Upscalers]\nDx11Upscaler=auto\nDx12Upscaler=auto\n\n[DlssNr]\nEnabled=auto\n');
     const exe = join(game, 'game.exe');
     put(exe);
@@ -130,6 +165,7 @@ describe('neural rendering in a game folder', () => {
     expect(existsSync(join(game, 'dxgi.dll'))).toBe(false);
     expect(existsSync(join(game, 'OptiScaler.ini'))).toBe(false);
     expect(existsSync(join(game, 'OptiScaler'))).toBe(false);
+    expect(existsSync(join(game, 'docs'))).toBe(false);
   });
 
   it('asks for the model before anything goes into the game', async () => {

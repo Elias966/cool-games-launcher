@@ -25,6 +25,11 @@ type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: A
 /** Where the person can download NVIDIA's DLSS files, including Neural Rendering, in their browser. */
 export const DLSS_FILES_PAGE = 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html';
 export const OPTISCALER_REPO = 'y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG';
+/** The original OptiScaler + DLSS Neural Rendering; y4my4my4m's builds add Proton fixes and multipass on top. */
+export const DAGHERBOU_REPO = 'Dagherbou/OptiScaler_DLSSNR';
+/** Pre-upscale multipass Neural Rendering with Proton fixes and an RTX 20/30 frame generation unlocker (GPL-3). */
+export const SHYVORTEX_REPO = 'ShyVortex/OptiScaler-DLSSNR-PreSR-Multipass';
+export const isShyVortex = (name: string) => /^OptiScaler-NR-v/.test(name);
 export const PATCHER_REPO = 'dev-camo/dlssnr-patcher';
 /** The reviewed patcher (2026-09-03); moving it means reading the new commit first. */
 export const PATCHER_COMMIT = '98dac112990e5cea30ab03d74625fc848bce5c92';
@@ -66,6 +71,31 @@ const DLSS_KIND: Record<string, NrStatus['downloads'][number]['files'][number]['
 
 const ARCH_FLAG = { turing: '--turing', ampere: '--ampere', ada: '--ada', blackwell: '--blackwell' } as const;
 
+/**
+ * Frame generation next to Neural Rendering. 'dlssg': the game's own DLSS Frame Generation,
+ * unlocked on RTX 20/30 by ShyVortex's sdli1995 SM86/SM75 unlocker (AmpereMfgUnlock, which hands
+ * the multiplier to the game's menu) and on RTX 40 by the Ada MFG unlock. 'optifg': OptiScaler's
+ * FSR 3 frame generation for games without DLSS FG. The unlockers must never run together.
+ */
+export function frameGenIni(text: string, mode: 'off' | 'dlssg' | 'optifg', arch: NrStatus['gpu']['arch']): string {
+  const older = arch === 'turing' || arch === 'ampere';
+  let t = setIniKey(text, 'DLSSG', 'AmpereMfgUnlock', mode === 'dlssg' && older ? 'true' : 'false');
+  t = setIniKey(t, 'DLSSG', 'AdaMfgUnlock', mode === 'dlssg' && arch === 'ada' ? 'true' : 'false');
+  t = setIniKey(t, 'FrameGen', 'Enabled', mode === 'optifg' ? 'true' : 'auto');
+  t = setIniKey(t, 'FrameGen', 'FGInput', mode === 'optifg' ? 'upscaler' : 'auto');
+  return setIniKey(t, 'FrameGen', 'FGOutput', mode === 'optifg' ? 'fsrfg' : 'auto');
+}
+
+/** Games whose loaders want a particular proxy name (ShyVortex's tested table). */
+const KNOWN_PROXY: Array<[RegExp, string]> = [[/^cyberpunk2077\.exe$/i, 'dbghelp.dll']];
+
+/** The proxy name OptiScaler takes in this folder: a known one for the game, else the first free name. */
+export function proxyFor(folder: string): string {
+  const exes = safeList(folder);
+  const known = KNOWN_PROXY.find(([re, n]) => exes.some((e) => re.test(e)) && !existsSync(join(folder, n)));
+  return known?.[1] ?? PROXY_NAMES.find((n) => !existsSync(join(folder, n))) ?? 'dxgi.dll';
+}
+
 /** Compares dotted versions; missing parts count as 0. */
 export function compareVersions(a: string | null, b: string | null): number {
   const x = (a ?? '').split('.').map(Number), y = (b ?? '').split('.').map(Number);
@@ -87,6 +117,29 @@ export function setIniKey(text: string, section: string, key: string, value: str
 }
 
 /** OptiScaler nightly archives, newest first; the copies bundled with NVIDIA's DLSS files are left out. */
+type GhRelease = { tag_name?: string; published_at?: string; prerelease?: boolean; assets?: Array<{ name?: string; browser_download_url?: string; digest?: string | null }> };
+
+/** Dagherbou's OptiScaler_DLSSNR releases (the original Neural Rendering build), newest first. */
+export function dagherbouAssets(releases: GhRelease[]) {
+  return releaseAssets(releases, /^OptiScaler-DLSSNR-v[\w.-]+\.zip$/);
+}
+
+/** ShyVortex's OptiScaler-DLSSNR-PreSR-Multipass releases (also inside DLSS Unlocked), newest first. */
+export function shyVortexAssets(releases: GhRelease[]) {
+  return releaseAssets(releases, /^OptiScaler-NR-v[\d.]+(?:-pre\d+)?\.zip$/);
+}
+
+function releaseAssets(releases: GhRelease[], pattern: RegExp) {
+  return releases.flatMap((r) => (r.assets ?? [])
+    .filter((a) => pattern.test(a.name ?? '') && a.browser_download_url && /^sha256:[a-f0-9]{64}$/.test(a.digest ?? ''))
+    .map((a) => ({
+      name: a.name!, url: a.browser_download_url!, sha256: a.digest!.slice(7),
+      date: (r.published_at ?? '').slice(0, 10).replace(/-/g, ''),
+      version: /-v([\w.-]+?)\.zip$/.exec(a.name!)![1], prerelease: !!r.prerelease,
+    })))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 export function nightlyAssets(assets: Array<{ name?: string; browser_download_url?: string; digest?: string | null; size?: number }>) {
   return assets
     .filter((a) => /^OptiScaler_[\w.-]+_(\d{8})\.7z$/.test(a.name ?? '') && a.browser_download_url && /^sha256:[a-f0-9]{64}$/.test(a.digest ?? ''))
@@ -176,6 +229,7 @@ export class NeuralRendering {
   private scanned = false;
   private gpu: NrStatus['gpu'] | null = null;
   private nightlies: ReturnType<typeof nightlyAssets> | null = null;
+  private releaseCache = new Map<string, ReturnType<typeof dagherbouAssets>>();
   /** Archives in Downloads that held DLSS files other than Neural Rendering. */
   private downloadNotes: NrStatus['downloads'] = [];
 
@@ -494,6 +548,18 @@ export class NeuralRendering {
 
   /* ------------------------------------------------------------ OptiScaler */
 
+  private async releasesOf(repo: string, parse: (r: GhRelease[]) => ReturnType<typeof dagherbouAssets>, refresh: boolean) {
+    const cached = this.releaseCache.get(repo);
+    if (cached && !refresh) return cached;
+    try {
+      const res = await this.deps.fetch(`https://api.github.com/repos/${repo}/releases?per_page=10`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20_000) });
+      if (res.ok) this.releaseCache.set(repo, parse((await res.json()) as GhRelease[]));
+    } catch { /* offline */ }
+    return this.releaseCache.get(repo) ?? [];
+  }
+  private dagherbouList(refresh = false) { return this.releasesOf(DAGHERBOU_REPO, dagherbouAssets, refresh); }
+  private shyVortexList(refresh = false) { return this.releasesOf(SHYVORTEX_REPO, shyVortexAssets, refresh); }
+
   private async optiscalerList(refresh = false) {
     if (this.nightlies && !refresh) return this.nightlies;
     try {
@@ -511,9 +577,11 @@ export class NeuralRendering {
   private async optiscaler(): Promise<{ name: string; dir: string }> {
     const want = this.deps.settings().nrOptiscaler;
     const list = await this.optiscalerList();
+    const others = [...await this.shyVortexList(), ...await this.dagherbouList()];
     const local = safeList(this.dir('optiscaler')).filter((n) => existsSync(join(this.dir('optiscaler', n), '.ok'))).sort().reverse();
-    const asset = want === 'latest' ? list[0] : list.find((a) => a.name === want);
-    const name = asset?.name ?? (want === 'latest' ? local[0] : local.find((n) => n === want));
+    // Newest = ShyVortex's newest release (Neural Rendering + RTX 20/30 frame generation in one), else y4my4my4m's nightly.
+    const asset = want === 'latest' ? (others.find((a) => isShyVortex(a.name) && !a.prerelease) ?? list[0]) : [...list, ...others].find((a) => a.name === want);
+    const name = asset?.name ?? (want === 'latest' ? (local.find(isShyVortex) ?? local[0]) : local.find((n) => n === want));
     if (!name) throw new Error('Could not reach GitHub to download OptiScaler.');
     const dir = this.dir('optiscaler', name);
     if (existsSync(join(dir, '.ok'))) return { name, dir };
@@ -568,7 +636,7 @@ export class NeuralRendering {
     // Another install (a newer build, or the game moved) is taken out first.
     if (prev && (prev.optiscaler !== opti.name || prev.runtime !== tag || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder)) this.removeFrom(game.id);
     const current = this.installed(game.id);
-    const proxy = current?.proxy ?? PROXY_NAMES.find((n) => !existsSync(join(folder, n))) ?? 'dxgi.dll';
+    const proxy = current?.proxy ?? proxyFor(folder);
     const files: GameManifest['files'] = current?.files ?? [];
     const backups = this.dir('backups', String(game.id));
     const place = (from: string, to: string) => {
@@ -588,8 +656,9 @@ export class NeuralRendering {
       const tree = (rel: string) => {
         for (const e of readdirSync(join(opti.dir, rel), { withFileTypes: true })) {
           const r = rel ? join(rel, e.name) : e.name;
-          if (e.isDirectory()) { if (r !== 'Licenses') tree(r); }
-          else if (!/^(OptiScaler\.dll|OptiScaler\.ini|setup_\w+\.(sh|bat)|\.ok)$|\.(pdb|lib|exp)$/i.test(r)) place(join(opti.dir, r), join(folder, r));
+          // The game gets the program files only: no licences, docs, images or Windows setup scripts.
+          if (e.isDirectory()) { if (!/^(Licenses|docs|images|redist)$/i.test(r)) tree(r); }
+          else if (!/^(OptiScaler\.dll|OptiScaler\.ini|setup_\w+\.(sh|bat)|\.ok|!!.*|READ ?ME.*|LICENSE.*|[^/]*\.ps1)$|\.(pdb|lib|exp|md|html)$/i.test(r)) place(join(opti.dir, r), join(folder, r));
         }
       };
       tree('');
@@ -612,7 +681,12 @@ export class NeuralRendering {
         return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, `PROTON_FSR4_UPGRADE=${v === 'latest' ? '1' : v}`];
       }
       // DirectX 11 games reach Neural Rendering only through DLSS on the 11on12 bridge.
-      text = setIniKey(setIniKey(text, 'Upscalers', 'Dx11Upscaler', 'dlss_12'), 'DlssNr', 'Enabled', 'true');
+      text = setIniKey(setIniKey(setIniKey(text, 'Upscalers', 'Dx11Upscaler', 'dlss_12'), 'Upscalers', 'VulkanUpscaler', 'dlss'), 'DlssNr', 'Enabled', 'true');
+      // Before the upscaler, the model works at render resolution: far cheaper on RTX 20/30 cards.
+      // y4my4my4m's builds call it PreUpscale, ShyVortex's RunBeforeSR; each ignores the other's key.
+      const pre = this.deps.settings().nrPreUpscale ? 'true' : 'auto';
+      text = setIniKey(setIniKey(text, 'DlssNr', 'PreUpscale', pre), 'DlssNr', 'RunBeforeSR', pre);
+      text = frameGenIni(text, this.deps.settings().nrFrameGen, (await this.detectGpu()).arch);
       text = setIniKey(text, 'DlssNr', 'WorkingScale', q === 'fast' ? '0.5' : q === 'balanced' ? '0.75' : q === 'full' ? '1.0' : 'auto');
       // Multipass: each pass sees the last one's picture. Later passes are eased so they refine
       // rather than re-amplify (OptiScaler's own advice for PassOverrides).
@@ -623,7 +697,8 @@ export class NeuralRendering {
     }
     mkdirSync(this.dir('games'), { recursive: true });
     writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: tag } satisfies GameManifest));
-    return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, 'PROTON_ENABLE_NVAPI=1'];
+    // ShyVortex's RTX 20/30 frame generation unlocker needs CUDA inside Proton.
+    return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, 'PROTON_ENABLE_NVAPI=1', ...(isShyVortex(opti.name) ? ['PROTON_NVIDIA_NVCUDA=1'] : [])];
   }
 
   /** Takes OptiScaler and the runtime out of the game and puts back what was there before. */
@@ -638,7 +713,7 @@ export class NeuralRendering {
     }
     // OptiScaler's own folder goes too, once empty (it held only what was placed above).
     const proxyDir = dirname(m.files[0]?.path ?? '');
-    for (const d of [join(proxyDir, 'OptiScaler', 'D3D12_OptiScaler'), join(proxyDir, 'OptiScaler')]) { try { rmdirSync(d); } catch { /* not empty, or gone */ } }
+    pruneEmpty(join(proxyDir, 'OptiScaler'));
     rmSync(this.manifestPath(gameId), { force: true });
     rmSync(this.dir('backups', String(gameId)), { recursive: true, force: true });
   }
@@ -661,7 +736,11 @@ export class NeuralRendering {
         needsPatch: this.needsPatch(r, gpu.arch),
         patched: safeList(this.dir('runtimes', r.sha256)).some((f) => f.startsWith(`patched-${gpu.arch ?? 'all'}-`)),
       })),
-      optiscaler: list.map((a) => ({ name: a.name, date: a.date, tested: a.name === TESTED_OPTISCALER })),
+      optiscaler: [
+        ...(await this.shyVortexList(refresh)).map((a) => ({ name: a.name, date: a.date, tested: false, source: 'shyvortex' as const, version: a.version })),
+        ...list.map((a) => ({ name: a.name, date: a.date, tested: a.name === TESTED_OPTISCALER, source: 'y4my4my4m' as const, version: null })),
+        ...(await this.dagherbouList(refresh)).map((a) => ({ name: a.name, date: a.date, tested: false, source: 'dagherbou' as const, version: a.version })),
+      ],
       downloaded: safeList(this.dir('optiscaler')).filter((n) => existsSync(join(this.dir('optiscaler', n), '.ok'))),
       downloads: this.downloadNotes,
     };
@@ -676,6 +755,13 @@ function findFile(dir: string, name: string, depth = 0): string | null {
     if (e.isDirectory() && depth < 3) { const f = findFile(p, name, depth + 1); if (f) return f; }
   }
   return null;
+}
+
+/** Removes a folder tree's empty folders, bottom up; anything holding a file stays. */
+function pruneEmpty(dir: string, depth = 0) {
+  if (depth > 8) return;
+  for (const e of safeDirents(dir)) if (e.isDirectory() && !e.isSymbolicLink()) pruneEmpty(join(dir, e.name), depth + 1);
+  try { rmdirSync(dir); } catch { /* not empty, or gone */ }
 }
 
 /** Every file under a folder whose name passes the test (a few levels deep). */

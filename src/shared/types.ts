@@ -424,6 +424,10 @@ export interface Settings {
   nrQuality: 'auto' | 'full' | 'balanced' | 'fast';
   /** Times the model runs over the picture, each pass on the last one's result (stronger, real-life look). */
   nrPasses: number;
+  /** Run the model before the upscaler, at render resolution (much cheaper). */
+  nrPreUpscale: boolean;
+  /** Frame generation with Neural Rendering: the game's DLSS FG (unlocked on RTX 20/30/40), OptiScaler's FSR 3 FG, or none. */
+  nrFrameGen: 'off' | 'dlssg' | 'optifg';
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
@@ -547,7 +551,7 @@ export interface NrStatus {
   error: string | null;
   selected: string | null;
   runtimes: Array<{ sha256: string; version: string | null; source: string; build: 'nvidia' | 'cross-generation' | 'patched'; needsPatch: boolean; patched: boolean }>;
-  optiscaler: Array<{ name: string; date: string; tested: boolean }>;
+  optiscaler: Array<{ name: string; date: string; tested: boolean; source: 'y4my4my4m' | 'shyvortex' | 'dagherbou'; version: string | null }>;
   downloaded: string[];
   /** Archives found in Downloads that held other DLSS files, not Neural Rendering. */
   downloads: Array<{ file: string; files: Array<{ name: string; version: string | null; kind: 'super-resolution' | 'ray-reconstruction' | 'frame-generation' | 'other' }> }>;
