@@ -92,6 +92,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     nrPreUpscale: false,
     nrFrameGen: 'dlssg',
     nrAutoModel: true,
+    nrAllGames: false,
     closeToTray: true,
     freeGpuWhilePlaying: true,
     hideWomenCovers: false,

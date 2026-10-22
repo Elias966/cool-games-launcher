@@ -3484,3 +3484,13 @@ kbd {
 .proton-advice__warn { color: #ff9ab8; }
 .proton-advice--loading { display: block; font-size: 0.85rem; }
 .proton-advice .spinner { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; }
+
+/* Settings → Graphics: the DLSS 5 "ready to play" list. */
+.nr-checks { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 5px; }
+.nr-check { display: flex; align-items: flex-start; gap: 8px; }
+.nr-check svg { flex: none; margin-top: 2px; }
+.nr-check--ok svg { color: var(--ok); }
+.nr-check--later svg { color: var(--cyan); }
+.nr-check--warn { color: var(--warn); }
+/* A game's DLSS 5 state, next to its ProtonDB rating. */
+.hero__dlss5 { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(118, 255, 3, 0.45); color: #b8ff7a; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; }

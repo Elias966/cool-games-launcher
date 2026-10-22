@@ -12,6 +12,7 @@ import { sound, type SoundName } from '../sound';
 import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
+import { dlss5Choice, dlss5On } from '@shared/dlss5';
 
 type SectionId = 'sources' | 'browser' | 'accounts' | 'ai' | 'compat' | 'graphics' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
 
@@ -23,7 +24,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'accounts', label: tk('GOG & Epic'), icon: 'gamepad', blurb: tk('Your game store accounts'), keywords: 'gog epic games store account login log in sign in library owned bought heroic legendary' },
   { id: 'ai', label: tk('Local AI'), icon: 'cpu', blurb: tk('Model, GPU and performance'), keywords: 'ai model fara download gpu vulkan cpu threads context unload memory vram acceleration legacy holo qwen playing game free' },
   { id: 'compat', label: tk('Windows games'), icon: 'wine', blurb: tk('Proton, Wine and umu'), keywords: 'windows proton ge cachyos valve wine umu compatibility runtime python' },
-  { id: 'graphics', label: tk('Graphics'), icon: 'sparkle', blurb: tk('Newer DLSS for NVIDIA, FSR 4 for AMD'), keywords: 'graphics gpu nvidia rtx dlss dlss5 neural rendering nr model preset transformer amd radeon fsr fsr4 upscaling upscaler neuralhub' },
+  { id: 'graphics', label: tk('Graphics'), icon: 'sparkle', blurb: tk('DLSS 5 for NVIDIA, FSR 4 for AMD'), keywords: 'graphics gpu nvidia rtx dlss dlss5 neural rendering nr model preset transformer amd radeon fsr fsr4 upscaling upscaler neuralhub' },
   { id: 'downloads', label: tk('Downloads & updates'), icon: 'downloads', blurb: tk('Game updates, speed and folders'), keywords: 'downloads connections parallel simultaneous folders games library storage path disk updates update automatic new version patch rollback saves' },
   { id: 'content', label: tk('Content'), icon: 'shield', blurb: tk('What the Store hides'), keywords: 'nsfw adult content classifier safe mature woman women female girl anime cover filter' },
   { id: 'appearance', label: tk('Appearance'), icon: 'palette', blurb: tk('Effects and motion'), keywords: 'appearance effects motion animation reduced low 3d visuals language arabic english rtl العربية لغة' },
@@ -154,7 +155,7 @@ function useSectionStatus(settings: Settings | null): Partial<Record<SectionId, 
   return {
     sources: sources.length ? `${sources.length === 1 ? t('1 site') : t('{n} sites', { n: sources.length })} · ${t('{n} games', { n: games })}` : t('No websites yet'),
     ai: fara?.installed ? `${fara.name} · ${ai.modelLoaded ? t('loaded') : t('ready')}${ai.accel ? ` · ${ai.accel === 'vulkan' ? t('GPU') : t('CPU')}` : ''}` : fara ? t('Download required') : undefined,
-    graphics: [settings.dlssUpgrade ? 'DLSS' : null, settings.fsr4Upgrade ? 'FSR 4' : null].filter(Boolean).join(' · ') || t('Off'),
+    graphics: [settings.nrAllGames ? t('DLSS 5 in all games') : null, settings.dlssUpgrade ? t('newest DLSS') : null, settings.fsr4Upgrade ? 'FSR 4' : null].filter(Boolean).join(' · ') || t('DLSS 5 off'),
     compat: settings.protonPath ? t('Default: {name}', { name: protonName(settings.protonPath) }) : t('Installs on first use'),
     downloads: t('{n} connections · {m} at once', { n: settings.downloadConnections, m: settings.maxConcurrentDownloads }),
     content: settings.hideWomenCovers ? t('Women covers hidden') : t('Everything shown'),
@@ -596,22 +597,26 @@ function GraphicsSection({ settings }: { settings: Settings }) {
   const nr = versions?.nrAmd;
   return (
     <>
-      <Group title={t('NVIDIA (GeForce RTX)')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => load(true)}>{t('Check for new versions')}</Button>}>
-        <Row label={t('Newer DLSS in Windows games')} desc={t('Proton downloads NVIDIA\'s newest DLSS files into each game\'s prefix and uses them instead of the ones the game shipped with. Turn DLSS on in the game\'s own settings. Applies to games started with Proton.')}>
-          <Switch label={t('Newer DLSS in Windows games')} checked={settings.dlssUpgrade} onChange={(v) => void update({ dlssUpgrade: v })} />
-        </Row>
-        <Row label={t('DLSS version')} desc={t('Newest follows each new DLSS release by itself. Pick a version to keep a game on it.')}>
-          <select className="input" aria-label={t('DLSS version')} disabled={!settings.dlssUpgrade} value={settings.dlssVersion} onChange={(e) => void update({ dlssVersion: e.target.value })}>
-            {versionOptions(versions?.dlss, settings.dlssVersion)}
-          </select>
-        </Row>
-        <Row label={t('DLSS model')} desc={t('The upscaling model DLSS runs with. Newest picks the model NVIDIA recommends for your card and moves to new models as they ship.')}>
-          <select className="input" aria-label={t('DLSS model')} disabled={!settings.dlssUpgrade} value={settings.dlssPreset} onChange={(e) => void update({ dlssPreset: e.target.value as DlssPreset })}>
-            {DLSS_PRESETS.map((p) => <option key={p.value} value={p.value}>{t(p.label)}</option>)}
-          </select>
-        </Row>
-      </Group>
       <NeuralRenderingGroup settings={settings} />
+      <Group title={t('Regular DLSS upscaling (DLSS 2 to 4)')} aside={<Button size="sm" variant="ghost" icon="reload" disabled={busy} onClick={() => load(true)}>{t('Check for new versions')}</Button>}>
+        <Row label={t('Keep DLSS upscaling up to date')} desc={t('This is not DLSS 5. It swaps the regular DLSS upscaling files a game shipped with for NVIDIA\'s newest ones, so older games get sharper DLSS. It works the same with DLSS 5 on or off, and applies to Windows games started with Proton.')}>
+          <Switch label={t('Keep DLSS upscaling up to date')} checked={settings.dlssUpgrade} onChange={(v) => void update({ dlssUpgrade: v })} />
+        </Row>
+        {settings.dlssUpgrade && (
+          <>
+            <Row label={t('DLSS version')} desc={t('Newest follows each new DLSS release by itself. Pick a version to keep a game on it.')}>
+              <select className="input" aria-label={t('DLSS version')} value={settings.dlssVersion} onChange={(e) => void update({ dlssVersion: e.target.value })}>
+                {versionOptions(versions?.dlss, settings.dlssVersion)}
+              </select>
+            </Row>
+            <Row label={t('DLSS model')} desc={t('The upscaling model DLSS runs with. Newest picks the model NVIDIA recommends for your card and moves to new models as they ship.')}>
+              <select className="input" aria-label={t('DLSS model')} value={settings.dlssPreset} onChange={(e) => void update({ dlssPreset: e.target.value as DlssPreset })}>
+                {DLSS_PRESETS.map((p) => <option key={p.value} value={p.value}>{t(p.label)}</option>)}
+              </select>
+            </Row>
+          </>
+        )}
+      </Group>
       <Group title={t('AMD (Radeon)')}>
         <Row label={t('FSR 4 in games with FSR 3.1')} desc={t('GE-Proton downloads AMD\'s FSR 4 library and uses it in games that offer FSR 3.1. Pick FSR in the game\'s own settings. Needs GE-Proton 10-26 or newer and a supported Radeon card.')}>
           <Switch label={t('FSR 4 in games with FSR 3.1')} checked={settings.fsr4Upgrade} onChange={(v) => void update({ fsr4Upgrade: v })} />
@@ -669,9 +674,20 @@ function OptiscalerBuild({ settings }: { settings: Settings }) {
   );
 }
 
+/** One line of the "ready to play" list: done, waiting for the first start, or needing the person. */
+function Check({ state, children }: { state: 'ok' | 'later' | 'warn'; children: ReactNode }) {
+  return (
+    <li className={`nr-check nr-check--${state}`}>
+      <Icon name={state === 'ok' ? 'check' : state === 'later' ? 'downloads' : 'alert'} size={15} />
+      <span>{children}</span>
+    </li>
+  );
+}
+
 function NeuralRenderingGroup({ settings }: { settings: Settings }) {
   const [st, setSt] = useState<NrStatus | null>(null);
   const [scanning, setScanning] = useState(false);
+  const library = useApp((s) => s.library);
   const load = (refresh: boolean) => {
     if (refresh) setScanning(true);
     return api.invoke('nr:status', { refresh }).then(setSt).catch(() => undefined).finally(() => setScanning(false));
@@ -684,102 +700,142 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
   }, []);
   const sel = st?.runtimes.find((r) => r.sha256 === st.selected) ?? null;
   const archName = st?.gpu.arch ? { turing: 'RTX 20', ampere: 'RTX 30', ada: 'RTX 40', blackwell: 'RTX 50' }[st.gpu.arch] : null;
+  // Where DLSS 5 runs: every Windows game that follows Settings, plus games set to On.
+  const windows = library.filter((g) => g.kind === 'windows');
+  const onIn = windows.filter((g) => dlss5On(g.launch, settings.nrAllGames));
+  const forcedOff = windows.filter((g) => dlss5Choice(g.launch) === 'off');
+  const driverMajor = Number(st?.gpu.driver?.split('.')[0] ?? 0);
+  const driverOk = driverMajor >= 610;
+  const blocked = !!st && (!st.gpu.name || !driverOk);
+  const title = settings.nrAllGames
+    ? (forcedOff.length ? t('DLSS 5 is on in all your Windows games except {n} set to Off', { n: forcedOff.length }) : t('DLSS 5 is on in all your Windows games'))
+    : onIn.length ? t('DLSS 5 is on in {n} of your games', { n: onIn.length }) : t('DLSS 5 is off');
+  const detail = settings.nrAllGames
+    ? t('Old and new games alike: any game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS. Games with anti-cheat are left out by themselves. To change one game, open its Launch options in the Library.')
+    : onIn.length
+      ? t('Only the games set to On in their Launch options: {list}. Turn it on for all games with the switch.', { list: onIn.slice(0, 4).map((g) => g.title).join(', ') + (onIn.length > 4 ? ' …' : '') })
+      : t('Turn it on for all your games with the switch, or for one game in its Launch options in the Library.');
   return (
-    <Group title={t('NVIDIA · DLSS 5 Neural Rendering')} aside={<Button size="sm" variant="ghost" icon="search" disabled={scanning} onClick={() => void load(true)}>{scanning ? t('Scanning your games…') : t('Scan my games')}</Button>}>
-      <Row label={t('How it works')} desc={t('OptiScaler (with Neural Rendering) goes into the game folder and runs NVIDIA\'s Neural Rendering model on the game\'s upscaled picture. The game does not need DLSS 5: any game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS works, older games included (DirectX 12, and DirectX 11 through OptiScaler\'s bridge). Turn it on per game in its Launch options, then turn that upscaler on in the game. Do not use it in online games with anti-cheat.')} />
-      <Row label={t('Graphics card')} desc={st ? `${st.gpu.name ?? t('No NVIDIA card found')}${archName ? ` · ${archName}` : ''}` : t('Checking…')} />
-      <Row
-        label={t('Neural Rendering model')}
-        desc={st?.runtimes.length
-          ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
-          : settings.nrAutoModel
-            ? t('Not downloaded yet: it comes by itself the first time a game starts with DLSS 5 (or press Download now). It works in your DLSS 2, 3 and 4 games too. Copies in your games or Downloads folder are used as well.')
-            : t('No nvngx_dlssnr.dll yet. Only the file comes from DLSS 5: after that it works in your DLSS 2, 3 and 4 games too. Download it in your browser (on TechSpot\'s DLSS files page, the download named DLSS Neural Rendering) and the launcher picks it up from your Downloads folder by itself, also inside a .zip or .7z; download a newer one whenever it is updated. Games that ship it are found too (NBA 2K27, Hogwarts Legacy from 5 November). Note the name: nvngx_dlss.dll is regular DLSS, nvngx_dlssnr.dll is Neural Rendering.')}
-      >
-        <div className="st-inline">
-          {!!st?.runtimes.length && (
-            <select className="input" aria-label={t('Neural Rendering model')} value={settings.nrRuntime} onChange={(e) => void update({ nrRuntime: e.target.value })}>
-              <option value="latest">{t('Newest (updates automatically)')}</option>
-              {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])} · ${r.source.startsWith('DLSS Unlocked') ? r.source : t('your file')}`}</option>)}
-            </select>
+    <>
+      <StatusCard icon="sparkle" tone={blocked && (settings.nrAllGames || onIn.length) ? 'warn' : settings.nrAllGames || onIn.length ? 'ok' : 'off'} title={title} detail={detail}>
+        <Switch label={t('Use DLSS 5 in all games')} checked={settings.nrAllGames} onChange={(v) => void update({ nrAllGames: v })} />
+      </StatusCard>
+      <Group title={t('DLSS 5 Neural Rendering (NVIDIA)')}>
+        <Row label={t('Ready to play')} desc={
+          <ul className="nr-checks">
+            {!st ? <Check state="later">{t('Checking…')}</Check> : (
+              <>
+                <Check state={st.gpu.name ? 'ok' : 'warn'}>{st.gpu.name ? `${st.gpu.name}${archName ? ` · ${archName}` : ''}` : t('No NVIDIA card found: DLSS 5 needs a GeForce RTX card.')}</Check>
+                {st.gpu.name && <Check state={driverOk ? 'ok' : 'warn'}>{driverOk ? t('NVIDIA driver {version}', { version: st.gpu.driver ?? '' }) : t('NVIDIA driver {version} is too old for DLSS 5: install 615 or newer (sudo apt install nvidia-driver-615-open), then restart.', { version: st.gpu.driver ?? '?' })}</Check>}
+                <Check state={sel ? 'ok' : 'later'}>{st.busy === 'model' ? t('Downloading the newest model from DLSS Unlocked…') : sel ? t('Model {version} · {kind}', { version: sel.version ?? '?', kind: t(BUILD_LABEL[sel.build]) }) : settings.nrAutoModel ? t('Model: downloads by itself at the first start (about 190 MB)') : t('Model: add nvngx_dlssnr.dll under Advanced')}</Check>
+                <Check state={st.downloaded.length ? 'ok' : 'later'}>{st.busy === 'downloading' ? t('Downloading OptiScaler…') : st.downloaded.length ? t('OptiScaler is downloaded') : t('OptiScaler: downloads by itself at the first start (about 180 MB)')}</Check>
+              </>
+            )}
+          </ul>
+        } />
+        <Row label={t('In the game')} desc={t('Turn DLSS (or FSR, or XeSS) on in the game\'s own graphics settings: DLSS 5 works on that picture. Press Insert in the game for OptiScaler\'s menu, where Neural Rendering can be checked and tuned.')} />
+        <Row label={t('Realism strength')} desc={t('How many times the model runs over the picture, each time on its own result: two passes doubles the real-life look. Each pass costs as much as the first, so on an RTX 3070 two passes roughly halves the frame rate; pair it with Balanced or Fast below.')}>
+          <select className="input" aria-label={t('Realism strength')} value={String(settings.nrPasses)} onChange={(e) => void update({ nrPasses: Number(e.target.value) })}>
+            <option value="1">{t('Natural (1 pass)')}</option>
+            <option value="2">{t('Double (2 passes)')}</option>
+            <option value="3">{t('Triple (3 passes)')}</option>
+            <option value="5">{t('Maximum (5 passes, very heavy)')}</option>
+          </select>
+        </Row>
+        <Row label={t('Frame generation')} desc={t('With the ShyVortex build: DLSS Frame Generation in games that have it, unlocked for RTX 20 and 30 cards (pick 2X to 4X in the game\'s own menu), or OptiScaler\'s FSR 3 frame generation for games without it.')}>
+          <select className="input" aria-label={t('Frame generation')} value={settings.nrFrameGen} onChange={(e) => void update({ nrFrameGen: e.target.value as Settings['nrFrameGen'] })}>
+            <option value="dlssg">{t('DLSS Frame Generation, unlocked for my card')}</option>
+            <option value="optifg">{t('FSR 3 frame generation (games without DLSS FG)')}</option>
+            <option value="off">{t('Off')}</option>
+          </select>
+        </Row>
+        <Row label={t('Run before upscaling')} desc={t('The model works on the picture before DLSS enlarges it, at render resolution: far cheaper, the best choice on RTX 20 and 30 cards. Supported by the y4my4my4m and ShyVortex builds.')}>
+          <Switch label={t('Run before upscaling')} checked={settings.nrPreUpscale} onChange={(v) => void update({ nrPreUpscale: v })} />
+        </Row>
+        <Row label={t('Neural Rendering quality')} desc={t('How much of the picture the model works on. On RTX 20 and 30 cards Balanced or Fast keeps the frame rate playable. More settings are in OptiScaler\'s in-game menu.')}>
+          <select className="input" aria-label={t('Neural Rendering quality')} value={settings.nrQuality} onChange={(e) => void update({ nrQuality: e.target.value as Settings['nrQuality'] })}>
+            <option value="auto">{t('OptiScaler\'s default')}</option>
+            <option value="full">{t('Full (slowest)')}</option>
+            <option value="balanced">{t('Balanced')}</option>
+            <option value="fast">{t('Fast')}</option>
+          </select>
+        </Row>
+        {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}
+      </Group>
+      <details className="st-advanced">
+        <summary><Icon name="sliders" size={16} /> {' '}{t('DLSS 5 advanced: model, OptiScaler build, CUDA')}</summary>
+        <Group aside={<Button size="sm" variant="ghost" icon="search" disabled={scanning} onClick={() => void load(true)}>{scanning ? t('Scanning your games…') : t('Scan my games')}</Button>}>
+          <Row
+            label={t('Neural Rendering model')}
+            desc={st?.runtimes.length
+              ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
+              : settings.nrAutoModel
+                ? t('Not downloaded yet: it comes by itself the first time a game starts with DLSS 5 (or press Download now). It works in your DLSS 2, 3 and 4 games too. Copies in your games or Downloads folder are used as well.')
+                : t('No nvngx_dlssnr.dll yet. Only the file comes from DLSS 5: after that it works in your DLSS 2, 3 and 4 games too. Download it in your browser (on TechSpot\'s DLSS files page, the download named DLSS Neural Rendering) and the launcher picks it up from your Downloads folder by itself, also inside a .zip or .7z; download a newer one whenever it is updated. Games that ship it are found too (NBA 2K27, Hogwarts Legacy from 5 November). Note the name: nvngx_dlss.dll is regular DLSS, nvngx_dlssnr.dll is Neural Rendering.')}
+          >
+            <div className="st-inline">
+              {!!st?.runtimes.length && (
+                <select className="input" aria-label={t('Neural Rendering model')} value={settings.nrRuntime} onChange={(e) => void update({ nrRuntime: e.target.value })}>
+                  <option value="latest">{t('Newest (updates automatically)')}</option>
+                  {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])} · ${r.source.startsWith('DLSS Unlocked') ? r.source : t('your file')}`}</option>)}
+                </select>
+              )}
+              <Button size="sm" variant="ghost" icon="import" onClick={() => void attempt(async () => setSt(await api.invoke('nr:import')))}>{t('Import…')}</Button>
+              {sel && settings.nrRuntime !== 'latest' && <IconButton icon="trash" label={t('Remove this model')} onClick={() => void attempt(async () => { await update({ nrRuntime: 'latest' }); setSt(await api.invoke('nr:remove', { sha256: sel.sha256 })); })} />}
+            </div>
+          </Row>
+          <Row
+            label={t('Get the model automatically')}
+            desc={st?.busy === 'model'
+              ? t('Downloading the newest model from DLSS Unlocked…')
+              : t('The first time a game starts with DLSS 5, the launcher downloads nvngx_dlssnr.dll from the newest DLSS Unlocked release (already made for RTX 20, 30 and 40 cards, about 190 MB of its package) and checks it. It looks for a newer release twice a day and switches to the newer model by itself.')}
+          >
+            <div className="st-inline">
+              <Button size="sm" variant="ghost" icon="downloads" disabled={!!st?.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:fetchModel')), t('The newest Neural Rendering model is ready.'))}>{t('Download now')}</Button>
+              <Switch label={t('Get the model automatically')} checked={settings.nrAutoModel} onChange={(v) => void update({ nrAutoModel: v })} />
+            </div>
+          </Row>
+          {!settings.nrAutoModel && (
+            <Row label={t('Get it from TechSpot')} desc={t('Downloads in your browser are picked up from your Downloads folder by themselves, also inside a .zip or .7z.')}>
+              <Button size="sm" variant="ghost" icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html' }))}>{t('Get it from TechSpot')}</Button>
+            </Row>
           )}
-          <Button size="sm" variant={st?.runtimes.length ? 'ghost' : 'primary'} icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html' }))}>{t('Get it from TechSpot')}</Button>
-          <Button size="sm" variant="ghost" icon="import" onClick={() => void attempt(async () => setSt(await api.invoke('nr:import')))}>{t('Import…')}</Button>
-          {sel && settings.nrRuntime !== 'latest' && <IconButton icon="trash" label={t('Remove this model')} onClick={() => void attempt(async () => { await update({ nrRuntime: 'latest' }); setSt(await api.invoke('nr:remove', { sha256: sel.sha256 })); })} />}
-        </div>
-      </Row>
-      <Row
-        label={t('Get the model automatically')}
-        desc={st?.busy === 'model'
-          ? t('Downloading the newest model from DLSS Unlocked…')
-          : t('The first time a game starts with DLSS 5, the launcher downloads nvngx_dlssnr.dll from the newest DLSS Unlocked release (already made for RTX 20, 30 and 40 cards, about 190 MB of its package) and checks it. It looks for a newer release twice a day and switches to the newer model by itself.')}
-      >
-        <div className="st-inline">
-          <Button size="sm" variant="ghost" icon="downloads" disabled={!!st?.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:fetchModel')), t('The newest Neural Rendering model is ready.'))}>{t('Download now')}</Button>
-          <Switch label={t('Get the model automatically')} checked={settings.nrAutoModel} onChange={(v) => void update({ nrAutoModel: v })} />
-        </div>
-      </Row>
-      {st?.gpu.arch && st.gpu.arch !== 'blackwell' && (
-        <Row
-          label={t('CUDA tools')}
-          desc={st.cuda
-            ? t('Ready in {path}. dlssnr-patcher uses them to rebuild the model for your card.', { path: st.cuda })
-            : t('NVIDIA\'s ptxas, fatbinary and cuobjdump (CUDA 13.3.1), needed to rebuild the model for RTX 20, 30 and 40 cards. They are downloaded from NVIDIA (about 32 MB), checked against NVIDIA\'s published SHA-256 and kept in the launcher\'s folder; nothing is installed on the system and the graphics driver is not touched.')}
-        >
-          {!st.cuda && <Button size="sm" variant="primary" icon="downloads" disabled={!!st.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:installCuda')), t('The CUDA tools are ready.'))}>{st.busy === 'cuda' ? t('Downloading…') : t('Download from NVIDIA')}</Button>}
-        </Row>
-      )}
-      {!!st?.downloads.length && !st.runtimes.length && (
-        <Row
-          label={t('In your Downloads')}
-          desc={<>{st.downloads.map((d) => (
-            <span key={d.file} className="proton-advice__warn" style={{ display: 'block' }}>
-              {d.files.length
-                ? t('{file} holds {list}, not Neural Rendering (nvngx_dlssnr.dll). Newer DLSS above already keeps that file up to date. Look for the download named DLSS Neural Rendering (nvngx_dlssnr.dll).', { file: d.file, list: d.files.map((f) => `${f.name}${f.version ? ` ${f.version}` : ''} (${t(DLSS_KIND_LABEL[f.kind])})`).join(', ') })
-                : t('{file} has no NVIDIA DLSS files in it.', { file: d.file })}
-            </span>
-          ))}</>}
-        />
-      )}
-      {sel?.needsPatch && (
-        <Row
-          label={t('Rebuild for your card')}
-          desc={t('NVIDIA builds the model for RTX 50. dlssnr-patcher (open source) rebuilds its GPU code for your card on this computer with the CUDA tools above (downloaded first when missing). This happens once per model, by itself at the first launch, or now.')}
-        >
-          <Button size="sm" variant="primary" icon="sparkle" disabled={!!st?.busy || sel.patched} onClick={() => void attempt(async () => setSt(await api.invoke('nr:prepare')), t('DLSS 5 is ready for your card.'))}>{st?.busy === 'patching' ? t('Rebuilding…') : sel.patched ? t('Ready') : t('Rebuild now')}</Button>
-        </Row>
-      )}
-      {st?.error && <Row label={t('Last problem')} desc={<span className="proton-advice__warn">{st.error}</span>} />}
-      <Row label={t('OptiScaler build')} desc={t('Newest follows ShyVortex\'s releases: the full package behind DLSS Unlocked, with Neural Rendering, pre-upscale multipass, Proton support and frame generation for RTX 20 and 30 cards. Also listed: y4my4my4m\'s nightly builds (the marked one was tested under Proton on FF7 Rebirth, 007 First Light and Horizon) and Dagherbou\'s original, with the newest colour controls in its in-game menu.')}>
-        <OptiscalerBuild settings={settings} />
-      </Row>
-      <Row label={t('Realism strength')} desc={t('How many times the model runs over the picture, each time on its own result: two passes doubles the real-life look. Each pass costs as much as the first, so on an RTX 3070 two passes roughly halves the frame rate; pair it with Balanced or Fast below.')}>
-        <select className="input" aria-label={t('Realism strength')} value={String(settings.nrPasses)} onChange={(e) => void update({ nrPasses: Number(e.target.value) })}>
-          <option value="1">{t('Natural (1 pass)')}</option>
-          <option value="2">{t('Double (2 passes)')}</option>
-          <option value="3">{t('Triple (3 passes)')}</option>
-          <option value="5">{t('Maximum (5 passes, very heavy)')}</option>
-        </select>
-      </Row>
-      <Row label={t('Frame generation')} desc={t('With the ShyVortex build: DLSS Frame Generation in games that have it, unlocked for RTX 20 and 30 cards (pick 2X to 4X in the game\'s own menu), or OptiScaler\'s FSR 3 frame generation for games without it.')}>
-        <select className="input" aria-label={t('Frame generation')} value={settings.nrFrameGen} onChange={(e) => void update({ nrFrameGen: e.target.value as Settings['nrFrameGen'] })}>
-          <option value="dlssg">{t('DLSS Frame Generation, unlocked for my card')}</option>
-          <option value="optifg">{t('FSR 3 frame generation (games without DLSS FG)')}</option>
-          <option value="off">{t('Off')}</option>
-        </select>
-      </Row>
-      <Row label={t('Run before upscaling')} desc={t('The model works on the picture before DLSS enlarges it, at render resolution: far cheaper, the best choice on RTX 20 and 30 cards. Supported by the y4my4my4m and ShyVortex builds.')}>
-        <Switch label={t('Run before upscaling')} checked={settings.nrPreUpscale} onChange={(v) => void update({ nrPreUpscale: v })} />
-      </Row>
-      <Row label={t('Neural Rendering quality')} desc={t('How much of the picture the model works on. On RTX 20 and 30 cards Balanced or Fast keeps the frame rate playable. More settings are in OptiScaler\'s in-game menu.')}>
-        <select className="input" aria-label={t('Neural Rendering quality')} value={settings.nrQuality} onChange={(e) => void update({ nrQuality: e.target.value as Settings['nrQuality'] })}>
-          <option value="auto">{t('OptiScaler\'s default')}</option>
-          <option value="full">{t('Full (slowest)')}</option>
-          <option value="balanced">{t('Balanced')}</option>
-          <option value="fast">{t('Fast')}</option>
-        </select>
-      </Row>
-    </Group>
+          {!!st?.downloads.length && !st.runtimes.length && (
+            <Row
+              label={t('In your Downloads')}
+              desc={<>{st.downloads.map((d) => (
+                <span key={d.file} className="proton-advice__warn" style={{ display: 'block' }}>
+                  {d.files.length
+                    ? t('{file} holds {list}, not Neural Rendering (nvngx_dlssnr.dll). Newer DLSS above already keeps that file up to date. Look for the download named DLSS Neural Rendering (nvngx_dlssnr.dll).', { file: d.file, list: d.files.map((f) => `${f.name}${f.version ? ` ${f.version}` : ''} (${t(DLSS_KIND_LABEL[f.kind])})`).join(', ') })
+                    : t('{file} has no NVIDIA DLSS files in it.', { file: d.file })}
+                </span>
+              ))}</>}
+            />
+          )}
+          <Row label={t('OptiScaler build')} desc={t('Newest follows ShyVortex\'s releases: the full package behind DLSS Unlocked, with Neural Rendering, pre-upscale multipass, Proton support and frame generation for RTX 20 and 30 cards. Also listed: y4my4my4m\'s nightly builds (the marked one was tested under Proton on FF7 Rebirth, 007 First Light and Horizon) and Dagherbou\'s original, with the newest colour controls in its in-game menu.')}>
+            <OptiscalerBuild settings={settings} />
+          </Row>
+          {st?.gpu.arch && st.gpu.arch !== 'blackwell' && (
+            <Row
+              label={t('CUDA tools')}
+              desc={st.cuda
+                ? t('Ready in {path}. dlssnr-patcher uses them to rebuild the model for your card.', { path: st.cuda })
+                : t('NVIDIA\'s ptxas, fatbinary and cuobjdump (CUDA 13.3.1), needed to rebuild the model for RTX 20, 30 and 40 cards. They are downloaded from NVIDIA (about 32 MB), checked against NVIDIA\'s published SHA-256 and kept in the launcher\'s folder; nothing is installed on the system and the graphics driver is not touched.')}
+            >
+              {!st.cuda && <Button size="sm" variant="primary" icon="downloads" disabled={!!st.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:installCuda')), t('The CUDA tools are ready.'))}>{st.busy === 'cuda' ? t('Downloading…') : t('Download from NVIDIA')}</Button>}
+            </Row>
+          )}
+          {sel?.needsPatch && (
+            <Row
+              label={t('Rebuild for your card')}
+              desc={t('NVIDIA builds the model for RTX 50. dlssnr-patcher (open source) rebuilds its GPU code for your card on this computer with the CUDA tools above (downloaded first when missing). This happens once per model, by itself at the first launch, or now.')}
+            >
+              <Button size="sm" variant="primary" icon="sparkle" disabled={!!st?.busy || sel.patched} onClick={() => void attempt(async () => setSt(await api.invoke('nr:prepare')), t('DLSS 5 is ready for your card.'))}>{st?.busy === 'patching' ? t('Rebuilding…') : sel.patched ? t('Ready') : t('Rebuild now')}</Button>
+            </Row>
+          )}
+        </Group>
+      </details>
+    </>
   );
 }
 

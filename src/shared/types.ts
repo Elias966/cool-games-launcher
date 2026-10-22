@@ -309,6 +309,8 @@ export interface LaunchOptions {
   wined3d: boolean;
   /** DLSS 5 Neural Rendering through OptiScaler (Settings → Graphics). */
   neuralRendering: boolean;
+  /** DLSS 5 for this game: follow Settings ('auto'), always on, or always off. */
+  dlss5: 'auto' | 'on' | 'off';
   /** AMD: FSR 4 through OptiScaler in games that have DLSS, XeSS or FSR 2 (Settings → Graphics). */
   optiscalerFsr4: boolean;
   /** Extra environment variables, one KEY=VALUE per line. */
@@ -333,7 +335,7 @@ export interface SaveBackup {
   version: string | null;
 }
 
-export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, neuralRendering: false, optiscalerFsr4: false, env: '' };
+export const DEFAULT_LAUNCH: LaunchOptions = { protonPath: null, gamescope: false, resolution: null, upscale: 'off', fpsLimit: null, mangohud: false, gamemode: false, nvapi: false, wined3d: false, neuralRendering: false, dlss5: 'auto', optiscalerFsr4: false, env: '' };
 
 export type GameUpdateState = 'available' | 'downloading' | 'preparing' | 'waiting' | 'updated' | 'failed' | 'ignored';
 
@@ -430,6 +432,8 @@ export interface Settings {
   nrFrameGen: 'off' | 'dlssg' | 'optifg';
   /** Fetch the Neural Rendering model by itself from the newest DLSS Unlocked release. */
   nrAutoModel: boolean;
+  /** DLSS 5 Neural Rendering in every Windows game that follows Settings (games with anti-cheat are left alone). */
+  nrAllGames: boolean;
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
@@ -546,7 +550,7 @@ export interface ProtonInstall {
 export type DlssPreset = 'latest' | 'm' | 'l' | 'k' | 'j' | 'e' | 'game';
 
 export interface NrStatus {
-  gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null };
+  gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null; driver: string | null };
   /** The CUDA Toolkit's bin folder, needed to rebuild the runtime for RTX 20/30/40. */
   cuda: string | null;
   busy: 'patching' | 'downloading' | 'cuda' | 'model' | null;

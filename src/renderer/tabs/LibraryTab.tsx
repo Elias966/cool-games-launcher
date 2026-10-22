@@ -13,6 +13,7 @@ import { PlayWeek, usePlayStats } from '../components/PlayWeek';
 import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { hours, playtime, t, tk, locale } from '../i18n';
+import { dlss5Choice, dlss5On, type Dlss5Choice } from '@shared/dlss5';
 
 type Filter = 'all' | 'favorites' | 'linux' | 'windows' | 'local' | 'gog' | 'epic';
 
@@ -527,6 +528,8 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
   const defaultName = protons.find((p) => p.path === defaultPath)?.name ?? null;
   const set = (launch: Partial<LaunchOptions>) => void attempt(() => api.invoke('library:configure', { id: game.id, launch }));
   const windows = game.kind === 'windows';
+  const allGames = useApp((s) => s.settings?.nrAllGames ?? false);
+  const dlss5Active = windows && dlss5On(l, allGames);
   const missing = (name: string) => <span className="field__hint">{t('Not installed — install “{name}” with your distribution’s package manager to use this.', { name })}</span>;
   return (
     <>
@@ -598,15 +601,23 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
             <span>{t('Compatibility renderer (WineD3D) — for games that crash or show black screens')}</span>
           </label>
           <label className="check">
-            <input type="checkbox" checked={l.neuralRendering} onChange={(e) => set({ neuralRendering: e.target.checked })} />
-            <span>{t('DLSS 5 Neural Rendering (OptiScaler, set up in Settings → Graphics)')}</span>
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={l.optiscalerFsr4} disabled={l.neuralRendering} onChange={(e) => set({ optiscalerFsr4: e.target.checked })} />
+            <input type="checkbox" checked={l.optiscalerFsr4} disabled={dlss5Active} onChange={(e) => set({ optiscalerFsr4: e.target.checked })} />
             <span>{t('AMD: FSR 4 in this game through OptiScaler (for games with DLSS, XeSS or FSR 2)')}</span>
           </label>
-          {l.optiscalerFsr4 && !l.neuralRendering && <span className="field__hint">{t('Needs a Radeon RX 7000 or 9000 card and GE-Proton 10-26 or newer. Its files go into the game folder at the next start and come out when you turn this off. Pick DLSS, XeSS or FSR in the game.')}</span>}
-          {l.neuralRendering && <span className="field__hint">{t('Its files go into the game folder at the next start and come out when you turn this off. Turn DLSS, FSR or XeSS on in the game; OptiScaler\'s menu opens with the Insert key.')}</span>}
+          {l.optiscalerFsr4 && !dlss5Active && <span className="field__hint">{t('Needs a Radeon RX 7000 or 9000 card and GE-Proton 10-26 or newer. Its files go into the game folder at the next start and come out when you turn this off. Pick DLSS, XeSS or FSR in the game.')}</span>}
+        </div>
+      )}
+      {windows && (
+        <div className="field">
+          <label className="field__label" htmlFor={`dlss5-${game.id}`}>{t('DLSS 5 Neural Rendering')}</label>
+          <select id={`dlss5-${game.id}`} className="input" value={dlss5Choice(l)} onChange={(e) => { const v = e.target.value as Dlss5Choice; set({ dlss5: v, neuralRendering: v === 'on' }); }}>
+            <option value="auto">{allGames ? t('As in Settings: on (all games)') : t('As in Settings: off')}</option>
+            <option value="on">{t('On for this game')}</option>
+            <option value="off">{t('Off for this game')}</option>
+          </select>
+          <span className="field__hint">{dlss5Active
+            ? t('On: its files go into the game folder at the next start and come out when you turn it off. Turn DLSS, FSR or XeSS on in the game; OptiScaler\'s menu opens with the Insert key. Picture settings are in Settings → Graphics.')
+            : t('Off in this game. Settings → Graphics turns it on for all games at once.')}</span>
         </div>
       )}
       <div className="field">
@@ -643,6 +654,7 @@ function LibraryHero({ game }: { game: Game }) {
   // A game from disk that the person also owns on GOG or Epic: offer to merge it.
   const storeTwin = useApp((s) => (game.store ? undefined : s.stores.owned.find((o) => o.gameId === null && o.title.toLowerCase().replace(/[^a-z0-9]+/g, '') === game.title.toLowerCase().replace(/[^a-z0-9]+/g, ''))));
   const heroImage = game.images.hero ?? game.art?.hero ?? game.artwork;
+  const nrAllGames = useApp((s) => s.settings?.nrAllGames ?? false);
   const argsRef = useRef(game.args);
   useEffect(() => {
     setArgs(game.args);
@@ -669,6 +681,7 @@ function LibraryHero({ game }: { game: Game }) {
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
             {game.kind === 'windows' && game.art?.appid ? <ProtonDbBadge appid={game.art.appid} /> : null}
+            {game.kind === 'windows' && dlss5On(game.launch, nrAllGames) && <span className="hero__dlss5" title={t('DLSS 5 Neural Rendering is on for this game')}><Icon name="sparkle" size={13} /> DLSS 5</span>}
             <span>{playtime(game.playtimeSeconds)}</span>
             {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}

@@ -509,9 +509,9 @@ export class NeuralRendering {
 
   private async detectGpu(): Promise<NrStatus['gpu']> {
     if (this.gpu) return this.gpu;
-    const r = await run('nvidia-smi', ['--query-gpu=name,compute_cap', '--format=csv,noheader']);
-    const [name, cap] = r.code === 0 ? r.out.split('\n')[0].split(',').map((s) => s.trim()) : [null, null];
-    this.gpu = { name: name || null, arch: archFor(cap ?? null) };
+    const r = await run('nvidia-smi', ['--query-gpu=name,compute_cap,driver_version', '--format=csv,noheader']);
+    const [name, cap, driver] = r.code === 0 ? r.out.split('\n')[0].split(',').map((s) => s.trim()) : [null, null, null];
+    this.gpu = { name: name || null, arch: archFor(cap ?? null), driver: driver && /^\d+\.\d+/.test(driver) ? driver : null };
     return this.gpu;
   }
 
