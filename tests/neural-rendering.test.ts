@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { archFor, compareVersions, dagherbouAssets, frameGenIni, identifyBuild, NeuralRendering, nightlyAssets, proxyFor, renderFolder, setIniKey, shyVortexAssets } from '../src/main/neural-rendering';
+import { archFor, compareVersions, dagherbouAssets, frameGenIni, zipDirectory, identifyBuild, NeuralRendering, nightlyAssets, proxyFor, renderFolder, setIniKey, shyVortexAssets } from '../src/main/neural-rendering';
 import type { Settings } from '../src/shared/types';
 
 const dirs: string[] = [];
@@ -237,5 +237,22 @@ describe('Neural Rendering files from the Downloads folder', () => {
     expect(st.runtimes).toEqual([]);
     await nr.fromDownloads();
     expect(opened).toBe(1);
+  });
+});
+
+describe('reading one file out of a remote zip', () => {
+  it('lists entries from the end record and central directory, with folders normalised', async () => {
+    const src = temp();
+    put(join(src, 'nvngx_dlssnr.dll'), 'model'.repeat(1000));
+    put(join(src, 'OptiScaler', 'streamline', 'nvngx_dlssnr.dll'), 'other');
+    const zip = join(src, 'pkg.zip');
+    execFileSync('zip', ['-q', '-r', zip, 'nvngx_dlssnr.dll', 'OptiScaler'], { cwd: src });
+    const bytes = readFileSync(zip);
+    const entries = await zipDirectory(bytes.subarray(Math.max(0, bytes.length - 65536)), async (o, n) => bytes.subarray(o, o + n));
+    const top = entries.find((e) => e.name === 'nvngx_dlssnr.dll')!;
+    expect(entries.map((e) => e.name)).toContain('OptiScaler/streamline/nvngx_dlssnr.dll');
+    expect(top).toMatchObject({ method: 8, usize: 5000 });
+    expect(bytes.readUInt32LE(top.offset)).toBe(0x04034b50);
+    await expect(zipDirectory(Buffer.from('not a zip'), async () => Buffer.alloc(0))).rejects.toThrow(/Not a zip/);
   });
 });

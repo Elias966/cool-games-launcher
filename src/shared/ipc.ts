@@ -83,6 +83,7 @@ export const settingsPatch = z
     nrPasses: z.number().int().min(1).max(5),
     nrPreUpscale: z.boolean(),
     nrFrameGen: z.enum(['off', 'dlssg', 'optifg']),
+    nrAutoModel: z.boolean(),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
     checkLauncherUpdates: z.boolean(),
@@ -232,6 +233,7 @@ export const requests = {
   'nr:import': z.undefined(),
   'nr:prepare': z.undefined(),
   'nr:installCuda': z.undefined(),
+  'nr:fetchModel': z.undefined(),
   'nr:remove': z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   'library:installSuggestedProton': z.object({ id, release: z.string().min(1).max(160) }).strict(),
   /** GOG and Epic accounts and the games they own. */
@@ -377,6 +379,7 @@ export interface Responses {
   'nr:import': NrStatus;
   'nr:prepare': NrStatus;
   'nr:installCuda': NrStatus;
+  'nr:fetchModel': NrStatus;
   'nr:remove': NrStatus;
   'library:installSuggestedProton': { ready: boolean };
   'stores:state': StoresState;

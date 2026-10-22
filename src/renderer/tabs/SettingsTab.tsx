@@ -649,7 +649,7 @@ const DLSS_KIND_LABEL: Record<NrStatus['downloads'][number]['files'][number]['ki
 const BUILD_LABEL: Record<NrStatus['runtimes'][number]['build'], string> = {
   nvidia: tk('NVIDIA build (RTX 50)'),
   'cross-generation': tk('Cross-generation build (RTX 20/30/40)'),
-  patched: tk('Patched build'),
+  patched: tk('Ready for RTX 20/30/40'),
 };
 
 /** DLSS 5 Neural Rendering: the runtime (from the person's games), rebuilt for their card, and OptiScaler. */
@@ -692,18 +692,31 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
         label={t('Neural Rendering model')}
         desc={st?.runtimes.length
           ? `${sel ? `${sel.version ?? '?'} · ${t(BUILD_LABEL[sel.build])}` : ''}${sel?.needsPatch ? ` · ${sel.patched ? t('rebuilt for your card') : t('needs rebuilding for your card')}` : ''}`
-          : t('No nvngx_dlssnr.dll yet. Only the file comes from DLSS 5: after that it works in your DLSS 2, 3 and 4 games too. Download it in your browser (on TechSpot\'s DLSS files page, the download named DLSS Neural Rendering) and the launcher picks it up from your Downloads folder by itself, also inside a .zip or .7z; download a newer one whenever it is updated. Games that ship it are found too (NBA 2K27, Hogwarts Legacy from 5 November). Note the name: nvngx_dlss.dll is regular DLSS, nvngx_dlssnr.dll is Neural Rendering.')}
+          : settings.nrAutoModel
+            ? t('Not downloaded yet: it comes by itself the first time a game starts with DLSS 5 (or press Download now). It works in your DLSS 2, 3 and 4 games too. Copies in your games or Downloads folder are used as well.')
+            : t('No nvngx_dlssnr.dll yet. Only the file comes from DLSS 5: after that it works in your DLSS 2, 3 and 4 games too. Download it in your browser (on TechSpot\'s DLSS files page, the download named DLSS Neural Rendering) and the launcher picks it up from your Downloads folder by itself, also inside a .zip or .7z; download a newer one whenever it is updated. Games that ship it are found too (NBA 2K27, Hogwarts Legacy from 5 November). Note the name: nvngx_dlss.dll is regular DLSS, nvngx_dlssnr.dll is Neural Rendering.')}
       >
         <div className="st-inline">
           {!!st?.runtimes.length && (
             <select className="input" aria-label={t('Neural Rendering model')} value={settings.nrRuntime} onChange={(e) => void update({ nrRuntime: e.target.value })}>
               <option value="latest">{t('Newest (updates automatically)')}</option>
-              {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])}`}</option>)}
+              {st.runtimes.map((r) => <option key={r.sha256} value={r.sha256}>{`${r.version ?? r.sha256.slice(0, 12)} · ${t(BUILD_LABEL[r.build])} · ${r.source.startsWith('DLSS Unlocked') ? r.source : t('your file')}`}</option>)}
             </select>
           )}
           <Button size="sm" variant={st?.runtimes.length ? 'ghost' : 'primary'} icon="external" onClick={() => void attempt(() => api.invoke('app:openExternal', { url: 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html' }))}>{t('Get it from TechSpot')}</Button>
           <Button size="sm" variant="ghost" icon="import" onClick={() => void attempt(async () => setSt(await api.invoke('nr:import')))}>{t('Import…')}</Button>
           {sel && settings.nrRuntime !== 'latest' && <IconButton icon="trash" label={t('Remove this model')} onClick={() => void attempt(async () => { await update({ nrRuntime: 'latest' }); setSt(await api.invoke('nr:remove', { sha256: sel.sha256 })); })} />}
+        </div>
+      </Row>
+      <Row
+        label={t('Get the model automatically')}
+        desc={st?.busy === 'model'
+          ? t('Downloading the newest model from DLSS Unlocked…')
+          : t('The first time a game starts with DLSS 5, the launcher downloads nvngx_dlssnr.dll from the newest DLSS Unlocked release (already made for RTX 20, 30 and 40 cards, about 190 MB of its package) and checks it. It looks for a newer release twice a day and switches to the newer model by itself.')}
+      >
+        <div className="st-inline">
+          <Button size="sm" variant="ghost" icon="downloads" disabled={!!st?.busy} onClick={() => void attempt(async () => setSt(await api.invoke('nr:fetchModel')), t('The newest Neural Rendering model is ready.'))}>{t('Download now')}</Button>
+          <Switch label={t('Get the model automatically')} checked={settings.nrAutoModel} onChange={(v) => void update({ nrAutoModel: v })} />
         </div>
       </Row>
       {st?.gpu.arch && st.gpu.arch !== 'blackwell' && (

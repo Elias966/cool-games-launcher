@@ -1135,4 +1135,12 @@ export const ar: Record<string, string> = {
   "Run before upscaling": "التشغيل قبل رفع الدقة",
   "The model works on the picture before DLSS enlarges it, at render resolution: far cheaper, the best choice on RTX 20 and 30 cards. Supported by the y4my4my4m and ShyVortex builds.": "يعمل النموذج على الصورة قبل أن يكبّرها DLSS، بدقة العرض الأصلية: أخف بكثير، وهو الخيار الأفضل لبطاقات RTX 20 و30. تدعمه نسختا y4my4my4m وShyVortex.",
   "With the ShyVortex build: DLSS Frame Generation in games that have it, unlocked for RTX 20 and 30 cards (pick 2X to 4X in the game's own menu), or OptiScaler's FSR 3 frame generation for games without it.": "مع نسخة ShyVortex: توليد الإطارات في DLSS في الألعاب التي تدعمه، مفتوحًا لبطاقات RTX 20 و30 (اختر من 2X إلى 4X من قائمة اللعبة نفسها)، أو توليد الإطارات FSR 3 من OptiScaler للألعاب التي لا تدعمه.",
+  "Downloading the newest model from DLSS Unlocked…": "جارٍ تنزيل أحدث نموذج من DLSS Unlocked…",
+  "Download now": "نزّل الآن",
+  "Get the model automatically": "احصل على النموذج تلقائيًا",
+  "Not downloaded yet: it comes by itself the first time a game starts with DLSS 5 (or press Download now). It works in your DLSS 2, 3 and 4 games too. Copies in your games or Downloads folder are used as well.": "لم يُنزّل بعد: يأتي تلقائيًا أول مرة تبدأ فيها لعبة مع DLSS 5 (أو اضغط نزّل الآن). يعمل في ألعابك التي تدعم DLSS 2 و3 و4 أيضًا. وتُستخدم كذلك النسخ الموجودة في ألعابك أو مجلد التنزيلات.",
+  "Ready for RTX 20/30/40": "جاهز لبطاقات RTX 20/30/40",
+  "The first time a game starts with DLSS 5, the launcher downloads nvngx_dlssnr.dll from the newest DLSS Unlocked release (already made for RTX 20, 30 and 40 cards, about 190 MB of its package) and checks it. It looks for a newer release twice a day and switches to the newer model by itself.": "أول مرة تبدأ فيها لعبة مع DLSS 5، ينزّل المشغّل nvngx_dlssnr.dll من أحدث إصدار لـ DLSS Unlocked (مُعدّ مسبقًا لبطاقات RTX 20 و30 و40، نحو 190 ميغابايت من حزمته) ويتحقق منه. ويبحث عن إصدار أحدث مرتين يوميًا وينتقل إلى النموذج الأحدث تلقائيًا.",
+  "The newest Neural Rendering model is ready.": "أحدث نموذج للعرض العصبي جاهز.",
+  "your file": "ملفك",
 };

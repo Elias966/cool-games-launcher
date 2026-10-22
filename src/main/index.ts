@@ -921,6 +921,7 @@ async function main() {
       return neural.status();
     },
     'nr:installCuda': async () => { await neural.fetchCuda(); return neural.status(); },
+    'nr:fetchModel': async () => { await neural.fetchModel(true); return neural.status(); },
     'nr:remove': async ({ sha256 }) => { neural.remove(sha256); return neural.status(); },
     'library:import': async () => {
       const game = await library.importGame();

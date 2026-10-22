@@ -15,7 +15,8 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { NrStatus, Settings } from '@shared/types';
 import { readPeVersion } from './pe-version';
@@ -26,6 +27,8 @@ type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: A
 export const DLSS_FILES_PAGE = 'https://www.techspot.com/downloads/7544-nvidia-dlss-files.html';
 export const OPTISCALER_REPO = 'y4my4my4m/OptiScaler_DLSSNR_Multipass_MFG';
 /** The original OptiScaler + DLSS Neural Rendering; y4my4my4m's builds add Proton fixes and multipass on top. */
+/** DLSS Unlocked: its standalone package carries nvngx_dlssnr.dll already built for RTX 20/30/40. */
+export const UNLOCKED_REPO = 'ShyVortex/dlss-unlocked';
 export const DAGHERBOU_REPO = 'Dagherbou/OptiScaler_DLSSNR';
 /** Pre-upscale multipass Neural Rendering with Proton fixes and an RTX 20/30 frame generation unlocker (GPL-3). */
 export const SHYVORTEX_REPO = 'ShyVortex/OptiScaler-DLSSNR-PreSR-Multipass';
@@ -204,7 +207,33 @@ function run(cmd: string, args: string[], opts: { cwd?: string; timeout?: number
   });
 }
 
-interface RuntimeMeta { sha256: string; version: string | null; source: string; addedAt: string }
+interface RuntimeMeta {
+  sha256: string; version: string | null; source: string; addedAt: string;
+  /** Already built for RTX 20/30/40 by its source (DLSS Unlocked): never rebuilt here. */
+  prepatched?: boolean;
+  /** The DLSS Unlocked release it came from. */
+  release?: string;
+}
+
+/** One file inside a zip, from its central directory. */
+export interface ZipEntry { name: string; method: number; crc: number; csize: number; usize: number; offset: number }
+
+/** Parses a zip's end record and central directory (classic, not ZIP64). */
+export function zipDirectory(tail: Buffer, readCd: (offset: number, size: number) => Promise<Buffer>): Promise<ZipEntry[]> {
+  const at = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (at < 0 || at + 22 > tail.length) return Promise.reject(new Error('Not a zip file (no end record).'));
+  const cdSize = tail.readUInt32LE(at + 12), cdOffset = tail.readUInt32LE(at + 16);
+  if (cdSize === 0xffffffff || cdOffset === 0xffffffff || cdSize > 16 * 1024 * 1024) return Promise.reject(new Error('Unsupported zip layout.'));
+  return readCd(cdOffset, cdSize).then((cd) => {
+    const out: ZipEntry[] = [];
+    for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50;) {
+      const nl = cd.readUInt16LE(p + 28), el = cd.readUInt16LE(p + 30), cl = cd.readUInt16LE(p + 32);
+      out.push({ name: cd.toString('utf8', p + 46, p + 46 + nl).replace(/\\/g, '/'), method: cd.readUInt16LE(p + 10), crc: cd.readUInt32LE(p + 16), csize: cd.readUInt32LE(p + 20), usize: cd.readUInt32LE(p + 24), offset: cd.readUInt32LE(p + 42) });
+      p += 46 + nl + el + cl;
+    }
+    return out;
+  });
+}
 /** 'nr': NVIDIA's Neural Rendering on the upscaled picture; 'fsr4': OptiScaler's FSR 4 for AMD cards. */
 export type OptiMode = 'nr' | 'fsr4';
 interface GameManifest { proxy: string; files: Array<{ path: string; backup: string | null }>; optiscaler: string; runtime: string }
@@ -251,13 +280,15 @@ export class NeuralRendering {
 
   /** The runtime in use: the one chosen in Settings, or the newest. */
   selected(): RuntimeMeta | null {
-    const all = this.runtimes();
+    // Newest first; at the same version, the copy already made for RTX 20/30/40.
+    const ready = (r: RuntimeMeta) => (r.prepatched || identifyBuild(r.sha256) !== 'nvidia' ? 0 : 1);
+    const all = this.runtimes().sort((a, b) => compareVersions(b.version, a.version) || ready(a) - ready(b));
     const pick = this.deps.settings().nrRuntime;
     return (pick !== 'latest' && all.find((r) => r.sha256 === pick)) || all[0] || null;
   }
 
   /** Copies a runtime into the launcher's store (each build once). */
-  async add(path: string, source: string): Promise<RuntimeMeta> {
+  async add(path: string, source: string, extra: Pick<RuntimeMeta, 'prepatched' | 'release'> = {}): Promise<RuntimeMeta> {
     const meta = readPeVersion(path);
     if (!meta) throw new Error('This file is not NVIDIA\'s DLSS Neural Rendering runtime (nvngx_dlssnr.dll).');
     const values = meta.resources.flatMap((r) => r.stringTables.map((t) => t.values));
@@ -280,7 +311,7 @@ export class NeuralRendering {
     copyFileSync(path, join(dest, `${RUNTIME}.part`));
     renameSync(join(dest, `${RUNTIME}.part`), join(dest, RUNTIME));
     const version = meta.resources.find((r) => r.fixedFileVersion)?.fixedFileVersion ?? null;
-    const rec: RuntimeMeta = { sha256, version, source, addedAt: new Date().toISOString() };
+    const rec: RuntimeMeta = { sha256, version, source, addedAt: new Date().toISOString(), ...extra };
     writeFileSync(join(dest, 'meta.json'), JSON.stringify(rec));
     this.deps.changed();
     return rec;
@@ -409,6 +440,71 @@ export class NeuralRendering {
     return found;
   }
 
+  /* ------------------------------------------------ the model, automatically */
+
+  /**
+   * The Neural Rendering model from the newest DLSS Unlocked release: its
+   * nvngx_dlssnr.dll is already built for RTX 20/30/40. Only that file is
+   * read out of the 600 MB package, through HTTP ranges, and checked against
+   * the CRC the zip records for it. A newer release brings a newer model.
+   */
+  async fetchModel(force = false): Promise<RuntimeMeta | null> {
+    const stamp = this.dir('unlocked-check.json');
+    let last: { at?: number; tag?: string } = {};
+    try { last = JSON.parse(readFileSync(stamp, 'utf8')); } catch { /* first check */ }
+    const have = this.runtimes().find((r) => r.release && r.release === last.tag);
+    if (!force && have && Date.now() - (last.at ?? 0) < 12 * 3600_000) return have;
+    const res = await this.deps.fetch(`https://api.github.com/repos/${UNLOCKED_REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) throw new Error(`Could not reach DLSS Unlocked's releases (HTTP ${res.status}).`);
+    const rel = (await res.json()) as { tag_name?: string; assets?: Array<{ name?: string; size?: number; browser_download_url?: string }> };
+    const asset = rel.assets?.find((a) => /^dlss-unlocked-standalone-[\w.-]+\.zip$/.test(a.name ?? '') && a.size && a.browser_download_url);
+    if (!rel.tag_name || !asset) throw new Error('The newest DLSS Unlocked release has no standalone package.');
+    const known = this.runtimes().find((r) => r.release === rel.tag_name);
+    if (known) { this.writeStamp(stamp, rel.tag_name); return known; }
+    const was = this.busy;
+    this.busy = 'model';
+    this.deps.changed();
+    const tmp = this.dir('work-model', RUNTIME);
+    try {
+      const url = asset.browser_download_url!, size = asset.size!;
+      const range = async (start: number, length: number) => {
+        const r = await this.deps.fetch(url, { headers: { Range: `bytes=${start}-${start + length - 1}` }, signal: AbortSignal.timeout(30 * 60_000) });
+        if (r.status !== 206) throw new Error(`DLSS Unlocked's download does not allow partial reads (HTTP ${r.status}).`);
+        return r;
+      };
+      const read = async (start: number, length: number) => Buffer.from(await (await range(start, length)).arrayBuffer());
+      const tailLen = Math.min(size, 65536);
+      const entries = await zipDirectory(await read(size - tailLen, tailLen), read);
+      // The package's top-level runtime is the one built for RTX 20/30/40; the copy under streamline is NVIDIA's own.
+      const entry = entries.find((e) => e.name.toLowerCase() === RUNTIME);
+      if (!entry || ![0, 8].includes(entry.method)) throw new Error('This DLSS Unlocked release has no nvngx_dlssnr.dll.');
+      const local = await read(entry.offset, 30);
+      if (local.readUInt32LE(0) !== 0x04034b50) throw new Error('DLSS Unlocked\'s package is damaged.');
+      const start = entry.offset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
+      const body = (await range(start, entry.csize)).body;
+      if (!body) throw new Error('DLSS Unlocked\'s download sent nothing.');
+      mkdirSync(dirname(tmp), { recursive: true });
+      let crc = 0;
+      const check = new Transform({ transform(chunk: Buffer, _e, done) { crc = zlib.crc32(chunk, crc); done(null, chunk); } });
+      const source = Readable.fromWeb(body as import('node:stream/web').ReadableStream);
+      if (entry.method === 8) await pipeline(source, zlib.createInflateRaw(), check, createWriteStream(tmp));
+      else await pipeline(source, check, createWriteStream(tmp));
+      if (crc >>> 0 !== entry.crc >>> 0 || statSync(tmp).size !== entry.usize) throw new Error('The model from DLSS Unlocked did not arrive intact; it will be fetched again.');
+      const rec = await this.add(tmp, `DLSS Unlocked ${rel.tag_name}`, { prepatched: true, release: rel.tag_name });
+      this.writeStamp(stamp, rel.tag_name);
+      return rec;
+    } finally {
+      rmSync(dirname(tmp), { recursive: true, force: true });
+      this.busy = was;
+      this.deps.changed();
+    }
+  }
+
+  private writeStamp(file: string, tag: string) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ at: Date.now(), tag }));
+  }
+
   /* ---------------------------------------------------------- GPU and CUDA */
 
   private async detectGpu(): Promise<NrStatus['gpu']> {
@@ -479,7 +575,7 @@ export class NeuralRendering {
 
   /** Whether this card needs the runtime rebuilt: NVIDIA's own build runs on RTX 50 only. */
   private needsPatch(r: RuntimeMeta, arch: NrStatus['gpu']['arch']): boolean {
-    return identifyBuild(r.sha256) === 'nvidia' && arch !== 'blackwell';
+    return identifyBuild(r.sha256) === 'nvidia' && !r.prepatched && arch !== 'blackwell';
   }
 
   private patchedPath(r: RuntimeMeta, arch: string, patcherSha: string) {
@@ -625,6 +721,12 @@ export class NeuralRendering {
   async apply(game: { id: number; installDir: string | null; executable: string }, mode: OptiMode = 'nr'): Promise<string[]> {
     let dll: string | null = null;
     if (mode === 'nr') {
+      // The model comes by itself: the newest DLSS Unlocked release, checked again twice a day.
+      if (this.deps.settings().nrAutoModel !== false) {
+        try { await this.fetchModel(); } catch (e) {
+          if (!this.selected()) throw new Error(`DLSS 5 needs nvngx_dlssnr.dll, and it could not be downloaded from DLSS Unlocked (${(e as Error).message}). Try again later, or import the file in Settings → Graphics.`);
+        }
+      }
       const runtime = this.selected();
       if (!runtime) throw new Error('DLSS 5 needs nvngx_dlssnr.dll: open Settings → Graphics and import it, or scan your games for it.');
       dll = await this.ready(runtime);
@@ -732,7 +834,7 @@ export class NeuralRendering {
       error: this.lastError,
       selected: sel?.sha256 ?? null,
       runtimes: this.runtimes().map((r) => ({
-        sha256: r.sha256, version: r.version, source: r.source, build: identifyBuild(r.sha256),
+        sha256: r.sha256, version: r.version, source: r.source, build: r.prepatched ? 'patched' as const : identifyBuild(r.sha256),
         needsPatch: this.needsPatch(r, gpu.arch),
         patched: safeList(this.dir('runtimes', r.sha256)).some((f) => f.startsWith(`patched-${gpu.arch ?? 'all'}-`)),
       })),

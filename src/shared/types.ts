@@ -428,6 +428,8 @@ export interface Settings {
   nrPreUpscale: boolean;
   /** Frame generation with Neural Rendering: the game's DLSS FG (unlocked on RTX 20/30/40), OptiScaler's FSR 3 FG, or none. */
   nrFrameGen: 'off' | 'dlssg' | 'optifg';
+  /** Fetch the Neural Rendering model by itself from the newest DLSS Unlocked release. */
+  nrAutoModel: boolean;
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
@@ -547,7 +549,7 @@ export interface NrStatus {
   gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null };
   /** The CUDA Toolkit's bin folder, needed to rebuild the runtime for RTX 20/30/40. */
   cuda: string | null;
-  busy: 'patching' | 'downloading' | 'cuda' | null;
+  busy: 'patching' | 'downloading' | 'cuda' | 'model' | null;
   error: string | null;
   selected: string | null;
   runtimes: Array<{ sha256: string; version: string | null; source: string; build: 'nvidia' | 'cross-generation' | 'patched'; needsPatch: boolean; patched: boolean }>;
