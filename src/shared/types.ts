@@ -549,6 +549,18 @@ export interface ProtonInstall {
 /** DLSS model (DXVK-NVAPI render preset); 'game' leaves the game's own choice. */
 export type DlssPreset = 'latest' | 'm' | 'l' | 'k' | 'j' | 'e' | 'game';
 
+/** What a game's OptiScaler log showed about DLSS 5 Neural Rendering. */
+export interface NrReport {
+  state: 'running' | 'failed' | 'not-used' | 'pending';
+  at: string;
+  /** The resolution the model ran at, e.g. 1920x1080. */
+  size: string | null;
+  /** Its cost per frame on the GPU, when OptiScaler timed it. */
+  modelMs: number | null;
+  passes: number | null;
+  reason: string | null;
+}
+
 export interface NrStatus {
   gpu: { name: string | null; arch: 'turing' | 'ampere' | 'ada' | 'blackwell' | null; driver: string | null };
   /** The CUDA Toolkit's bin folder, needed to rebuild the runtime for RTX 20/30/40. */

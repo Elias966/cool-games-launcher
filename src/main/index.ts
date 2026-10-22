@@ -58,7 +58,7 @@ import { SelfUpdater } from './self-update';
 import { CoverCheckService } from './cover-check';
 import { CoverModel } from './cover-model';
 import { hostOf } from '@shared/urls';
-import type { ProtonDbSummary, Settings } from '@shared/types';
+import type { NrReport, ProtonDbSummary, Settings } from '@shared/types';
 
 app.setName('Cool Games Launcher');
 if (!app.requestSingleInstanceLock()) {
@@ -542,7 +542,28 @@ async function main() {
     }
     if (!mode || !g.executable) { neural.removeFrom(g.id); return []; }
     if (!neural.installed(g.id) && (mode === 'fsr4' || neural.selected())) toast('info', mode === 'nr' ? tm('Setting up DLSS 5 Neural Rendering for {title}…', { title: g.title }) : tm('Setting up FSR 4 (OptiScaler) for {title}…', { title: g.title }));
-    return neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable }, mode);
+    const env = await neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable }, mode);
+    // As soon as OptiScaler's log shows the model running (or refusing), say so, also over the game.
+    if (mode === 'nr') neural.watch(g.id, (r) => tellNr(g.title, r, true));
+    return env;
+  };
+  /** One plain sentence about whether DLSS 5 ran, in the launcher and as a desktop notification. */
+  const tellNr = (title: string, r: NrReport, live: boolean) => {
+    const text = r.state === 'running'
+      ? (r.modelMs !== null
+        ? tm('DLSS 5 is running in {title} ({size}, {ms} ms per frame).', { title, size: r.size ?? '?', ms: r.modelMs.toFixed(1) })
+        : tm('DLSS 5 is running in {title} ({size}).', { title, size: r.size ?? '?' }))
+      : r.state === 'failed'
+        ? tm('DLSS 5 did not start in {title}: {reason}.', { title, reason: r.reason ?? '?' })
+        : tm('DLSS 5 was ready in {title}, but the game did not use DLSS, FSR or XeSS. Turn one of them on in its graphics settings.', { title });
+    toast(r.state === 'running' ? 'success' : 'warning', text);
+    if (live && Notification.isSupported()) new Notification({ title: tm('DLSS 5'), body: text, silent: true }).show();
+  };
+  library.afterGame = (id) => {
+    const g = gamesRepo.get(id);
+    const r = neural.finish(id);
+    // A result already told during play is not repeated; a quiet session gets its answer now.
+    if (g && r) tellNr(g.title, r, false);
   };
   library.onUninstalled = (g) => stores.forget(g);
   stores.recover();
@@ -932,6 +953,7 @@ async function main() {
     },
     'nr:installCuda': async () => { await neural.fetchCuda(); return neural.status(); },
     'nr:fetchModel': async () => { await neural.fetchModel(true); return neural.status(); },
+    'nr:report': ({ id }) => neural.lastReport(id),
     'nr:remove': async ({ sha256 }) => { neural.remove(sha256); return neural.status(); },
     'library:import': async () => {
       const game = await library.importGame();

@@ -141,7 +141,7 @@ export class Library {
       this.runningIds.delete(e.gameId);
       if (this.runningIds.size === 0) this.playingListener?.(false);
       if (e.installer) void this.afterInstaller(e.gameId);
-      else { this.games.recordPlay(e.gameId, e.seconds); void this.afterPlay(e.gameId, e.seconds, e.code, !!e.error); }
+      else { this.games.recordPlay(e.gameId, e.seconds); void this.afterPlay(e.gameId, e.seconds, e.code, !!e.error); this.afterGame?.(e.gameId); }
       if (e.error) toast('error', tm('Could not start: {detail}', { detail: e.error }));
       else if (!e.installer && e.code && e.code !== 0 && e.seconds < 5) toast('warning', tm('The game exited immediately. Check its runner and executable in the game settings.'));
       this.broadcast();
@@ -399,6 +399,8 @@ export class Library {
   storeLaunchArgs?: (g: GameRecord) => Promise<string[] | null>;
   /** Environment lines for a Proton launch (DLSS 5 Neural Rendering puts its files in place). */
   launchEnv?: (g: GameRecord) => Promise<string[]>;
+  /** A game (not an installer) has exited. */
+  afterGame?: (id: number) => void;
   /** GOG/Epic: a store game left the Library. */
   onUninstalled?: (g: GameRecord) => void;
 

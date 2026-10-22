@@ -3494,3 +3494,6 @@ kbd {
 .nr-check--warn { color: var(--warn); }
 /* A game's DLSS 5 state, next to its ProtonDB rating. */
 .hero__dlss5 { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; border: 1px solid rgba(118, 255, 3, 0.45); color: #b8ff7a; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; }
+
+.hero__dlss5--warn { border-color: rgba(255, 196, 71, 0.55); color: #ffd27a; }
+.hero__dlss5-why { flex-basis: 100%; font-size: 0.8rem; color: #ffd27a; }

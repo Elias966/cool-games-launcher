@@ -11,14 +11,14 @@
 // the card, here on the person's machine, with their CUDA Toolkit.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, chmodSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
+import { closeSync, openSync, readSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, chmodSync, statSync, writeFileSync, copyFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
-import type { NrStatus, Settings } from '@shared/types';
+import type { NrReport, NrStatus, Settings } from '@shared/types';
 import { readPeVersion } from './pe-version';
 
 type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
@@ -87,6 +87,37 @@ export function frameGenIni(text: string, mode: 'off' | 'dlssg' | 'optifg', arch
   t = setIniKey(t, 'FrameGen', 'Enabled', mode === 'optifg' ? 'true' : 'auto');
   t = setIniKey(t, 'FrameGen', 'FGInput', mode === 'optifg' ? 'upscaler' : 'auto');
   return setIniKey(t, 'FrameGen', 'FGOutput', mode === 'optifg' ? 'fsrfg' : 'auto');
+}
+
+/**
+ * What OptiScaler's log says about Neural Rendering. 'running': the model was
+ * created (ShyVortex: "feature created at", "pass N built at"; y4my4my4m and
+ * Dagherbou: "DLSS-NR running at"), with its cost when timing lines exist.
+ * 'failed': the driver or model refused, with the reason. 'pending': nothing
+ * conclusive yet; after the game that means the game never used DLSS, FSR or XeSS.
+ */
+export function parseNrLog(text: string): NrReport {
+  const at = new Date().toISOString();
+  const size = /DLSS-NR: feature created at (\d+x\d+)/.exec(text)?.[1]
+    ?? /DLSS-NR running at (\d+x\d+)/.exec(text)?.[1]
+    ?? /DLSS-NR Vulkan: pass \d+ built at (\d+x\d+)/.exec(text)?.[1]
+    ?? /DLSS-NR Vulkan: running \S+ SR at (\d+x\d+)/.exec(text)?.[1] ?? null;
+  const means = [...text.matchAll(/model mean ([\d.]+)/g)];
+  const elapsed = [...text.matchAll(/([\d.]+) ms model/g)];
+  const modelMs = Number((means.at(-1) ?? elapsed.at(-1))?.[1] ?? NaN);
+  const passes = [...text.matchAll(/DLSS-NR model passes: configured \d+, effective (\d+)/g)].at(-1)?.[1];
+  if (size) return { state: 'running', at, size, modelMs: Number.isFinite(modelMs) ? modelMs : null, passes: passes ? Number(passes) : null, reason: null };
+  const refused = /the NGX core refused its capability parameters/.test(text);
+  const create = /CreateFeature\(18\)(?:, pass \d+,)? failed (0x[0-9A-Fa-f]+)/.exec(text)?.[1] ?? /DLSS-NR driver creation for pass \d+ failed: (0x[0-9A-Fa-f]+)/.exec(text)?.[1];
+  const unavailable = /DLSS-NR(?: Vulkan)? unavailable: ([^\r\n]+)/.exec(text)?.[1];
+  const evaluate = /DLSS-NR(?: Vulkan:)? evaluate returned (0x[0-9A-Fa-f]+)/.exec(text)?.[1];
+  const reason = refused ? 'the NVIDIA driver did not accept the Neural Rendering model'
+    : create ? `the NVIDIA driver could not create the model (${create})`
+    : unavailable ? unavailable.trim()
+    : evaluate ? `the model stopped while running (${evaluate})`
+    : null;
+  if (reason) return { state: 'failed', at, size: null, modelMs: null, passes: null, reason };
+  return { state: 'pending', at, size: null, modelMs: null, passes: null, reason: /IFeature_\w+|Upscaler/.test(text) ? null : 'the game did not turn on DLSS, FSR or XeSS' };
 }
 
 /** Games whose loaders want a particular proxy name (ShyVortex's tested table). */
@@ -236,7 +267,7 @@ export function zipDirectory(tail: Buffer, readCd: (offset: number, size: number
 }
 /** 'nr': NVIDIA's Neural Rendering on the upscaled picture; 'fsr4': OptiScaler's FSR 4 for AMD cards. */
 export type OptiMode = 'nr' | 'fsr4';
-interface GameManifest { proxy: string; files: Array<{ path: string; backup: string | null }>; optiscaler: string; runtime: string }
+interface GameManifest { proxy: string; files: Array<{ path: string; backup: string | null }>; optiscaler: string; runtime: string; startedAt?: number }
 
 export interface NrDeps {
   dataDir: string;
@@ -789,6 +820,8 @@ export class NeuralRendering {
       const pre = this.deps.settings().nrPreUpscale ? 'true' : 'auto';
       text = setIniKey(setIniKey(text, 'DlssNr', 'PreUpscale', pre), 'DlssNr', 'RunBeforeSR', pre);
       text = frameGenIni(text, this.deps.settings().nrFrameGen, (await this.detectGpu()).arch);
+      // OptiScaler's log says whether the model really ran; the launcher reads it during and after play.
+      text = setIniKey(setIniKey(text, 'Log', 'LogToFile', 'true'), 'Log', 'LogLevel', '2');
       text = setIniKey(text, 'DlssNr', 'WorkingScale', q === 'fast' ? '0.5' : q === 'balanced' ? '0.75' : q === 'full' ? '1.0' : 'auto');
       // Multipass: each pass sees the last one's picture. Later passes are eased so they refine
       // rather than re-amplify (OptiScaler's own advice for PassOverrides).
@@ -798,12 +831,81 @@ export class NeuralRendering {
       writeFileSync(ini, text);
     }
     mkdirSync(this.dir('games'), { recursive: true });
-    writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: tag } satisfies GameManifest));
+    writeFileSync(this.manifestPath(game.id), JSON.stringify({ proxy, files, optiscaler: opti.name, runtime: tag, startedAt: Date.now() } satisfies GameManifest));
     // ShyVortex's RTX 20/30 frame generation unlocker needs CUDA inside Proton.
     return [`WINEDLLOVERRIDES=${proxy.replace(/\.dll$/i, '')}=n,b`, 'PROTON_ENABLE_NVAPI=1', ...(isShyVortex(opti.name) ? ['PROTON_NVIDIA_NVCUDA=1'] : [])];
   }
 
   /** Takes OptiScaler and the runtime out of the game and puts back what was there before. */
+  /* ------------------------------------------- did it really run? (the log) */
+
+  private reportPath(gameId: number) { return this.dir('games', `${gameId}.report.json`); }
+
+  /** What OptiScaler's log says about this game's current session, once it says something. */
+  check(gameId: number): NrReport | null {
+    const m = this.installed(gameId);
+    if (!m || m.runtime === 'fsr4') return null;
+    const log = join(dirname(m.files[0]?.path ?? ''), 'OptiScaler.log');
+    let text: string;
+    try {
+      if (statSync(log).mtimeMs < (m.startedAt ?? 0) - 5000) return null;
+      text = readTail(log, 4 * 1024 * 1024);
+    } catch { return null; }
+    const r = parseNrLog(text);
+    if (r.state !== 'pending') {
+      mkdirSync(this.dir('games'), { recursive: true });
+      writeFileSync(this.reportPath(gameId), JSON.stringify(r));
+    }
+    return r;
+  }
+
+  /** The last conclusive result for a game. */
+  lastReport(gameId: number): NrReport | null {
+    try { return JSON.parse(readFileSync(this.reportPath(gameId), 'utf8')) as NrReport; } catch { return null; }
+  }
+
+  private watchers = new Map<number, ReturnType<typeof setInterval>>();
+  /** What was already said during play, so it is not said twice. */
+  private told = new Map<number, NrReport['state']>();
+
+  /** While the game runs: tells once, as soon as the log shows the model running or failing. */
+  watch(gameId: number, onResult: (r: NrReport) => void) {
+    this.stopWatch(gameId);
+    this.told.delete(gameId);
+    try { rmSync(this.reportPath(gameId), { force: true }); } catch { /* none yet */ }
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const r = this.check(gameId);
+      if (r && r.state !== 'pending') { this.stopWatch(gameId); this.told.set(gameId, r.state); onResult(r); this.deps.changed(); }
+      else if (Date.now() - started > 15 * 60_000) this.stopWatch(gameId);
+    }, 15_000);
+    timer.unref?.();
+    this.watchers.set(gameId, timer);
+  }
+
+  stopWatch(gameId: number) {
+    const t = this.watchers.get(gameId);
+    if (t) clearInterval(t);
+    this.watchers.delete(gameId);
+  }
+
+  /** After the game: the final word from its log ("never used an upscaler" only now), unless already said. */
+  finish(gameId: number): NrReport | null {
+    this.stopWatch(gameId);
+    const r = this.check(gameId);
+    if (!r) return null;
+    // Still nothing at the end: the game never used an upscaler, or it did and the pass never started.
+    const final: NrReport = r.state !== 'pending' ? r
+      : r.reason ? { ...r, state: 'not-used' }
+      : { ...r, state: 'failed', reason: 'Neural Rendering never started; OptiScaler\'s menu (Insert) shows why under DLSS Neural Rendering' };
+    mkdirSync(this.dir('games'), { recursive: true });
+    writeFileSync(this.reportPath(gameId), JSON.stringify(final));
+    this.deps.changed();
+    const said = this.told.get(gameId);
+    this.told.delete(gameId);
+    return said === final.state ? null : final;
+  }
+
   removeFrom(gameId: number) {
     const m = this.installed(gameId);
     if (!m) return;
@@ -857,6 +959,18 @@ function findFile(dir: string, name: string, depth = 0): string | null {
     if (e.isDirectory() && depth < 3) { const f = findFile(p, name, depth + 1); if (f) return f; }
   }
   return null;
+}
+
+/** Reads at most the last `max` bytes of a file (OptiScaler's log grows during long sessions). */
+function readTail(path: string, max: number): string {
+  const size = statSync(path).size;
+  if (size <= max) return readFileSync(path, 'utf8');
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(max);
+    readSync(fd, buf, 0, max, size - max);
+    return buf.toString('utf8');
+  } finally { closeSync(fd); }
 }
 
 /** Removes a folder tree's empty folders, bottom up; anything holding a file stays. */

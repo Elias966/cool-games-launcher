@@ -6,7 +6,7 @@ import { attempt, setTab, useApp } from '../state';
 import { Artwork, placeholderStyle } from '../components/GameCard';
 import { Button, Dialog, EmptyState, IconButton } from '../components/ui';
 import { Icon } from '../components/Icon';
-import type { DownloadItem, Game, ImageOptions, ProtonAdvice, LaunchOptions, OwnedGame, ProtonInstall, Runner, SaveBackup } from '@shared/types';
+import type { DownloadItem, Game, ImageOptions, NrReport, ProtonAdvice, LaunchOptions, OwnedGame, ProtonInstall, Runner, SaveBackup } from '@shared/types';
 import { ProgressRing } from '../components/ui';
 import { ProtonDbBadge } from '../components/ProtonDb';
 import { PlayWeek, usePlayStats } from '../components/PlayWeek';
@@ -681,7 +681,7 @@ function LibraryHero({ game }: { game: Game }) {
           <p className="hero__stats">
             {game.version && <span className="mono">{game.version}</span>}
             {game.kind === 'windows' && game.art?.appid ? <ProtonDbBadge appid={game.art.appid} /> : null}
-            {game.kind === 'windows' && dlss5On(game.launch, nrAllGames) && <span className="hero__dlss5" title={t('DLSS 5 Neural Rendering is on for this game')}><Icon name="sparkle" size={13} /> DLSS 5</span>}
+            {game.kind === 'windows' && dlss5On(game.launch, nrAllGames) && <Dlss5Badge game={game} />}
             <span>{playtime(game.playtimeSeconds)}</span>
             {week && <span>{t('{time} this week', { time: hours(week.seconds) })}</span>}
             {game.lastPlayedAt && <span>{t('Last played {date}', { date: new Date(game.lastPlayedAt).toLocaleDateString(locale()) })}</span>}
@@ -1072,6 +1072,31 @@ function OwnedHero({ o }: { o: OwnedGame }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** DLSS 5 is on for this game; what OptiScaler's log showed the last time it was played. */
+function Dlss5Badge({ game }: { game: Game }) {
+  const [r, setR] = useState<NrReport | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => void api.invoke('nr:report', { id: game.id }).then((x) => { if (live) setR(x); }).catch(() => undefined);
+    load();
+    const off = api.on('nr:changed', load);
+    return () => { live = false; off(); };
+  }, [game.id, game.running]);
+  const state = r?.state === 'running' ? 'ok' : r?.state === 'failed' || r?.state === 'not-used' ? 'warn' : 'new';
+  const label = r?.state === 'running' ? t('DLSS 5 ran') : r?.state === 'failed' ? t('DLSS 5 did not start') : r?.state === 'not-used' ? t('DLSS 5 unused') : 'DLSS 5';
+  const detail = r?.state === 'running'
+    ? (r.modelMs !== null ? t('Ran last time at {size}, {ms} ms per frame.', { size: r.size ?? '?', ms: r.modelMs.toFixed(1) }) : t('Ran last time at {size}.', { size: r.size ?? '?' }))
+    : r?.state === 'failed' ? t('Did not start last time: {reason}.', { reason: r.reason ?? '?' })
+    : r?.state === 'not-used' ? t('Last time the game did not use DLSS, FSR or XeSS: turn one of them on in its graphics settings.')
+    : t('DLSS 5 Neural Rendering is on for this game. After you play, this shows whether it really ran.');
+  return (
+    <>
+      <span className={`hero__dlss5 hero__dlss5--${state}`} title={detail}><Icon name={state === 'warn' ? 'alert' : 'sparkle'} size={13} /> {label}</span>
+      {state === 'warn' && !game.running && <span className="hero__dlss5-why">{detail}</span>}
+    </>
   );
 }
 

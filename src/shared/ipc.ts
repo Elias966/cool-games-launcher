@@ -7,7 +7,7 @@ import type {
   AiStatus,
   DateCheckPhase,
   ImageOptions,
-  ProtonAdvice, GraphicsVersions, NrStatus,
+  ProtonAdvice, GraphicsVersions, NrStatus, NrReport,
   StoresState,
   StoreSearchResult,
   ProtonReleaseList,
@@ -236,6 +236,7 @@ export const requests = {
   'nr:prepare': z.undefined(),
   'nr:installCuda': z.undefined(),
   'nr:fetchModel': z.undefined(),
+  'nr:report': z.object({ id }).strict(),
   'nr:remove': z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   'library:installSuggestedProton': z.object({ id, release: z.string().min(1).max(160) }).strict(),
   /** GOG and Epic accounts and the games they own. */
@@ -382,6 +383,7 @@ export interface Responses {
   'nr:prepare': NrStatus;
   'nr:installCuda': NrStatus;
   'nr:fetchModel': NrStatus;
+  'nr:report': NrReport | null;
   'nr:remove': NrStatus;
   'library:installSuggestedProton': { ready: boolean };
   'stores:state': StoresState;
