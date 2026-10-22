@@ -1,13 +1,13 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { Component, Fragment, lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { boot, pushToast, setState, setTab, useApp } from './state';
+import { boot, getState, pushToast, setState, setTab, useApp } from './state';
 import { Dock, TABS, TitleBar } from './components/Chrome';
 import { Toasts } from './components/ui';
 import { useMotionAttributes, useMotionPrefs } from './hooks/useMotion';
 import { attachInterfaceSounds, sound } from './sound';
 import { emitScene } from './scene/events';
 import { CouchMode } from './components/CouchMode';
-import { moveFocus, onPad, startGamepad } from './gamepad';
+import { moveFocus, onPad, setPadGate, startGamepad } from './gamepad';
 import { StoreTab } from './tabs/StoreTab';
 import { LibraryTab } from './tabs/LibraryTab';
 import { DownloadsTab } from './tabs/DownloadsTab';
@@ -124,6 +124,9 @@ export function App() {
   // Controllers: Start/Menu toggles couch mode; elsewhere the pad moves focus like arrow keys.
   const couch = useApp((s) => s.couch);
   useEffect(() => {
+    // Only while the launcher is the window in use and no game is running: a controller
+    // pressed in a game (Start opens most pause menus) must never reach the launcher.
+    setPadGate(() => document.hasFocus() && document.visibilityState === 'visible' && !getState().library.some((g) => g.running));
     let hinted = false;
     const stop = startGamepad(() => {
       if (hinted) return;

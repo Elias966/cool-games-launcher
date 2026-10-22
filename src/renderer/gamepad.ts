@@ -2,6 +2,12 @@
 // while one is connected and turns presses into navigation actions with key
 // repeat. Outside couch mode the actions drive spatial focus navigation of
 // the normal interface; couch mode subscribes to them directly.
+//
+// Chromium hands controller input to the launcher even while another window
+// (the game) has focus, so input counts only while the gate allows it: the
+// launcher window focused and no game running. Buttons held while the gate
+// is closed stay "held", so returning to the launcher never fires a press
+// that was meant for the game.
 
 export type PadAction = 'up' | 'down' | 'left' | 'right' | 'accept' | 'back' | 'menu' | 'secondary' | 'view';
 
@@ -25,10 +31,13 @@ const REPEAT_EVERY = 110;
 let raf = 0;
 const held = new Map<PadAction, number>();
 const lastRepeat = new Map<PadAction, number>();
+let gate: () => boolean = () => document.hasFocus() && document.visibilityState === 'visible';
 
-function poll(t: number) {
-  raf = 0;
-  const pads = navigator.getGamepads?.() ?? [];
+/** Decides whether controller input reaches the launcher right now. */
+export function setPadGate(fn: () => boolean) { gate = fn; }
+
+/** One frame of input: emits new presses (and repeats) only while live. */
+export function padStep(pads: ReadonlyArray<Gamepad | null>, t: number, live: boolean) {
   const pressed = new Set<PadAction>();
   for (const pad of pads) {
     if (!pad) continue;
@@ -41,16 +50,24 @@ function poll(t: number) {
   }
   for (const a of pressed) {
     const since = held.get(a);
-    if (since === undefined) { held.set(a, t); lastRepeat.set(a, t); emit(a); }
-    else if (['up', 'down', 'left', 'right'].includes(a) && t - since > REPEAT_DELAY && t - (lastRepeat.get(a) ?? 0) > REPEAT_EVERY) { lastRepeat.set(a, t); emit(a); }
+    if (since === undefined) { held.set(a, t); lastRepeat.set(a, t); if (live) emit(a); }
+    else if (live && ['up', 'down', 'left', 'right'].includes(a) && t - since > REPEAT_DELAY && t - (lastRepeat.get(a) ?? 0) > REPEAT_EVERY) { lastRepeat.set(a, t); emit(a); }
   }
   for (const a of [...held.keys()]) if (!pressed.has(a)) held.delete(a);
+}
+
+function poll(t: number) {
+  raf = 0;
+  const pads = navigator.getGamepads?.() ?? [];
+  let live = false;
+  try { live = gate(); } catch { live = false; }
+  padStep(pads, t, live);
   if (pads.some(Boolean)) raf = requestAnimationFrame(poll);
 }
 
 /** Starts polling while a controller is connected; reports connections. */
 export function startGamepad(onConnect: (name: string) => void): () => void {
-  const connected = (e: GamepadEvent) => { onConnect(e.gamepad.id); if (!raf) raf = requestAnimationFrame(poll); };
+  const connected = (e: GamepadEvent) => { if (gate()) onConnect(e.gamepad.id); if (!raf) raf = requestAnimationFrame(poll); };
   window.addEventListener('gamepadconnected', connected);
   if ((navigator.getGamepads?.() ?? []).some(Boolean)) raf = requestAnimationFrame(poll);
   return () => { window.removeEventListener('gamepadconnected', connected); if (raf) cancelAnimationFrame(raf); };
