@@ -434,6 +434,10 @@ export interface Settings {
   nrAutoModel: boolean;
   /** DLSS 5 Neural Rendering in every Windows game that follows Settings (games with anti-cheat are left alone). */
   nrAllGames: boolean;
+  /** OptiScaler's in-game menu key (Windows virtual-key code); null: OptiScaler's default, Insert. */
+  nrMenuKey: number | null;
+  /** A key that switches Neural Rendering on and off in the game; null: none. */
+  nrToggleKey: number | null;
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */

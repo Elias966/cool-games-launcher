@@ -13,6 +13,7 @@ import { MAX_CLIP_SECONDS } from '../sound-clip';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { t, tk, locale } from '../i18n';
 import { dlss5Choice, dlss5On } from '@shared/dlss5';
+import { vkFromCode, vkName } from '@shared/vk';
 
 type SectionId = 'sources' | 'browser' | 'accounts' | 'ai' | 'compat' | 'graphics' | 'downloads' | 'content' | 'appearance' | 'sound' | 'privacy' | 'about';
 
@@ -674,6 +675,36 @@ function OptiscalerBuild({ settings }: { settings: Settings }) {
   );
 }
 
+/** Click, then press a key: stored as the Windows key code OptiScaler reads. Escape cancels. */
+function KeyPicker({ value, fallback, onChange, label }: { value: number | null; fallback: string; onChange: (vk: number | null) => void; label: string }) {
+  const [listening, setListening] = useState(false);
+  const [refused, setRefused] = useState(false);
+  useEffect(() => {
+    if (!listening) return;
+    const down = (e: KeyboardEvent) => {
+      // Nothing else (tab shortcuts) sees the key while it is being picked.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key === 'Escape') { setListening(false); return; }
+      const vk = vkFromCode(e.code);
+      if (vk === null) { setRefused(true); return; }
+      setRefused(false);
+      setListening(false);
+      onChange(vk);
+    };
+    window.addEventListener('keydown', down, { capture: true });
+    return () => window.removeEventListener('keydown', down, { capture: true });
+  }, [listening, onChange]);
+  return (
+    <div className="st-inline">
+      <Button size="sm" variant={listening ? 'primary' : 'ghost'} icon="keyboard" aria-label={label} onClick={() => { setRefused(false); setListening((v) => !v); }}>
+        {listening ? (refused ? t('Not that key; press another (Esc cancels)') : t('Press a key… (Esc cancels)')) : value ? vkName(value) : fallback}
+      </Button>
+      {value !== null && !listening && <Button size="sm" variant="ghost" onClick={() => onChange(null)}>{t('Reset')}</Button>}
+    </div>
+  );
+}
+
 /** One line of the "ready to play" list: done, waiting for the first start, or needing the person. */
 function Check({ state, children }: { state: 'ok' | 'later' | 'warn'; children: ReactNode }) {
   return (
@@ -733,7 +764,13 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
             )}
           </ul>
         } />
-        <Row label={t('In the game')} desc={t('Turn DLSS (or FSR, or XeSS) on in the game\'s own graphics settings: DLSS 5 works on that picture. Press Insert in the game for OptiScaler\'s menu, where Neural Rendering can be checked and tuned.')} />
+        <Row label={t('In the game')} desc={t('Turn DLSS (or FSR, or XeSS) on in the game\'s own graphics settings: DLSS 5 works on that picture. Press {key} in the game for OptiScaler\'s menu, where Neural Rendering can be checked and tuned.', { key: vkName(settings.nrMenuKey ?? 0x2d) })} />
+        <Row label={t('OptiScaler menu key')} desc={t('The key that opens OptiScaler\'s menu in the game. Insert by default; pick another if your keyboard has none. Used from the next start of each game.')}>
+          <KeyPicker label={t('OptiScaler menu key')} value={settings.nrMenuKey} fallback={t('Insert (default)')} onChange={(v) => void update({ nrMenuKey: v })} />
+        </Row>
+        <Row label={t('Neural Rendering on/off key')} desc={t('A key that switches DLSS 5 off and on again while you play, to compare the picture with and without it.')}>
+          <KeyPicker label={t('Neural Rendering on/off key')} value={settings.nrToggleKey} fallback={t('None')} onChange={(v) => void update({ nrToggleKey: v })} />
+        </Row>
         <Row label={t('Realism strength')} desc={t('How many times the model runs over the picture, each time on its own result: two passes doubles the real-life look. Each pass costs as much as the first, so on an RTX 3070 two passes roughly halves the frame rate; pair it with Balanced or Fast below.')}>
           <select className="input" aria-label={t('Realism strength')} value={String(settings.nrPasses)} onChange={(e) => void update({ nrPasses: Number(e.target.value) })}>
             <option value="1">{t('Natural (1 pass)')}</option>

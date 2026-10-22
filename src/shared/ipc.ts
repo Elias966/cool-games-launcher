@@ -85,6 +85,8 @@ export const settingsPatch = z
     nrFrameGen: z.enum(['off', 'dlssg', 'optifg']),
     nrAutoModel: z.boolean(),
     nrAllGames: z.boolean(),
+    nrMenuKey: z.number().int().min(1).max(254).nullable(),
+    nrToggleKey: z.number().int().min(1).max(254).nullable(),
     closeToTray: z.boolean(),
     freeGpuWhilePlaying: z.boolean(),
     checkLauncherUpdates: z.boolean(),

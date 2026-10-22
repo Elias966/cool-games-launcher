@@ -98,7 +98,7 @@ describe('neural rendering in a game folder', () => {
     put(join(game, 'Plugins/DLSS/Win64/nvngx_dlss.dll'));
     put(join(game, 'Plugins/DLSS/Win64/nvngx_dlssnr.dll'), 'older model');
 
-    const settings = { nrRuntime: 'latest', nrOptiscaler: 'OptiScaler_v10.0.0-pre1_20260906.7z', nrQuality: 'balanced', nrPasses: 1 } as Settings;
+    const settings = { nrRuntime: 'latest', nrOptiscaler: 'OptiScaler_v10.0.0-pre1_20260906.7z', nrQuality: 'balanced', nrPasses: 1, nrMenuKey: 0x24, nrToggleKey: 0x79 } as Settings;
     const nr = new NeuralRendering({
       dataDir: data, settings: () => settings, gameDirs: () => [], changed: () => undefined,
       fetch: async () => new Response('', { status: 503 }), extract: async () => { throw new Error('no download in tests'); },
@@ -123,6 +123,8 @@ describe('neural rendering in a game folder', () => {
     expect(ini).toContain('Passes=auto');
     expect(ini).toContain('Dx11Upscaler=dlss_12');
     expect(ini).toContain('VulkanUpscaler=dlss');
+    expect(ini).toContain('[Menu]\nShortcutKey=0x24');
+    expect(ini).toContain('ToggleKey=0x79');
     expect(ini).toContain('RunBeforeSR=auto');
 
     // A second start leaves the install alone, and takes the new strength: three passes, later ones eased.

@@ -14,6 +14,7 @@ import { formatBytes, formatSpeed } from '@shared/format';
 import { useMotionPrefs } from '../hooks/useMotion';
 import { hours, playtime, t, tk, locale } from '../i18n';
 import { dlss5Choice, dlss5On, type Dlss5Choice } from '@shared/dlss5';
+import { vkName } from '@shared/vk';
 
 type Filter = 'all' | 'favorites' | 'linux' | 'windows' | 'local' | 'gog' | 'epic';
 
@@ -530,6 +531,7 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
   const windows = game.kind === 'windows';
   const allGames = useApp((s) => s.settings?.nrAllGames ?? false);
   const dlss5Active = windows && dlss5On(l, allGames);
+  const menuKey = useApp((s) => s.settings?.nrMenuKey ?? null);
   const missing = (name: string) => <span className="field__hint">{t('Not installed — install “{name}” with your distribution’s package manager to use this.', { name })}</span>;
   return (
     <>
@@ -616,7 +618,7 @@ function LaunchOptionsPanel({ game }: { game: Game }) {
             <option value="off">{t('Off for this game')}</option>
           </select>
           <span className="field__hint">{dlss5Active
-            ? t('On: its files go into the game folder at the next start and come out when you turn it off. Turn DLSS, FSR or XeSS on in the game; OptiScaler\'s menu opens with the Insert key. Picture settings are in Settings → Graphics.')
+            ? t('On: its files go into the game folder at the next start and come out when you turn it off. Turn DLSS, FSR or XeSS on in the game; OptiScaler\'s menu opens with {key}. Picture settings and keys are in Settings → Graphics.', { key: vkName(menuKey ?? 0x2d) })
             : t('Off in this game. Settings → Graphics turns it on for all games at once.')}</span>
         </div>
       )}

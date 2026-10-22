@@ -20,6 +20,7 @@ import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { NrReport, NrStatus, Settings } from '@shared/types';
 import { readPeVersion } from './pe-version';
+import { vkIni } from '@shared/vk';
 
 type Fetch = (url: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => Promise<Response>;
 
@@ -803,6 +804,10 @@ export class NeuralRendering {
     if (existsSync(ini)) {
       const { nrQuality: q, nrPasses } = this.deps.settings();
       let text = readFileSync(ini, 'utf8');
+      // The person's keys: OptiScaler's menu (Insert by default, which many laptops lack) and the NR on/off key.
+      const { nrMenuKey, nrToggleKey } = this.deps.settings();
+      text = setIniKey(text, 'Menu', 'ShortcutKey', nrMenuKey ? vkIni(nrMenuKey) : 'auto');
+      text = setIniKey(text, 'DlssNr', 'ToggleKey', nrToggleKey ? vkIni(nrToggleKey) : 'auto');
       if (mode === 'fsr4') {
         // FSR 2.3/3.1/4 through AMD's FidelityFX loader; DirectX 11 games through OptiScaler's 11on12 bridge.
         text = setIniKey(setIniKey(setIniKey(text, 'Upscalers', 'Dx12Upscaler', 'ffx'), 'Upscalers', 'Dx11Upscaler', 'ffx_12'), 'DlssNr', 'Enabled', 'false');
