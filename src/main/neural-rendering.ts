@@ -125,10 +125,30 @@ export function parseNrLog(text: string): NrReport {
 const KNOWN_PROXY: Array<[RegExp, string]> = [[/^cyberpunk2077\.exe$/i, 'dbghelp.dll']];
 
 /** The proxy name OptiScaler takes in this folder: a known one for the game, else the first free name. */
-export function proxyFor(folder: string): string {
+export function proxyFor(folder: string, vulkan = false): string {
   const exes = safeList(folder);
   const known = KNOWN_PROXY.find(([re, n]) => exes.some((e) => re.test(e)) && !existsSync(join(folder, n)));
-  return known?.[1] ?? PROXY_NAMES.find((n) => !existsSync(join(folder, n))) ?? 'dxgi.dll';
+  // A Vulkan game never loads dxgi.dll or d3d12.dll, so OptiScaler would never start there.
+  const names = vulkan ? PROXY_NAMES.filter((n) => !/^(?:dxgi|d3d12)\.dll$/i.test(n)) : PROXY_NAMES;
+  return known?.[1] ?? names.find((n) => !existsSync(join(folder, n))) ?? names[0];
+}
+
+const DX_IMPORTS = ['d3d12.dll', 'D3D12.dll', 'd3d11.dll', 'D3D11.dll', 'dxgi.dll', 'DXGI.dll'].map((n) => Buffer.from(n));
+const VK_IMPORTS = ['vulkan-1.dll', 'VULKAN-1.dll', 'Vulkan-1.dll'].map((n) => Buffer.from(n));
+
+/** Whether the game's program draws with Vulkan only: it imports vulkan-1.dll and no Direct3D/DXGI. */
+export function vulkanOnly(folder: string, executable: string): boolean {
+  const exes = [executable, ...safeList(folder).filter((n) => /\.exe$/i.test(n)).map((n) => join(folder, n))]
+    .filter((p, i, all) => all.indexOf(p) === i && dirname(p) === folder && existsSync(p) && !/unins|crash|setup|redist/i.test(basename(p)))
+    .sort((a, b) => statSync(b).size - statSync(a).size)
+    .slice(0, 2);
+  return exes.some((exe) => {
+    try {
+      if (statSync(exe).size > 400 * 1024 * 1024) return false;
+      const bin = readFileSync(exe);
+      return VK_IMPORTS.some((n) => bin.includes(n)) && !DX_IMPORTS.some((n) => bin.includes(n));
+    } catch { return false; }
+  });
 }
 
 /** Compares dotted versions; missing parts count as 0. */
@@ -768,9 +788,11 @@ export class NeuralRendering {
     const prev = this.installed(game.id);
     const folder = renderFolder(game.installDir, game.executable);
     // Another install (a newer build, or the game moved) is taken out first.
-    if (prev && (prev.optiscaler !== opti.name || prev.runtime !== tag || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder)) this.removeFrom(game.id);
+    const vulkan = vulkanOnly(folder, game.executable);
+    if (prev && (prev.optiscaler !== opti.name || prev.runtime !== tag || !prev.files.every((f) => existsSync(f.path)) || dirname(prev.files[0]?.path ?? folder) !== folder
+      || (vulkan && /^(?:dxgi|d3d12)\.dll$/i.test(prev.proxy)))) this.removeFrom(game.id);
     const current = this.installed(game.id);
-    const proxy = current?.proxy ?? proxyFor(folder);
+    const proxy = current?.proxy ?? proxyFor(folder, vulkan);
     const files: GameManifest['files'] = current?.files ?? [];
     const backups = this.dir('backups', String(game.id));
     const place = (from: string, to: string) => {

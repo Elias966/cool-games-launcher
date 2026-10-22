@@ -48,7 +48,7 @@ import { GameImagesService, IMAGE_EXTENSIONS } from './game-images';
 import { ProtonAdvisor } from './proton-advice';
 import { UpscalerVersions } from './upscalers';
 import { NeuralRendering } from './neural-rendering';
-import { dlss5Choice, dlss5On } from '@shared/dlss5';
+import { dlss5On } from '@shared/dlss5';
 import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
 import type { StoreId } from '@shared/types';
 import { handleMedia, registerMediaScheme } from './media';
@@ -530,16 +530,8 @@ async function main() {
   nrDownloadsTimer.unref?.();
   // DLSS 5 Neural Rendering: its files go in before a launch and come out when it is turned off.
   library.launchEnv = async (g) => {
-    const choice = dlss5Choice(g.launch);
-    let mode: 'nr' | 'fsr4' | null = dlss5On(g.launch, settingsRepo.get().nrAllGames) ? 'nr' : g.launch.optiscalerFsr4 ? 'fsr4' : null;
-    // "All games" leaves games with anti-cheat alone (AreWeAntiCheatYet); a game set to On is the person's call.
-    if (mode === 'nr' && choice === 'auto') {
-      const ac = await protonAdvisor.advise({ title: g.title, appid: g.art?.appid ?? null, store: g.store, storeId: g.storeId }).then((a) => a.antiCheat).catch(() => null);
-      if (ac?.anticheats.length) {
-        mode = g.launch.optiscalerFsr4 ? 'fsr4' : null;
-        toast('info', tm('DLSS 5 stays off in {title}: it uses {list}. Set it to On in its Launch options to use it anyway.', { title: g.title, list: ac.anticheats.join(', ') }));
-      }
-    }
+    // The person decides: all games from Settings, or On/Off per game. Nothing is left out behind their back.
+    const mode: 'nr' | 'fsr4' | null = dlss5On(g.launch, settingsRepo.get().nrAllGames) ? 'nr' : g.launch.optiscalerFsr4 ? 'fsr4' : null;
     if (!mode || !g.executable) { neural.removeFrom(g.id); return []; }
     if (!neural.installed(g.id) && (mode === 'fsr4' || neural.selected())) toast('info', mode === 'nr' ? tm('Setting up DLSS 5 Neural Rendering for {title}…', { title: g.title }) : tm('Setting up FSR 4 (OptiScaler) for {title}…', { title: g.title }));
     const env = await neural.apply({ id: g.id, installDir: g.installDir, executable: g.executable }, mode);

@@ -742,7 +742,7 @@ function NeuralRenderingGroup({ settings }: { settings: Settings }) {
     ? (forcedOff.length ? t('DLSS 5 is on in all your Windows games except {n} set to Off', { n: forcedOff.length }) : t('DLSS 5 is on in all your Windows games'))
     : onIn.length ? t('DLSS 5 is on in {n} of your games', { n: onIn.length }) : t('DLSS 5 is off');
   const detail = settings.nrAllGames
-    ? t('Old and new games alike: any game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS. Games with anti-cheat are left out by themselves. To change one game, open its Launch options in the Library.')
+    ? t('Old and new games alike: every Windows game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS. To turn it off for one game, open its Launch options in the Library.')
     : onIn.length
       ? t('Only the games set to On in their Launch options: {list}. Turn it on for all games with the switch.', { list: onIn.slice(0, 4).map((g) => g.title).join(', ') + (onIn.length > 4 ? ' …' : '') })
       : t('Turn it on for all your games with the switch, or for one game in its Launch options in the Library.');

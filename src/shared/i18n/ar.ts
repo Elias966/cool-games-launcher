@@ -1205,4 +1205,5 @@ export const ar: Record<string, string> = {
   "Reset": "إعادة تعيين",
   "The key that opens OptiScaler's menu in the game. Insert by default; pick another if your keyboard has none. Used from the next start of each game.": "المفتاح الذي يفتح قائمة OptiScaler داخل اللعبة. Insert افتراضيًا؛ اختر غيره إن لم يكن في لوحة مفاتيحك. يُستخدم من التشغيل التالي لكل لعبة.",
   "Turn DLSS (or FSR, or XeSS) on in the game's own graphics settings: DLSS 5 works on that picture. Press {key} in the game for OptiScaler's menu, where Neural Rendering can be checked and tuned.": "فعّل DLSS (أو FSR أو XeSS) من إعدادات الرسوميات في اللعبة نفسها: يعمل DLSS 5 على تلك الصورة. اضغط {key} داخل اللعبة لفتح قائمة OptiScaler حيث يمكن التحقق من العرض العصبي وضبطه.",
+  "Old and new games alike: every Windows game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS. To turn it off for one game, open its Launch options in the Library.": "الألعاب القديمة والجديدة على حد سواء: كل ألعاب Windows التي فيها DLSS 2 أو 3 أو 4، أو FSR 2 أو أحدث، أو XeSS. لإيقافه في لعبة واحدة افتح خيارات تشغيلها في المكتبة.",
 };
