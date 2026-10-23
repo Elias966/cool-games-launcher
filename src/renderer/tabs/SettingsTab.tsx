@@ -505,6 +505,31 @@ function ProtonVersions({ settings, releases, onChanged }: { settings: Settings;
   );
 }
 
+/** The launcher's current MangoHud (installed for this user) next to the system's. */
+function MangoHudRow({ settings }: { settings: Settings }) {
+  const [st, setSt] = useState<{ version: string | null; ours: boolean; system: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { void api.invoke('mangohud:status').then(setSt).catch(() => undefined); }, []);
+  const run = (ch: 'mangohud:install' | 'mangohud:remove', done?: string) => { setBusy(true); void attempt(async () => setSt(await api.invoke(ch)), done).finally(() => setBusy(false)); };
+  return (
+    <Group title={t('MangoHud')}>
+      <Row
+        label={st?.ours ? t('MangoHud {version}, current', { version: st.version ?? '' }) : t('MangoHud')}
+        desc={st?.ours
+          ? t('Installed by the launcher for your user, so games load it instead of the system\'s {system}. Every setting MangoJuice writes (1% lows, the detailed frame graph and the rest) applies. Updated by itself.', { system: st.system ?? t('copy') })
+          : settings.mangohudCurrent
+            ? t('Your system has MangoHud {system}, which ignores newer settings MangoJuice writes (1% lows, the detailed frame graph). The first game started with MangoHud installs the current one for your user, or install it now. Nothing system-wide changes.', { system: st?.system ?? t('(none)') })
+            : t('Games use the system\'s MangoHud {system}. Install the current one for your user to get every setting MangoJuice writes.', { system: st?.system ?? t('(none)') })}
+      >
+        <div className="st-inline">
+          {!st?.ours && <Button size="sm" variant="primary" icon="downloads" disabled={busy} onClick={() => run('mangohud:install', t('MangoHud is up to date.'))}>{busy ? t('Installing…') : t('Install now')}</Button>}
+          {st?.ours && <Button size="sm" variant="ghost" disabled={busy} onClick={() => run('mangohud:remove')}>{t('Remove')}</Button>}
+        </div>
+      </Row>
+    </Group>
+  );
+}
+
 function CompatSection({ settings }: { settings: Settings }) {
   const info = useApp((s) => s.info);
   const [compat, setCompat] = useState<{ protonPath: string | null; provisioning: boolean; python3: boolean } | null>(null);
@@ -560,6 +585,8 @@ function CompatSection({ settings }: { settings: Settings }) {
           </div>
         </Row>
       </Group>
+
+      <MangoHudRow settings={settings} />
 
       <details className="st-advanced">
         <summary><Icon name="sliders" size={16} /> {' '}{t('Advanced')}</summary>

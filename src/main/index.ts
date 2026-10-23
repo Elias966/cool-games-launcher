@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { onLanguage, setMainLanguage, tm } from './i18n';
 import { ForegroundWork } from './foreground';
 import { StoreSearch } from './store-search';
@@ -48,6 +48,7 @@ import { GameImagesService, IMAGE_EXTENSIONS } from './game-images';
 import { ProtonAdvisor } from './proton-advice';
 import { UpscalerVersions } from './upscalers';
 import { NeuralRendering } from './neural-rendering';
+import { MangoHud } from './mangohud';
 import { dlss5On } from '@shared/dlss5';
 import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
 import type { StoreId } from '@shared/types';
@@ -515,6 +516,15 @@ async function main() {
   library.storeUpdates = (g) => stores.hasUpdate(g);
   library.storeBusy = (id) => stores.isBusy(id);
   library.storeLaunchArgs = (g) => stores.launchArgs(g);
+  // MangoHud as current as MangoJuice and other tools expect, installed for this user only.
+  const mangohud = new MangoHud({ dataDir: paths.data, fetch: (url, init) => fetch(url, init), extract: (archive, dest) => installWorker.call('extractCompat', { path: archive, dest }) });
+  // Removing it in Settings means the system's copy again, until it is installed again there.
+  library.ensureMangoHud = () => (settingsRepo.get().mangohudCurrent ? mangohud.ensure() : Promise.resolve());
+  /** The distribution's MangoHud package version, for comparison in Settings. */
+  const systemMangoHud = () => {
+    try { return execFileSync('dpkg-query', ['-W', '-f=${Version}', 'mangohud'], { encoding: 'utf8', timeout: 3000 }).split(/[-+~]/)[0] || null; } catch { return null; }
+  };
+  library.mangohudLayer = () => mangohud.state().ours;
   const neural = new NeuralRendering({
     dataDir: paths.data,
     fetch: (url, init) => fetch(url, init),
@@ -621,7 +631,8 @@ async function main() {
       vendorReady: {...vendorStatus(),model:models.readyAgents(['analysis','browsing'])},
       detectedProton: detectProton(),
       detectedWine: detectWine(),
-      tools: (({ gamescope, mangohud, gamemode }) => ({ gamescope: !!gamescope, mangohud: !!mangohud, gamemode: !!gamemode }))(detectTools()),
+      // MangoHud is always available: the launcher installs a current one for the user when a game needs it.
+      tools: (({ gamescope, gamemode }) => ({ gamescope: !!gamescope, mangohud: true, gamemode: !!gamemode }))(detectTools()),
       dataDir: paths.data,
       cacheDir: paths.cache,
       configDir: paths.config,
@@ -946,6 +957,9 @@ async function main() {
     'nr:installCuda': async () => { await neural.fetchCuda(); return neural.status(); },
     'nr:fetchModel': async () => { await neural.fetchModel(true); return neural.status(); },
     'nr:report': ({ id }) => neural.lastReport(id),
+    'mangohud:status': () => ({ ...mangohud.state(), system: systemMangoHud() }),
+    'mangohud:install': async () => { settingsRepo.update({ mangohudCurrent: true }); await mangohud.ensure(); return { ...mangohud.state(), system: systemMangoHud() }; },
+    'mangohud:remove': () => { settingsRepo.update({ mangohudCurrent: false }); mangohud.remove(); return { ...mangohud.state(), system: systemMangoHud() }; },
     'nr:remove': async ({ sha256 }) => { neural.remove(sha256); return neural.status(); },
     'library:import': async () => {
       const game = await library.importGame();

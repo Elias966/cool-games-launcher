@@ -95,6 +95,7 @@ export function defaultSettings(dirs: { games: string; downloads: string }): Set
     nrAllGames: false,
     nrMenuKey: null,
     nrToggleKey: null,
+    mangohudCurrent: true,
     closeToTray: true,
     freeGpuWhilePlaying: true,
     hideWomenCovers: false,

@@ -239,6 +239,9 @@ export const requests = {
   'nr:installCuda': z.undefined(),
   'nr:fetchModel': z.undefined(),
   'nr:report': z.object({ id }).strict(),
+  'mangohud:status': z.undefined(),
+  'mangohud:install': z.undefined(),
+  'mangohud:remove': z.undefined(),
   'nr:remove': z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   'library:installSuggestedProton': z.object({ id, release: z.string().min(1).max(160) }).strict(),
   /** GOG and Epic accounts and the games they own. */
@@ -386,6 +389,9 @@ export interface Responses {
   'nr:installCuda': NrStatus;
   'nr:fetchModel': NrStatus;
   'nr:report': NrReport | null;
+  'mangohud:status': { version: string | null; ours: boolean; system: string | null };
+  'mangohud:install': { version: string | null; ours: boolean; system: string | null };
+  'mangohud:remove': { version: string | null; ours: boolean; system: string | null };
   'nr:remove': NrStatus;
   'library:installSuggestedProton': { ready: boolean };
   'stores:state': StoresState;

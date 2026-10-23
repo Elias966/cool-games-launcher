@@ -399,6 +399,10 @@ export class Library {
   storeLaunchArgs?: (g: GameRecord) => Promise<string[] | null>;
   /** Environment lines for a Proton launch (DLSS 5 Neural Rendering puts its files in place). */
   launchEnv?: (g: GameRecord) => Promise<string[]>;
+  /** Brings MangoHud up to date before a game that uses it starts. */
+  ensureMangoHud?: () => Promise<unknown>;
+  /** Whether the launcher's current MangoHud layer is in place. */
+  mangohudLayer?: () => boolean;
   /** A game (not an installer) has exited. */
   afterGame?: (id: number) => void;
   /** GOG/Epic: a store game left the Library. */
@@ -863,7 +867,7 @@ export class Library {
   private extras(launch: LaunchOptions, proton: boolean, more: string[] = []) {
     // Newer DLSS / FSR 4 from Settings → Graphics go first, so the game's own lines win.
     const upscalers = proton ? upscalerEnv(this.settings.get()) : [];
-    return { ...launch, env: [...upscalers, ...more, launch.env].filter(Boolean).join('\n'), tools: this.tools };
+    return { ...launch, env: [...upscalers, ...more, launch.env].filter(Boolean).join('\n'), tools: { ...this.tools, mangohudLayer: this.mangohudLayer?.() ?? false } };
   }
 
   private allowedRoot(g: GameRecord) {
@@ -905,6 +909,7 @@ export class Library {
     // Epic games get their login tokens from legendary at each start.
     const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
     const launchEnv = runner === 'proton' && this.launchEnv ? await this.launchEnv(g) : [];
+    if (g.launch.mangohud && this.ensureMangoHud) await this.ensureMangoHud().catch((e) => console.warn('[mangohud]', (e as Error).message));
     // Free the GPU (AI model and classifier) before the game starts, not after.
     await this.beforeGame?.().catch(() => undefined);
     this.work.signal.throwIfAborted();

@@ -1206,4 +1206,13 @@ export const ar: Record<string, string> = {
   "The key that opens OptiScaler's menu in the game. Insert by default; pick another if your keyboard has none. Used from the next start of each game.": "المفتاح الذي يفتح قائمة OptiScaler داخل اللعبة. Insert افتراضيًا؛ اختر غيره إن لم يكن في لوحة مفاتيحك. يُستخدم من التشغيل التالي لكل لعبة.",
   "Turn DLSS (or FSR, or XeSS) on in the game's own graphics settings: DLSS 5 works on that picture. Press {key} in the game for OptiScaler's menu, where Neural Rendering can be checked and tuned.": "فعّل DLSS (أو FSR أو XeSS) من إعدادات الرسوميات في اللعبة نفسها: يعمل DLSS 5 على تلك الصورة. اضغط {key} داخل اللعبة لفتح قائمة OptiScaler حيث يمكن التحقق من العرض العصبي وضبطه.",
   "Old and new games alike: every Windows game with DLSS 2, 3 or 4, FSR 2 or newer, or XeSS. To turn it off for one game, open its Launch options in the Library.": "الألعاب القديمة والجديدة على حد سواء: كل ألعاب Windows التي فيها DLSS 2 أو 3 أو 4، أو FSR 2 أو أحدث، أو XeSS. لإيقافه في لعبة واحدة افتح خيارات تشغيلها في المكتبة.",
+  "copy": "النسخة",
+  "Installed by the launcher for your user, so games load it instead of the system's {system}. Every setting MangoJuice writes (1% lows, the detailed frame graph and the rest) applies. Updated by itself.": "ثبّته المشغّل لحسابك، فتحمّله الألعاب بدل نسخة النظام {system}. تُطبّق كل الإعدادات التي يكتبها MangoJuice (أدنى 1% ومخطط الإطارات المفصّل وغيرها). يتحدّث تلقائيًا.",
+  "Install now": "ثبّت الآن",
+  "MangoHud": "MangoHud",
+  "MangoHud is up to date.": "MangoHud محدّث.",
+  "MangoHud {version}, current": "MangoHud ‏{version}، الأحدث",
+  "(none)": "(لا يوجد)",
+  "Your system has MangoHud {system}, which ignores newer settings MangoJuice writes (1% lows, the detailed frame graph). The first game started with MangoHud installs the current one for your user, or install it now. Nothing system-wide changes.": "في نظامك MangoHud ‏{system}، وهو يتجاهل الإعدادات الأحدث التي يكتبها MangoJuice (أدنى 1% ومخطط الإطارات المفصّل). أول لعبة تبدأ مع MangoHud تثبّت الأحدث لحسابك، أو ثبّته الآن. لا يتغيّر شيء على مستوى النظام.",
+  "Games use the system's MangoHud {system}. Install the current one for your user to get every setting MangoJuice writes.": "تستخدم الألعاب MangoHud النظام {system}. ثبّت الأحدث لحسابك لتحصل على كل إعدادات MangoJuice.",
 };

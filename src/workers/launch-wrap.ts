@@ -11,7 +11,7 @@ export interface LaunchExtras {
   nvapi: boolean;
   wined3d: boolean;
   env: string;
-  tools: { gamescope: string | null; mangohud: string | null; gamemode: string | null };
+  tools: { gamescope: string | null; mangohud: string | null; gamemode: string | null; mangohudLayer?: boolean };
 }
 
 /** Never let user variables replace what the launcher itself relies on. */
@@ -32,7 +32,10 @@ export function applyExtras(base: { cmd: string; args: string[]; env: NodeJS.Pro
   if (proton && o.wined3d) env.PROTON_USE_WINED3D = '1';
   let cmd = base.cmd;
   let args = [...base.args];
-  if (o.mangohud && o.tools.mangohud) { env.MANGOHUD = '1'; args = [cmd, ...args]; cmd = o.tools.mangohud; }
+  // The launcher's current MangoHud is a Vulkan layer switched on by MANGOHUD=1 (Proton games draw
+  // through Vulkan); the system's mangohud wrapper stays for native games, whose OpenGL needs its preload.
+  if (o.mangohud && o.tools.mangohudLayer && (proton || !o.tools.mangohud)) env.MANGOHUD = '1';
+  else if (o.mangohud && o.tools.mangohud) { env.MANGOHUD = '1'; args = [cmd, ...args]; cmd = o.tools.mangohud; }
   const scope = o.gamescope && o.tools.gamescope;
   // Without Gamescope the frame cap goes through DXVK / VKD3D (Direct3D games under Proton).
   if (o.fpsLimit && !scope) { env.DXVK_FRAME_RATE = String(o.fpsLimit); env.VKD3D_FRAME_RATE = String(o.fpsLimit); }

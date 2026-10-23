@@ -438,6 +438,8 @@ export interface Settings {
   nrMenuKey: number | null;
   /** A key that switches Neural Rendering on and off in the game; null: none. */
   nrToggleKey: number | null;
+  /** Keep a current MangoHud installed for this user (the distribution's can be years old). */
+  mangohudCurrent: boolean;
   /** Closing the window keeps the launcher running in the system tray. */
   closeToTray: boolean;
   /** Unload the AI and pause indexing while a game runs (the GPU is the game's). */
