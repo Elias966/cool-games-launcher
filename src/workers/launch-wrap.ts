@@ -24,10 +24,15 @@ const PROTECTED_ENV = /^(?:WINEPREFIX|PROTONPATH|GAMEID|STORE|PATH|HOME|LD_PRELO
 export function applyExtras(base: { cmd: string; args: string[]; env: NodeJS.ProcessEnv }, o: LaunchExtras | undefined, proton: boolean) {
   if (!o) return base;
   const env = { ...base.env };
+  const overrides: string[] = [];
   for (const line of o.env.split('\n')) {
     const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
-    if (m && !PROTECTED_ENV.test(m[1])) env[m[1]] = m[2].trim();
+    if (!m || PROTECTED_ENV.test(m[1])) continue;
+    // Several parts of the launcher (and the person) set DLL overrides: they add up, later ones winning.
+    if (m[1] === 'WINEDLLOVERRIDES') overrides.push(m[2].trim());
+    else env[m[1]] = m[2].trim();
   }
+  if (overrides.length) env.WINEDLLOVERRIDES = [env.WINEDLLOVERRIDES, ...overrides].filter(Boolean).join(';');
   if (proton && o.nvapi) { env.PROTON_ENABLE_NVAPI = '1'; env.DXVK_ENABLE_NVAPI = '1'; }
   if (proton && o.wined3d) env.PROTON_USE_WINED3D = '1';
   let cmd = base.cmd;

@@ -49,6 +49,7 @@ import { ProtonAdvisor } from './proton-advice';
 import { UpscalerVersions } from './upscalers';
 import { NeuralRendering } from './neural-rendering';
 import { MangoHud } from './mangohud';
+import { isWineDll, needsVcRuntime, VC_OVERRIDES, VcRuntime } from './vc-runtime';
 import { dlss5On } from '@shared/dlss5';
 import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
 import type { StoreId } from '@shared/types';
@@ -519,6 +520,20 @@ async function main() {
   // MangoHud as current as MangoJuice and other tools expect, installed for this user only.
   const mangohud = new MangoHud({ dataDir: paths.data, fetch: (url, init) => fetch(url, init), extract: (archive, dest) => installWorker.call('extractCompat', { path: archive, dest }) });
   // Removing it in Settings means the system's copy again, until it is installed again there.
+  // Valve's Proton has no game fixes: Microsoft's C++ runtime goes into the game's prefix, as Steam does.
+  const vcRuntime = new VcRuntime({
+    dataDir: paths.data,
+    fetch: (url, init) => fetch(url, init),
+    sevenZip: vendor().archiveDecoder,
+  });
+  library.prepareProton = async (g, protonPath, prefixDir) => {
+    if (!needsVcRuntime(protonPath)) return [];
+    const probe = join(prefixDir, 'pfx', 'drive_c', 'windows', 'system32', 'msvcp140.dll');
+    if (!existsSync(probe) || isWineDll(probe)) toast('info', tm('Setting up Microsoft\'s Visual C++ runtime for {title} (Valve Proton, once)…', { title: g.title }));
+    const s = settingsRepo.get();
+    await vcRuntime.ensure(prefixDir, () => installWorker.call('createPrefix', { prefixDir, protonPath, umuPath: s.umuPath || vendor().umu, umuId: g.art?.appid ? `umu-${g.art.appid}` : null, logPath: join(paths.logs, `game-${g.id}.log`) }, AbortSignal.timeout(200_000)));
+    return [`WINEDLLOVERRIDES=${VC_OVERRIDES}`];
+  };
   library.ensureMangoHud = () => (settingsRepo.get().mangohudCurrent ? mangohud.ensure() : Promise.resolve());
   /** The distribution's MangoHud package version, for comparison in Settings. */
   const systemMangoHud = () => {

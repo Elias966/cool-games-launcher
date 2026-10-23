@@ -1215,4 +1215,5 @@ export const ar: Record<string, string> = {
   "(none)": "(لا يوجد)",
   "Your system has MangoHud {system}, which ignores newer settings MangoJuice writes (1% lows, the detailed frame graph). The first game started with MangoHud installs the current one for your user, or install it now. Nothing system-wide changes.": "في نظامك MangoHud ‏{system}، وهو يتجاهل الإعدادات الأحدث التي يكتبها MangoJuice (أدنى 1% ومخطط الإطارات المفصّل). أول لعبة تبدأ مع MangoHud تثبّت الأحدث لحسابك، أو ثبّته الآن. لا يتغيّر شيء على مستوى النظام.",
   "Games use the system's MangoHud {system}. Install the current one for your user to get every setting MangoJuice writes.": "تستخدم الألعاب MangoHud النظام {system}. ثبّت الأحدث لحسابك لتحصل على كل إعدادات MangoJuice.",
+  "Setting up Microsoft's Visual C++ runtime for {title} (Valve Proton, once)…": "جارٍ إعداد مكتبة Visual C++ من Microsoft للعبة {title} (Proton من Valve، مرة واحدة)…",
 };

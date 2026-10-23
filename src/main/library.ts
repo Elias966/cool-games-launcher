@@ -403,6 +403,8 @@ export class Library {
   ensureMangoHud?: () => Promise<unknown>;
   /** Whether the launcher's current MangoHud layer is in place. */
   mangohudLayer?: () => boolean;
+  /** Readies a Proton prefix before the game starts (Microsoft's C++ runtime for Valve Proton); returns environment lines. */
+  prepareProton?: (g: GameRecord, protonPath: string, prefixDir: string) => Promise<string[]>;
   /** A game (not an installer) has exited. */
   afterGame?: (id: number) => void;
   /** GOG/Epic: a store game left the Library. */
@@ -908,7 +910,11 @@ export class Library {
     if (runner === 'proton') this.compat.notifyRuntime();
     // Epic games get their login tokens from legendary at each start.
     const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
-    const launchEnv = runner === 'proton' && this.launchEnv ? await this.launchEnv(g) : [];
+    const prefixDir = g.prefixDir ?? (g.kind === 'windows' ? join(paths.prefixes, `game-${g.id}`) : null);
+    const protonEnv = runner === 'proton' && prefixDir && this.prepareProton
+      ? await this.prepareProton(g, env.protonPath, prefixDir).catch((e) => { console.warn('[proton]', (e as Error).message); return [] as string[]; })
+      : [];
+    const launchEnv = [...protonEnv, ...(runner === 'proton' && this.launchEnv ? await this.launchEnv(g) : [])];
     if (g.launch.mangohud && this.ensureMangoHud) await this.ensureMangoHud().catch((e) => console.warn('[mangohud]', (e as Error).message));
     // Free the GPU (AI model and classifier) before the game starts, not after.
     await this.beforeGame?.().catch(() => undefined);

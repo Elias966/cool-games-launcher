@@ -75,6 +75,37 @@ function buildCommand(p: LaunchParams): { cmd: string; args: string[]; env: Node
   return { cmd: p.umuPath, args: isMsi ? ['msiexec', '/i', p.executable, ...p.args] : [p.executable, ...p.args], env };
 }
 
+/**
+ * Creates a game's Proton prefix without starting the game (umu-run ""), so files can be put in
+ * it before the first start. Proton outside Steam does not always exit after making the prefix,
+ * so the process is stopped once the prefix's version file and system folders are in place.
+ */
+async function createPrefix(p: { prefixDir: string; protonPath: string; umuPath: string; umuId?: string | null; logPath: string }, signal: AbortSignal): Promise<{ ok: boolean }> {
+  const { cmd, args, env } = buildCommand({ gameId: -1, executable: '', args: [], runner: 'proton', prefixDir: p.prefixDir, winePath: '', protonPath: p.protonPath, umuPath: p.umuPath, logPath: p.logPath, allowedRoot: p.prefixDir, umuId: p.umuId });
+  mkdirSync(dirname(p.logPath), { recursive: true });
+  const logFd = openSync(p.logPath, 'a');
+  const child = spawn(cmd, ['', ...args.slice(1)], { cwd: p.prefixDir, env, detached: true, stdio: ['ignore', logFd, logFd] });
+  closeSync(logFd);
+  const ready = () => existsSync(join(p.prefixDir, 'version')) && existsSync(join(p.prefixDir, 'pfx', 'system.reg'))
+    && existsSync(join(p.prefixDir, 'pfx', 'drive_c', 'windows', 'system32', 'msvcp140.dll')) && existsSync(join(p.prefixDir, 'pfx', 'drive_c', 'windows', 'syswow64', 'msvcp140.dll'));
+  const stopAll = () => { try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* gone */ } setTimeout(() => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* gone */ } }, 3000).unref(); };
+  let exited = false;
+  child.on('exit', () => { exited = true; });
+  const started = Date.now();
+  while (!signal.aborted && Date.now() - started < 180_000) {
+    if (ready()) {
+      // Let wineboot finish writing the registry before it is stopped.
+      await new Promise((r) => setTimeout(r, 5000));
+      if (!exited) stopAll();
+      return { ok: true };
+    }
+    if (exited) return { ok: ready() };
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  stopAll();
+  return { ok: ready() };
+}
+
 function launch(p: LaunchParams) {
   if (running.has(p.gameId)) throw new Error('This game is already running');
   if (!existsSync(p.executable)) throw new Error('The executable no longer exists. Pick it again in the game settings.');
@@ -138,6 +169,7 @@ function removeManaged(p: { path: string; root: string }) {
 }
 
 serve({
+  createPrefix,
   inspectVersion(p: VersionEvidenceInput) { return discoverVersionEvidence(p); },
   async hashFile(p: { path: string }, signal: AbortSignal) {
     const hash = createHash('sha256');
