@@ -912,7 +912,12 @@ export class Library {
     const storeArgs = g.store && this.storeLaunchArgs ? await this.storeLaunchArgs(g) : null;
     const prefixDir = g.prefixDir ?? (g.kind === 'windows' ? join(paths.prefixes, `game-${g.id}`) : null);
     const protonEnv = runner === 'proton' && prefixDir && this.prepareProton
-      ? await this.prepareProton(g, env.protonPath, prefixDir).catch((e) => { console.warn('[proton]', (e as Error).message); return [] as string[]; })
+      ? await this.prepareProton(g, env.protonPath, prefixDir).catch((e) => {
+        // A missing Steam stops the start with a clear message; anything else is logged and the game still starts.
+        if ((e as { fatal?: boolean }).fatal) throw e;
+        console.warn('[proton]', (e as Error).message);
+        return [] as string[];
+      })
       : [];
     const launchEnv = [...protonEnv, ...(runner === 'proton' && this.launchEnv ? await this.launchEnv(g) : [])];
     if (g.launch.mangohud && this.ensureMangoHud) await this.ensureMangoHud().catch((e) => console.warn('[mangohud]', (e as Error).message));

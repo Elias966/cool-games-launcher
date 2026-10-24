@@ -50,6 +50,7 @@ import { UpscalerVersions } from './upscalers';
 import { NeuralRendering } from './neural-rendering';
 import { MangoHud } from './mangohud';
 import { isWineDll, needsVcRuntime, VC_OVERRIDES, VcRuntime } from './vc-runtime';
+import { ensureSteamSdk } from './steam-sdk';
 import { dlss5On } from '@shared/dlss5';
 import { EPIC_LOGIN_URL, GOG_LOGIN_URL, StoreService, epicLoginCode, gogLoginCode } from './stores';
 import type { StoreId } from '@shared/types';
@@ -528,6 +529,8 @@ async function main() {
   });
   library.prepareProton = async (g, protonPath, prefixDir) => {
     if (!needsVcRuntime(protonPath)) return [];
+    // Valve's Proton loads Steam's library from ~/.steam/sdk64; the Flatpak Steam keeps it elsewhere.
+    if (!ensureSteamSdk(protonPath)) throw Object.assign(new Error(tm('Valve\'s Proton needs Steam installed on this computer to start games. Install Steam, or choose GE-Proton for {title} in its Launch options.', { title: g.title })), { fatal: true });
     const probe = join(prefixDir, 'pfx', 'drive_c', 'windows', 'system32', 'msvcp140.dll');
     if (!existsSync(probe) || isWineDll(probe)) toast('info', tm('Setting up Microsoft\'s Visual C++ runtime for {title} (Valve Proton, once)…', { title: g.title }));
     const s = settingsRepo.get();
